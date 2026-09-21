@@ -3,7 +3,7 @@
 Direction and visual identity for Uni Dashboard (Waterloo Student Life).
 
 - **Product**: Personal glanceable live student life dashboard for University of Waterloo.
-- **Audience**: Waterloo student balancing class schedule, dining hall menus, deadlines, and transit/walk times.
+- **Audience**: Waterloo student balancing class schedule, dining hall menus, and deadlines.
 - **Personality**: Calm, utilitarian, immediate, trustworthy, grounded in campus realities.
 - **Dial**: ENERGY 1 / RHYTHM 2 / MOTION 1
   - **ENERGY 1**: Calm, high signal-to-noise ratio, glanceable in 3 seconds before leaving for class.
@@ -17,5 +17,5 @@ Direction and visual identity for Uni Dashboard (Waterloo Student Life).
   - Text secondary: `#a1a1aa` (Zinc-400, contrast > 7.5:1 against card)
   - Campus Accent: `#f59e0b` (UW Gold / Amber, used sparingly for priorities and location markers)
   - Live status: `#10b981` (Emerald green for active fresh data and open venues)
-- **Typography**: Inter / system sans with tabular figures (`tabular-nums`) for countdowns, times, and walk minutes.
+- **Typography**: Inter / system sans with tabular figures (`tabular-nums`) for countdowns and times.
 - **Focal Point**: The Next Commitment hero header and primary dining recommendation.

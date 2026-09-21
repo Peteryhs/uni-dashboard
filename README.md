@@ -94,6 +94,13 @@ tools/               fixture capture, db inspection, the parse benchmark
 - **Dialect-neutral storage.** Epoch milliseconds, no `jsonb`, no timestamptz, a `job` table instead
   of `LISTEN/NOTIFY`, so the same code runs on SQLite/D1 and Postgres.
 
+## Design work
+
+The antislop skills (UI, copy, people, mobile layout, code comments) are Hermes skills, not repo
+files: `~/.hermes/skills/creative/antislop*`. They used to be committed here three times over
+(`.agents/`, `.claude/`, `agent/`), which is 6,300 lines of duplicated instructions in a project
+repo. `DESIGN.md` stays, because it is this project's direction, and the filter reads it.
+
 ## Docs
 
 - `GOALS.md` core needs and constraints

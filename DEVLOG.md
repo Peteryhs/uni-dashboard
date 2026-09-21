@@ -65,7 +65,17 @@ Haversine fallback, room-to-building parsing, the Google Maps nav link, and the 
 leave_by, from_building, from_location, from_source and nav_url fields on the next commitment
 card. What survives is what, where and when, plus the weather join on the class hour.
 
-### 8. Verification & Test Metrics
+### 8. antislop moved out of the repo
+
+The six antislop skills arrived committed in three places at once (`.agents/skills`,
+`.claude/skills`, `agent/skills`) plus two agent entry files (`AGENTS.md`, `GEMINI.md`), all of it
+tool-specific instruction files sitting in the project tree. Removed: 26 files, 6,313 lines. They
+now live once, as Hermes skills (`~/.hermes/skills/creative/antislop*`), where they load when a
+design task needs them instead of being duplicated per agent tool.
+
+`DESIGN.md` stays in the repo on purpose: that is this project's direction, and the filter reads it.
+
+### 9. Verification & Test Metrics
 - **Unit & Integration Tests**: 63/63 passing tests (`node --test`).
 - **Typecheck**: `npm run web:typecheck` passed with 0 errors.
 - **Bundle Build**: `npm run web:build` succeeded in 3.37s.
