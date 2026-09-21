@@ -1,5 +1,10 @@
 # Development Log (DEVLOG)
 
+**This file is a mirror.** The source of truth is the vault note
+`Documents/Uni Dashboard/Dev Log.md` (LiveSync, both machines). Edit there, then copy down here, or
+the two will disagree within a week, which is exactly what happened to the walk-time table: this
+file claimed a measured number that was never measured.
+
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
@@ -75,8 +80,18 @@ design task needs them instead of being duplicated per agent tool.
 
 `DESIGN.md` stays in the repo on purpose: that is this project's direction, and the filter reads it.
 
-### 9. Verification & Test Metrics
-- **Unit & Integration Tests**: 63/63 passing tests (`node --test`).
+### 9. Review pass: four fixes before the Worker port
+
+Full note in the vault log. All four verified by running them: menu rows carried no date in their
+identity, so a poll for a second day tombstoned the first day's 19 rows (fixed in the key and in the
+tombstone scope); a page saying "no daily menu for this date" was reported as a source failure and
+would have tripped the circuit on a closed week; the alert card read "all clear" five minutes after
+the last status poll while status.json still said major; and no fetch was bounded, so one hung socket
+stalled the whole poll loop. 61 tests to 66.
+
+### 10. Verification & Test Metrics
+- **Unit & Integration Tests**: 66/66 passing tests (`node --test`), under both
+  `TZ=America/Toronto` and `TZ=UTC`. It was 63/63 in this commit; the count moved as fixes landed.
 - **Typecheck**: `npm run web:typecheck` passed with 0 errors.
 - **Bundle Build**: `npm run web:build` succeeded in 3.37s.
 - **Runtime Sanity**: Verified `http://127.0.0.1:8787/v1/dashboard` returns live bundle with active origin `from: 'Last class (PSE)'`, `walk: 0`, and future deadlines starting today at 4:30 PM.
