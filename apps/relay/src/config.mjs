@@ -12,7 +12,15 @@ export const config = {
     'The Market - Residence Dining Hall',
   ],
 
-  /** Building-to-building walk minutes, written once by hand. Replaces live transit data. */
+  /**
+   * Building-to-building walk minutes.
+   *
+   * Provenance, stated plainly: these were written in the first build session, not measured by
+   * walking them. Checked against the OSM foot router they imply anything from 3.5 to 6.8 km/h
+   * depending on the pair, which no pedestrian does, so treat them as a guess. The router
+   * (calculateWalkMinutes) outranks this table; the table exists only for offline and
+   * missing-coordinate cases. To make it real, walk the route with a timer and replace entries.
+   */
   homeBuilding: 'REV',
   walkMinutes: {
     'REV->E7': 14,
@@ -92,6 +100,32 @@ function haversineMeters(c1, c2) {
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+/**
+ * Midnight today in campus time, as epoch milliseconds.
+ *
+ * Do not use `new Date(now).setHours(0, 0, 0, 0)` for this. The runtime clock is UTC on Cloudflare
+ * Workers (measured: `resolvedOptions().timeZone` is 'UTC' there), so that expression lands on
+ * 20:00 the previous Toronto evening. The window then starts eight hours early, and between 20:00
+ * and midnight local it collapses to almost nothing, so "the last class today" silently becomes
+ * "home" or "yesterday's evening lab". Exact to the second, which is far finer than any class
+ * start time; on the two DST transition days it can be an hour off, in the harmless direction.
+ */
+export function startOfLocalDay(now = Date.now(), tz = config.timezone) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(new Date(now))
+      .map((x) => [x.type, x.value]),
+  );
+  const sinceMidnight = ((Number(p.hour) % 24) * 3600 + Number(p.minute) * 60 + Number(p.second)) * 1000;
+  return now - sinceMidnight;
+}
+
 export function walkMinutes(from, to) {
   if (!from || !to) return config.defaultWalkMinutes;
   if (from === to) return 0;
@@ -141,19 +175,15 @@ export async function calculateWalkMinutes(from, to, { useApi = true } = {}) {
     }
   }
 
-  // Fallback 1: Hand-curated table
+  // Fallback 1: Hand-curated table. Not measured by the owner (see the note on walkMinutes), so it
+  // ranks below the router and is never cached: caching a guess would pin it for the isolate's life.
   const tableVal = config.walkMinutes[`${f}->${t}`] ?? config.walkMinutes[`${t}->${f}`];
-  if (tableVal != null) {
-    routeCache.set(cacheKey, tableVal);
-    return tableVal;
-  }
+  if (tableVal != null) return tableVal;
 
-  // Fallback 2: Geometric distance on campus footpaths
+  // Fallback 2: Geometric distance on campus footpaths, also uncached for the same reason
   if (c1 && c2) {
     const distMeters = haversineMeters(c1, c2);
-    const estimated = Math.max(1, Math.round((distMeters * 1.3) / 80));
-    routeCache.set(cacheKey, estimated);
-    return estimated;
+    return Math.max(1, Math.round((distMeters * 1.3) / 80));
   }
 
   return config.defaultWalkMinutes;

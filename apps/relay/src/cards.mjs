@@ -6,7 +6,7 @@
  */
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
-import { config, walkMinutes, buildingOf, calculateWalkMinutes, googleMapsNavUrl } from './config.mjs';
+import { config, walkMinutes, buildingOf, calculateWalkMinutes, googleMapsNavUrl, startOfLocalDay } from './config.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 
 const MIN = 60 * 1000;
@@ -50,9 +50,9 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
 
   // Determine origin: Assume the user is at their last class today.
   // If no prior class exists today, fall back to home dorm (REV).
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
-  const startOfDayMs = startOfDay.getTime();
+  // Campus midnight, not runtime midnight: on Workers the clock is UTC and setHours would put the
+  // boundary at 20:00 the previous evening (see startOfLocalDay).
+  const startOfDayMs = startOfLocalDay(now);
 
   const pastEventsToday = store
     .rows('timeline_event', {
