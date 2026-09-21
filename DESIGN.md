@@ -18,4 +18,9 @@ Direction and visual identity for Uni Dashboard (Waterloo Student Life).
   - Campus Accent: `#f59e0b` (UW Gold / Amber, used sparingly for priorities and location markers)
   - Live status: `#10b981` (Emerald green for active fresh data and open venues)
 - **Typography**: Inter / system sans with tabular figures (`tabular-nums`) for countdowns and times.
-- **Focal Point**: The Next Commitment hero header and primary dining recommendation.
+- **Focal Point**: The Next Commitment card, then the dining recommendation, then Due Soon. The
+  alert banner sits above the grid and never competes for weight.
+- **Hierarchy rule (one line, per R-31)**: visual weight follows how soon the content expires. The
+  next class earns an accent border and the largest type; deadlines weigh less; the food card weighs
+  least because it is browsed, not raced. That is the one reason the cards are allowed to differ in
+  size, and it is why a uniform grid would be wrong here.

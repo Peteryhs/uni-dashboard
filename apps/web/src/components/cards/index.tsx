@@ -72,6 +72,7 @@ class CardErrorBoundary extends Component<BoundaryProps, { error: Error | null }
         observedAt={card.observed_at}
         sourceId={card.source_id || undefined}
         now={now}
+        className="opacity-80"
       >
         <p className="text-sm text-amber-foreground">This card could not be rendered.</p>
         <p className="mt-1 font-mono text-[11px] break-words text-muted-foreground">
