@@ -130,6 +130,13 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         }
         return send(200, { receipts });
       }
+      /**
+       * Credential input validation. The value is written into .env line by line, so anything with
+       * whitespace in it can inject extra lines (a newline plus `RELAY_TOKEN=` is a whole other
+       * secret), and anything that is not an https URL is not a feed.
+       */
+      const looksLikeIcsUrl = (v) => typeof v === 'string' && /^https:\/\/\S+$/.test(v.trim());
+
       if (url.pathname === '/v1/credentials') {
         if (req.method === 'GET') {
           const scheduleUrl = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
@@ -159,6 +166,12 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
             return send(400, { error: 'invalid json' });
           }
           const { PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL } = body;
+          for (const [name, value] of Object.entries({ PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL })) {
+            if (value === undefined || value === '') continue;
+            if (!looksLikeIcsUrl(value)) {
+              return send(400, { error: `${name} must be an https URL with no whitespace` });
+            }
+          }
           let changed = false;
           const scheduleInput = GOOGLE_CALENDAR_ICS_URL !== undefined ? GOOGLE_CALENDAR_ICS_URL : PORTAL_ICS_URL;
           if (typeof scheduleInput === 'string') {
