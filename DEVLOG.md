@@ -11,7 +11,7 @@ Following the initial v0.1 relay engine build, the web dashboard underwent exten
 - Cluttered visual presentation with generic AI aesthetic patterns (uncontrolled glow, excessive glassmorphism blur, round pill buttons).
 - Unbalanced desktop grid layout where a full-width outage card split Next Commitment and Upcoming Deadlines across separate lines.
 - Freshness counters updating by the second, introducing visual noise.
-- Walk times statically hardcoded from REV rather than dynamically computing walking duration from the student's actual current location.
+- Walk times hardcoded from REV. (Superseded: the walk feature was removed entirely, see the correction below.)
 - Expired deadlines from previous days/hours rendering in "Upcoming Deadlines".
 - Need for credential and secret hygiene prior to integrating generative AI.
 
@@ -49,7 +49,23 @@ Following the initial v0.1 relay engine build, the web dashboard underwent exten
 - **API Leak Prevention**: Sanitized `/v1/credentials` endpoint in `apps/relay/src/server.mjs` to return only boolean configuration status without echoing URL substrings or query parameters.
 - **GenAI Proxy Design**: Created `.env.example` documenting that upcoming LLM keys (`GEMINI_API_KEY`, etc.) remain exclusively on the backend relay server (`process.env.GEMINI_API_KEY`). The web client communicates through backend proxy endpoints (e.g. `POST /v1/ai/...`), preventing browser bundle extraction.
 
-### 7. Verification & Test Metrics
+### 7. Correction: the walk feature and the walk table are gone (2026-09-21)
+
+Removed on the owner's call: he commutes by bus, so "leave by" was a number nobody acted on.
+
+What also came out, and why it needed to: this log called the walk time "static" without saying
+where the numbers came from, and the code comment called the table "written once by hand". Neither
+was true. The table was written in the first build session from nothing, and it implies anything
+from 3.5 to 6.8 km/h depending on the pair, which no pedestrian does over these routes. Checked
+against the OSM foot router it was wrong in both directions: it ranked REV to MC (the closest of
+the twelve pairs) worst, and REV to E7 (the farthest) as a mid-length walk.
+
+Removed in one piece: the table, the building coordinate set, the OSM foot routing call, the
+Haversine fallback, room-to-building parsing, the Google Maps nav link, and the walk_minutes,
+leave_by, from_building, from_location, from_source and nav_url fields on the next commitment
+card. What survives is what, where and when, plus the weather join on the class hour.
+
+### 8. Verification & Test Metrics
 - **Unit & Integration Tests**: 63/63 passing tests (`node --test`).
 - **Typecheck**: `npm run web:typecheck` passed with 0 errors.
 - **Bundle Build**: `npm run web:build` succeeded in 3.37s.

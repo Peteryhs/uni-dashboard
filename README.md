@@ -11,7 +11,7 @@ Status: the v1 relay works end to end and is covered by tests. Not deployed yet.
 |---|---|---|
 | `uw-food-daily-menu` | today's dishes per outlet | live, no auth, no CORS |
 | `uw-status` | campus and IT status | live, no auth, CORS `*` |
-| `open-meteo` | hourly weather for the walk | live, no auth, CORS `*` |
+| `open-meteo` | hourly weather for the next class hour | live, no auth, CORS `*` |
 | `uw-portal-ics` | class timetable and exams | needs the Portal iCal token URL |
 | `uw-learn-ics` | deadlines and due dates | needs the LEARN feed token URL |
 
@@ -22,7 +22,7 @@ owner copies the URLs out of Portal and LEARN. Everything else is real data.
 
 ```bash
 npm install
-npm test                                          # 61 tests
+npm test                                          # 66 tests
 node apps/relay/src/cli.mjs sources               # readiness, and which env var is missing
 node apps/relay/src/cli.mjs poll                  # fetch, parse, validate, store
 node apps/relay/src/cli.mjs bundle                # the four-card payload a client renders
@@ -79,7 +79,7 @@ apps/web/            Vite + React + Tailwind v4 + shadcn/ui client
   src/components/freshness.tsx   the age ladder, rendered
   src/components/cards/          one renderer per card type, plus the degrade chain
 fixtures/            captured real bytes plus labelled synthetic samples
-test/                61 tests
+test/                66 tests
 tools/               fixture capture, db inspection, the parse benchmark
 ```
 

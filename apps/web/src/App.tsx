@@ -215,9 +215,8 @@ function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
   const foodCard = cards.find((c) => c.type === 'food') as Card<FoodData> | undefined;
 
   const nextTitle = nextCard?.data?.title;
-  const leaveBy = nextCard?.data?.leave_by;
-  const leaveMinutes = leaveBy != null ? Math.round((leaveBy - now) / 60_000) : null;
-  const leaveNow = leaveMinutes !== null && leaveMinutes <= 0;
+  const nextStartsAt = nextCard?.data?.starts_at;
+  const nextSoon = nextStartsAt != null && nextStartsAt - now <= 15 * 60_000;
 
   const alertCount = alertCard?.data?.count ?? 0;
   const dueCourses = dueCard?.data?.courses ?? [];
@@ -240,17 +239,15 @@ function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
         <div
           className={cn(
             'flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors',
-            leaveNow
+            nextSoon
               ? 'border-amber/50 bg-amber/15 text-amber-foreground'
               : 'border-white/10 bg-card text-foreground',
           )}
         >
           <CalendarClock className="size-3.5 text-cyan-400" />
           <span className="truncate max-w-[160px]">{nextTitle}</span>
-          {leaveMinutes !== null && (
-            <span className="text-zinc-400 font-normal">
-              · {leaveNow ? 'Leave now' : `Leave in ${leaveMinutes}m`}
-            </span>
+          {nextStartsAt != null && (
+            <span className="text-zinc-400 font-normal">· {formatTime(nextStartsAt)}</span>
           )}
         </div>
       )}

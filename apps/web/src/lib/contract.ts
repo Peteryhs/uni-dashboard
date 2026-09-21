@@ -95,12 +95,6 @@ export interface NextCommitmentData {
   starts_at?: number;
   ends_at?: number;
   all_day?: boolean;
-  walk_minutes?: number | null;
-  leave_by?: number | null;
-  from_building?: string;
-  from_location?: string;
-  from_source?: string;
-  nav_url?: string | null;
   weather?: WeatherSlice | null;
 }
 

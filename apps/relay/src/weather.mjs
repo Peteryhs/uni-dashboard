@@ -90,13 +90,12 @@ export function at(byHour, when) {
 }
 
 /** Worth showing or not: a card that always says "18 C" is noise. */
-export function worthShowing(w, walkMin = 0) {
+export function worthShowing(w) {
   if (!w) return { show: false, reason: 'no forecast' };
   if ((w.precip_prob ?? 0) >= 30) return { show: true, reason: 'rain risk' };
   if ((w.feels_c ?? 20) <= 5) return { show: true, reason: 'cold' };
   if ((w.feels_c ?? 20) >= 27) return { show: true, reason: 'heat' };
   if ((w.wind_kmh ?? 0) >= 40) return { show: true, reason: 'wind' };
-  if (walkMin >= 15 && (w.precip_prob ?? 0) >= 20) return { show: true, reason: 'long walk with rain risk' };
   return { show: false, reason: 'nothing notable' };
 }
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { dueSoonCard, foodCard, alertCard, nextCommitmentCard, courseOf } from '../apps/relay/src/cards.mjs';
-import { config, startOfLocalDay } from '../apps/relay/src/config.mjs';
+import { config } from '../apps/relay/src/config.mjs';
 
 const now = Date.UTC(2026, 8, 21, 12); // 2026-09-21 08:00 in Toronto
 const MIN = 60_000;
@@ -120,37 +120,6 @@ test('course codes are extracted from several title shapes', () => {
   assert.equal(courseOf('Some announcement'), 'Other');
 });
 
-test('the day boundary is campus midnight, not the runtime clock midnight', () => {
-  // 2026-09-21 14:30 Toronto is 18:30Z, so campus midnight is 04:00Z that day
-  assert.equal(new Date(startOfLocalDay(Date.UTC(2026, 8, 21, 18, 30))).toISOString(), '2026-09-21T04:00:00.000Z');
-  // 2026-01-20 14:30 Toronto is 19:30Z in EST, so campus midnight is 05:00Z
-  assert.equal(new Date(startOfLocalDay(Date.UTC(2026, 0, 20, 19, 30))).toISOString(), '2026-01-20T05:00:00.000Z');
-});
-
-test('an evening class from yesterday is not today (run this suite under TZ=UTC to catch it)', async () => {
-  const store = new SqliteStore(':memory:');
-  const now = Date.UTC(2026, 8, 21, 12, 30); // 08:30 Toronto, before the next class
-  store.upsertRows('timeline_event', [
-    // 2026-09-21T01:00Z is 21:00 the previous evening in Toronto. On a UTC runtime a boundary built
-    // with setHours(0,0,0,0) sits at 2026-09-21T00:00Z, which makes this "today" and moves the walk
-    // origin to E5. The boundary must be campus midnight (04:00Z) instead.
-    { source_id: 'uw-portal-ics', external_id: 'y1', observed_at: now, valid_until: now + 15 * MIN, kind: 'class', title: 'ECE 105 LAB 001', location: 'E5 1001', starts_at: Date.UTC(2026, 8, 21, 1), ends_at: Date.UTC(2026, 8, 21, 2) },
-    { source_id: 'uw-portal-ics', external_id: 't1', observed_at: now, valid_until: now + 15 * MIN, kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: Date.UTC(2026, 8, 21, 13, 30), ends_at: Date.UTC(2026, 8, 21, 14, 30) },
-  ]);
-  const card = await nextCommitmentCard(store, { now, useWeather: false });
-  assert.equal(card.data.from_source, 'Home (REV)', 'yesterday evening is not today');
-  assert.equal(card.data.from_building, 'REV');
-});
-
-test('next commitment folds in the walk and the leave-by time', async () => {
-  const store = seed(new SqliteStore(':memory:'));
-  const card = await nextCommitmentCard(store, { now, useWeather: false });
-  assert.equal(card.data.kind, 'class');
-  assert.equal(card.data.location, 'E7 2317');
-  assert.equal(card.data.walk_minutes, config.walkMinutes['REV->E7']);
-  assert.equal(card.data.leave_by, card.data.starts_at - card.data.walk_minutes * MIN, 'leave_by must be starts_at minus the walk');
-});
-
 test('next commitment prefers the sooner of class and deadline', async () => {
   const store = new SqliteStore(':memory:');
   store.upsertRows('timeline_event', [
@@ -168,48 +137,16 @@ test('an empty timetable is a fact, not a failure', async () => {
   assert.match(card.data.title, /Nothing scheduled/);
 });
 
-test('a deadline with no room gets no walk time', async () => {
+test('the card carries what, where and when, and nothing about leaving', async () => {
   const store = new SqliteStore(':memory:');
   store.upsertRows('timeline_event', [
     { source_id: 'b', external_id: 'y', observed_at: now, valid_until: now + MIN, kind: 'deadline', title: 'Submit essay', starts_at: now + 3600_000, ends_at: now + 3600_000 },
   ]);
   const card = await nextCommitmentCard(store, { now, useWeather: false });
-  assert.equal(card.data.walk_minutes, null);
-  assert.equal(card.data.leave_by, null);
-});
-
-test('next commitment assumes user is at their last class today for walk calculation', async () => {
-  const store = new SqliteStore(':memory:');
-  const pastClassTime = now - 60 * MIN;
-  const nextClassTime = now + 60 * MIN;
-  store.upsertRows('timeline_event', [
-    {
-      source_id: 'uw',
-      external_id: 'c1',
-      observed_at: now,
-      valid_until: now + 24 * 3600_000,
-      kind: 'class',
-      title: 'Previous class',
-      location: 'E5 2004',
-      starts_at: pastClassTime,
-      ends_at: pastClassTime + 50 * MIN,
-    },
-    {
-      source_id: 'uw',
-      external_id: 'c2',
-      observed_at: now,
-      valid_until: now + 24 * 3600_000,
-      kind: 'class',
-      title: 'Next class',
-      location: 'E3 1001',
-      starts_at: nextClassTime,
-      ends_at: nextClassTime + 50 * MIN,
-    },
-  ]);
-  const card = await nextCommitmentCard(store, { now, useWeather: false });
-  assert.equal(card.data.from_building, 'E5');
-  assert.equal(card.data.walk_minutes, config.walkMinutes['E5->E3']);
-  assert.match(card.data.nav_url, /google\.com\/maps/);
-  assert.match(card.data.nav_url, /travelmode=walking/);
+  assert.equal(card.data.title, 'Submit essay');
+  assert.equal(card.data.starts_at, now + 3600_000);
+  for (const gone of ['walk_minutes', 'leave_by', 'nav_url', 'from_building', 'from_source']) {
+    assert.equal(gone in card.data, false, `${gone} was removed with the walk feature`);
+  }
 });
 

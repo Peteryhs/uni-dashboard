@@ -10,7 +10,7 @@ Offline-first. Pins for outlets.
 
 | Card | Data | Where it is fetched |
 |---|---|---|
-| 1. Next class, with the walk | Portal iCal | relay (secret + no CORS) |
+| 1. Next class: what, where, when | Portal iCal or a Google Calendar feed | relay (secret + no CORS) |
 | 2. What is due | LEARN iCal | relay (secret + no CORS) |
 | 3. Food at your pinned outlets | Food services page | relay (no CORS) |
 | Alert slot, usually invisible | Campus + IT status | client (`status.json` is CORS `*`) |
@@ -88,9 +88,9 @@ Rules that must exist from the first commit:
 
 Three readings, in the order they were ranked by value:
 
-1. **Next class.** Soonest of class or deadline, one hero line: course, room, time until,
-   and the walk time folded in. Room numbers come from the feed; walk times come from a
-   small table the owner writes once (building to building, minutes). No transit data.
+1. **Next class.** Soonest of class or deadline, one hero line: course, room, time until.
+   Room numbers come from the feed. No walk time and no leave-by: the owner commutes by bus, so
+   both were dropped along with the walk table, which had never actually been measured.
 2. **What is due.** Count plus nearest, seven day window, grouped by course. Never a wall of
    text.
 3. **Food.** Pinned outlets first, always rendered, showing open or closed with the next open
@@ -139,7 +139,7 @@ movement, so movement means information.
 measured first and the biggest unknown dies early. Deliverable: a page that shows pinned
 outlets with today's dishes, correct open and closed states, and a measured parse time.
 
-**Slice 2: next class plus weather.** The two token feeds, the walk-time table, the hero
+**Slice 2: next class plus weather.** The two token feeds, the hero
 line, and the offline bundle. This is the slice that replaces what the owner uses today.
 
 **Slice 3: tasks, pins UI, and the polish pass.** The due-date card, editing pins from the

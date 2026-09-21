@@ -6,7 +6,7 @@
  */
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
-import { config, walkMinutes, buildingOf, calculateWalkMinutes, googleMapsNavUrl, startOfLocalDay } from './config.mjs';
+import { config } from './config.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 
 const MIN = 60 * 1000;
@@ -21,7 +21,7 @@ function envelope(rows, { now, cadenceMs, fallback }) {
   return { observed_at: observed, valid_until: valid || null, state };
 }
 
-/** Card 1: next class or deadline, whichever is sooner, with the walk folded in. */
+/** Card 1: next class or deadline, whichever is sooner. What, where and when, nothing else. */
 export async function nextCommitmentCard(store, { now = Date.now(), useWeather = true } = {}) {
   const upcoming = store
     .rows('timeline_event', { where: 'starts_at >= ?', params: [now - 5 * MIN], limit: 200 })
@@ -44,44 +44,16 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       observed_at: null,
       valid_until: null,
       source_id: '',
-      data: { title: 'Nothing scheduled', subtitle: 'No class or deadline ahead', walk_minutes: null },
+      data: { title: 'Nothing scheduled', subtitle: 'No class or deadline ahead' },
     };
   }
-
-  // Determine origin: Assume the user is at their last class today.
-  // If no prior class exists today, fall back to home dorm (REV).
-  // Campus midnight, not runtime midnight: on Workers the clock is UTC and setHours would put the
-  // boundary at 20:00 the previous evening (see startOfLocalDay).
-  const startOfDayMs = startOfLocalDay(now);
-
-  const pastEventsToday = store
-    .rows('timeline_event', {
-      where: 'kind = ? AND starts_at >= ? AND starts_at < ?',
-      params: ['class', startOfDayMs, next.starts_at],
-    })
-    .filter((e) => Boolean(buildingOf(e.location)))
-    .sort((a, b) => b.starts_at - a.starts_at);
-
-  const lastClass = pastEventsToday[0];
-  const fromBuilding = lastClass ? buildingOf(lastClass.location) : config.homeBuilding;
-  const fromLocation = lastClass ? lastClass.location : config.homeBuilding;
-  const fromSource = lastClass ? `Last class (${fromBuilding})` : `Home (${fromBuilding})`;
-
-  const toBuilding = buildingOf(next.location) || '';
-  const walk = next.kind === 'class'
-    ? await calculateWalkMinutes(fromBuilding, toBuilding, { useApi: useWeather })
-    : 0;
-  const leaveBy = next.starts_at - walk * MIN;
-  const navUrl = next.location
-    ? googleMapsNavUrl(fromLocation, next.location)
-    : null;
 
   let weather = null;
   if (useWeather) {
     try {
       const byHour = await hourlyForecast(now);
-      const w = weatherAt(byHour, leaveBy);
-      const verdict = worthShowing(w, walk);
+      const w = weatherAt(byHour, next.starts_at);
+      const verdict = worthShowing(w);
       weather = w && { ...w, show: verdict.show, reason: verdict.reason };
     } catch (e) {
       weather = { error: e.message };
@@ -103,12 +75,6 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       starts_at: next.starts_at,
       ends_at: next.ends_at,
       all_day: next.all_day,
-      walk_minutes: next.kind === 'class' ? walk : null,
-      leave_by: next.kind === 'class' ? leaveBy : null,
-      from_building: fromBuilding,
-      from_location: fromLocation,
-      from_source: fromSource,
-      nav_url: navUrl,
       weather,
     },
   };

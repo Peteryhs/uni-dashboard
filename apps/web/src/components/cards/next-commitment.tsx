@@ -1,10 +1,12 @@
 /**
  * Card 1: the next thing that requires the owner to move.
  *
- * Reading order: what, where, how long until, and when to leave.
- * Walk time is folded into leave-by rather than shown as trivia.
+ * Reading order: what, where, how long until.
+ *
+ * There is no leave-by bar: the walk table behind it was never measured, and the owner commutes by
+ * bus, so a "leave by" time was a number nobody acted on. What, where and when is the whole card.
  */
-import { CalendarClock, CloudRain, Footprints, MapPin, Wind, Clock, Compass, ExternalLink } from 'lucide-react';
+import { CalendarClock, CloudRain, MapPin, Wind, Clock } from 'lucide-react';
 import { CardShell, EmptyState } from '@/components/card-shell';
 import { Badge } from '@/components/ui/badge';
 import { mutedIfStale } from '@/components/freshness';
@@ -56,10 +58,6 @@ export function NextCommitmentCard({
   const whenLine = dayWord
     ? `${dayWord} ${formatTime(d.starts_at)}`
     : formatWeekdayTime(d.starts_at);
-
-  const leaveNow = d.leave_by != null && d.leave_by - now <= 0;
-  const leaveSoon = d.leave_by != null && !leaveNow && d.leave_by - now <= 10 * 60_000;
-  const minutesUntilLeave = d.leave_by != null ? Math.round((d.leave_by - now) / 60_000) : null;
 
   return (
     <CardShell
@@ -113,74 +111,6 @@ export function NextCommitmentCard({
             )}
           </div>
         </div>
-
-        {/* Actionable Leave-by Bar */}
-        {d.leave_by != null && (
-          <div
-            className={cn(
-              'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-2.5 sm:px-3.5 transition-colors',
-              leaveNow
-                ? 'border-amber/60 bg-amber/15 text-amber-foreground'
-                : leaveSoon
-                  ? 'border-live/60 bg-live/15 text-foreground'
-                  : 'border-border/80 bg-secondary/30 text-foreground hover:border-border',
-            )}
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div
-                className={cn(
-                  'flex size-7 items-center justify-center rounded-md shrink-0',
-                  leaveNow
-                    ? 'bg-amber/20 text-amber'
-                    : leaveSoon
-                      ? 'bg-live/20 text-live'
-                      : 'bg-secondary/50 text-zinc-400',
-                )}
-              >
-                <Footprints className="size-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-semibold leading-none">
-                  {leaveNow
-                    ? 'Leave immediately'
-                    : `Leave by ${formatTime(d.leave_by)}`}
-                </p>
-                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-400 leading-none">
-                  {minutesUntilLeave !== null && !leaveNow && (
-                    <span>in {minutesUntilLeave} min{minutesUntilLeave === 1 ? '' : 's'}</span>
-                  )}
-                  {d.from_source && (
-                    <>
-                      <span>·</span>
-                      <span>From {d.from_source}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {d.walk_minutes != null && d.walk_minutes > 0 && (
-              d.nav_url ? (
-                <a
-                  href={d.nav_url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  title={`Open walking directions in Google Maps (${d.from_source || 'Waterloo Campus'})`}
-                  className="group inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-200 bg-card hover:bg-secondary/70 hover:text-foreground px-2.5 py-1.5 rounded-md border border-border/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live shrink-0"
-                >
-                  <Compass className="size-3.5 text-cyan-400 group-hover:rotate-45 transition-transform" />
-                  <span>{d.walk_minutes} min walk</span>
-                  <ExternalLink className="size-3 text-zinc-400 opacity-60 group-hover:opacity-100 group-hover:text-cyan-400 transition-opacity" />
-                </a>
-              ) : (
-                <div className="flex items-center gap-1 text-[11px] font-medium text-zinc-300 bg-card px-2 py-1 rounded-md border border-border/60 shrink-0">
-                  <Compass className="size-3 text-cyan-400" />
-                  <span>{d.walk_minutes} min walk</span>
-                </div>
-              )
-            )}
-          </div>
-        )}
 
         {/* Advisory Weather line */}
         {preferences.density === 'detailed' && d.weather && !d.weather.error && d.weather.temp_c != null && (
