@@ -5,6 +5,8 @@ relay.db-journal
 .env
 .env.*
 .env*.local
+# ...but the template is documentation and must be committed
+!.env.example
 *.log
 
 # web client build output (the Worker/relay serves this, it is not source)
