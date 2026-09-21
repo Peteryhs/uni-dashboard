@@ -16,21 +16,43 @@ import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registr
 import { buildDashboard } from './cards.mjs';
 
 const [, , cmd = 'help', ...rest] = process.argv;
-const flags = Object.fromEntries(
-  rest
-    .filter((a) => a.startsWith('--'))
-    .map((a) => {
-      const [k, v] = a.replace(/^--/, '').split('=');
-      return [k, v ?? true];
-    }),
-);
-const positional = rest.filter((a) => !a.startsWith('--'));
+
+/**
+ * Flags accept both `--flag=value` and `--flag value`. The space form was silently broken once:
+ * `serve --port 8791` produced port `true`, which Number() turned into 1, and the server died on
+ * EACCES binding port 1 instead of saying anything useful.
+ */
+const flags = {};
+const positional = [];
+for (let i = 0; i < rest.length; i += 1) {
+  const arg = rest[i];
+  if (arg.startsWith('--')) {
+    const [k, v] = arg.replace(/^--/, '').split('=');
+    if (v !== undefined) flags[k] = v;
+    else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith('--')) flags[k] = rest[++i];
+    else flags[k] = true;
+  } else {
+    positional.push(arg);
+  }
+}
+
+function numberFlag(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = flags[name];
+  if (raw === undefined) return fallback;
+  if (raw === true) throw new Error(`--${name} needs a value, e.g. --${name}=${fallback}`);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    throw new Error(`--${name} must be a number between ${min} and ${max}, got "${raw}"`);
+  }
+  return n;
+}
 const dbPath = flags.db ?? process.env.RELAY_DB ?? 'relay.db';
 
 function out(obj) {
   console.log(typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
 }
 
+try {
 switch (cmd) {
   case 'sources':
     out(readiness(enabledSources()));
@@ -97,14 +119,14 @@ switch (cmd) {
 
   case 'runs': {
     const store = new SqliteStore(dbPath);
-    out(store.recentRuns(Number(flags.limit ?? 10)));
+    out(store.recentRuns(numberFlag('limit', 10)));
     store.close();
     break;
   }
 
   case 'serve': {
     const { start } = await import('./server.mjs');
-    const handle = await start({ port: Number(flags.port ?? 8787), dbPath, intervalMs: Number(flags.interval ?? 30000) });
+    const handle = await start({ port: numberFlag('port', 8787, { min: 1, max: 65535 }), dbPath, intervalMs: numberFlag('interval', 30000, { min: 1000 }) });
     process.on('SIGINT', () => {
       handle.close();
       process.exit(0);
@@ -113,5 +135,9 @@ switch (cmd) {
   }
 
   default:
-    out(`usage: cli.mjs <sources|poll|bundle|health|runs|serve> [args]\n SOURCES=${SOURCES.length} enabled=${enabledSources().length}`);
+    out(`usage: cli.mjs <sources|poll|bundle|health|runs|serve> [args]\n  flags take --name=value or --name value\n  SOURCES=${SOURCES.length} enabled=${enabledSources().length}`);
+}
+} catch (e) {
+  console.error(`error: ${e.message}`);
+  process.exit(2);
 }
