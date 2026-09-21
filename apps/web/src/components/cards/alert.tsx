@@ -8,6 +8,7 @@ import { AlertTriangle, ExternalLink } from 'lucide-react';
 import { FreshnessLine } from '@/components/freshness';
 import { Badge } from '@/components/ui/badge';
 import type { AlertData, Card as CardT } from '@/lib/contract';
+import { shortAge } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
 const SEVERITY_TONE: Record<string, { ring: string; badge: string; text: string; label: string }> = {
@@ -45,7 +46,22 @@ const SEVERITY_TONE: Record<string, { ring: string; badge: string; text: string;
 
 export function AlertCard({ card, now }: { card: CardT<AlertData>; now: number }) {
   const d = card.data;
-  if (!d.count) return null;
+
+  // No notices. That is an all clear only if the relay actually looked recently: the server marks
+  // an old status check stale or dead on the age ladder, and swallowing that would quietly turn
+  // "we do not know" into "nothing is wrong".
+  if (!d.count) {
+    if (card.state !== 'stale' && card.state !== 'dead') return null;
+    return (
+      <div className="flex items-center gap-2.5 rounded-md border border-border/80 bg-card px-3.5 py-2.5 text-xs text-zinc-400">
+        <AlertTriangle className="size-3.5 shrink-0 text-amber" aria-hidden />
+        <span>
+          Campus status unknown
+          {d.checked_at ? `, last checked ${shortAge(d.checked_at, now)} ago` : ''}
+        </span>
+      </div>
+    );
+  }
 
   const worst = d.notices[0];
   const tone = SEVERITY_TONE[worst?.severity ?? 'info'] ?? SEVERITY_TONE.info;

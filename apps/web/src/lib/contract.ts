@@ -150,6 +150,8 @@ export interface FoodData {
 
 export interface AlertData {
   count: number;
+  /** when the status source last reported, so an old all clear can be rendered as old */
+  checked_at?: number | null;
   notices: { severity: string; title: string; url: string }[];
 }
 
