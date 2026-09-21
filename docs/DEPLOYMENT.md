@@ -52,11 +52,18 @@ Cloudflare's own note is the thing to design against: "heavier workloads that ha
 authentication, server-side rendering, or **parse large payloads** typically use 10-20 ms".
 The food page is 289 KB of HTML. That lands on or over the Free ceiling of 10 ms.
 
-**Consequence:** if the food card is a v1 requirement, either the deployment pays $5/month
-for Workers Paid (cron CPU becomes 30 s, problem gone), or the food scrape stays on a
-container and the Worker fetches the already-parsed result. Both are one config change,
-but the choice has to be made before writing the parser, because it decides whether the
-parser is allowed to be a full DOM parser.
+**Consequence, now measured rather than guessed (2026-09-21, Node 24 on the laptop):**
+
+| strategy | CPU per run | vs Free's 10 ms |
+|---|---|---|
+| marker scanner (indexOf + slice, no DOM) | **0.47 ms** | 20x headroom, fits |
+| DOM parser (cheerio/parse5) | **30.2 ms** | 3x over, fails Free |
+
+The same run found 19 dishes, 3 outlets and 19 diet blocks, so the cheap parser is not
+cheating by parsing less. So the food card is $0 on Workers Free **as long as the parser stays
+a marker scanner**. A DOM parser breaks the free tier and would need Workers Paid. That is a
+one-line architectural rule with a 60x cost difference, so write it down and test for it
+(no DOM dependency in the parser module; see `docs/MEASUREMENTS.md`).
 
 ## Design constraints, so that both targets stay possible
 
