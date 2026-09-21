@@ -43,6 +43,7 @@
     "#sources/*": "./sources/*"
   },
   "devDependencies": {
-    "cheerio": "^1.2.0"
+    "cheerio": "^1.2.0",
+    "wrangler": "^4.136.1"
   }
 }
