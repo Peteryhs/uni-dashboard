@@ -3,4 +3,14 @@ relay.db
 relay.db-journal
 *.db-wal
 .env
+.env.*
+.env*.local
 *.log
+
+# web client build output (the Worker/relay serves this, it is not source)
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
+
+# scratch files
+.tmp-*

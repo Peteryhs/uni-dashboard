@@ -17,7 +17,7 @@ const UA = 'uni-dashboard/0.1 (+personal dashboard)';
 const DEADLINE_RE = /\b(due|deadline|submit|submission|assignment|quiz|midterm|exam|test|lab report)\b/i;
 const EXAM_RE = /\b(midterm|final exam|exam)\b/i;
 
-export function makeIcsSource({ id, role, envVar, tz = DEFAULT_TZ, windowDays = 60 }) {
+export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEFAULT_TZ, windowDays = 60 }) {
   return {
     id,
     shape,
@@ -28,7 +28,7 @@ export function makeIcsSource({ id, role, envVar, tz = DEFAULT_TZ, windowDays = 
     tz,
     windowDays,
     url() {
-      const v = process.env[envVar];
+      const v = process.env[envVar] || fallbackEnvVars.map((k) => process.env[k]).find(Boolean);
       if (!v) return null;
       return v;
     },
@@ -79,11 +79,18 @@ export function makeIcsSource({ id, role, envVar, tz = DEFAULT_TZ, windowDays = 
       const rows = [];
       let expanded = 0;
       for (const event of events) {
-        const occurrences = expandRecurrence(event, {
-          windowStart,
-          windowEnd,
-          tz: this.tz,
-        });
+        let occurrences;
+        try {
+          occurrences = expandRecurrence(event, {
+            windowStart,
+            windowEnd,
+            tz: this.tz,
+          });
+        } catch {
+          // If a calendar event (e.g. from Google Calendar) uses a recurrence rule not strictly DAILY/WEEKLY,
+          // emit the single occurrence if in window so other events are not blocked.
+          occurrences = [{ start: event.start, end: event.end }];
+        }
         for (const occ of occurrences) {
           expanded += 1;
           const startsAt = occ.start;
@@ -116,5 +123,10 @@ export function makeIcsSource({ id, role, envVar, tz = DEFAULT_TZ, windowDays = 
   };
 }
 
-export const portalIcs = makeIcsSource({ id: 'uw-portal-ics', role: 'portal', envVar: 'PORTAL_ICS_URL' });
+export const portalIcs = makeIcsSource({
+  id: 'uw-portal-ics',
+  role: 'portal',
+  envVar: 'PORTAL_ICS_URL',
+  fallbackEnvVars: ['GOOGLE_CALENDAR_ICS_URL', 'SCHEDULE_ICS_URL'],
+});
 export const learnIcs = makeIcsSource({ id: 'uw-learn-ics', role: 'learn', envVar: 'LEARN_ICS_URL' });

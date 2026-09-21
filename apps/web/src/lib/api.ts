@@ -1,0 +1,159 @@
+/**
+ * Relay client.
+ *
+ * Two things here are load-bearing rather than incidental:
+ *
+ * 1. The last good bundle is persisted to localStorage on every success. With the relay stopped the
+ *    client still renders real data with the age ladder showing its true age, and never a spinner.
+ *    A dashboard that goes blank when the network does is worse than one that admits it is old.
+ * 2. The bundle is validated against the server's own schema on arrival. The project has already
+ *    shipped a bug where epoch milliseconds arrived as the string "1789997400000.0"; validating at
+ *    this boundary turns that class of bug into a visible error instead of a wrong-looking card.
+ *
+ * Auth is a bearer token in a header, never a query parameter, so it cannot land in a log or a
+ * Referer. The token is optional: the relay only demands one when RELAY_TOKEN is set.
+ */
+import { validateBundle, type Bundle, type HealthResponse } from './contract';
+
+const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
+const TOKEN_KEY = 'uni-dashboard:relay-token';
+
+/** Build-time default, overridable at runtime so a device can be paired without a rebuild. */
+const BUILD_TOKEN = (import.meta.env.VITE_RELAY_TOKEN as string | undefined) ?? '';
+
+export function getToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? BUILD_TOKEN;
+  } catch {
+    return BUILD_TOKEN;
+  }
+}
+
+export function setToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* private mode: the token simply does not persist */
+  }
+}
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+export class RelayError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'RelayError';
+  }
+}
+
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, {
+    signal,
+    headers: { accept: 'application/json', ...authHeaders() },
+    cache: 'no-store',
+  });
+  if (res.status === 401) {
+    throw new RelayError('relay rejected the device token', 401);
+  }
+  if (!res.ok) {
+    throw new RelayError(`relay returned ${res.status}`, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Last good bundle, so offline is a state and not a blank screen.
+// ---------------------------------------------------------------------------
+
+export interface CachedBundle {
+  bundle: Bundle;
+  /** When this client received it. Distinct from the card's own observed_at. */
+  received_at: number;
+}
+
+export function readCachedBundle(): CachedBundle | null {
+  try {
+    const raw = localStorage.getItem(BUNDLE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedBundle;
+    // Validate on the way out too. A cache written by an older, buggier build must not be trusted
+    // just because it is local.
+    return { bundle: validateBundle(parsed.bundle), received_at: parsed.received_at };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedBundle(bundle: Bundle): void {
+  try {
+    localStorage.setItem(
+      BUNDLE_CACHE_KEY,
+      JSON.stringify({ bundle, received_at: Date.now() } satisfies CachedBundle),
+    );
+  } catch {
+    /* quota or private mode: caching is an optimisation, not a requirement */
+  }
+}
+
+export async function fetchBundle(signal?: AbortSignal): Promise<Bundle> {
+  const raw = await getJson<unknown>('/v1/dashboard', signal);
+  const bundle = validateBundle(raw);
+  writeCachedBundle(bundle);
+  return bundle;
+}
+
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return getJson<HealthResponse>('/v1/health/sources', signal);
+}
+
+/** Ask the relay to poll now. Used by the manual refresh control. */
+export async function triggerPoll(sourceId?: string): Promise<void> {
+  const qs = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
+  const res = await fetch(`/v1/poll${qs}`, {
+    method: 'POST',
+    headers: { accept: 'application/json', ...authHeaders() },
+  });
+  if (!res.ok) throw new RelayError(`poll failed with ${res.status}`, res.status);
+}
+
+export interface CredentialFeedInfo {
+  configured: boolean;
+  env_var: string;
+  name: string;
+  role: string;
+  feed_url_preview?: string;
+}
+
+export interface CredentialsStatus {
+  portal: CredentialFeedInfo;
+  learn: CredentialFeedInfo;
+}
+
+export async function fetchCredentialsStatus(signal?: AbortSignal): Promise<CredentialsStatus> {
+  return getJson<CredentialsStatus>('/v1/credentials', signal);
+}
+
+export async function updateCredentials(
+  creds: { PORTAL_ICS_URL?: string; LEARN_ICS_URL?: string },
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; portal_configured: boolean; learn_configured: boolean }> {
+  const res = await fetch('/v1/credentials', {
+    method: 'POST',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify(creds),
+  });
+  if (!res.ok) throw new RelayError(`failed to update credentials: ${res.status}`, res.status);
+  return res.json();
+}

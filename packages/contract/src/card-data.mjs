@@ -32,6 +32,10 @@ export const NextCommitmentData = z.object({
   all_day: z.boolean().optional(),
   walk_minutes: z.number().nullable().optional(),
   leave_by: EPOCH_MS.nullable().optional(),
+  from_building: z.string().optional(),
+  from_location: z.string().optional(),
+  from_source: z.string().optional(),
+  nav_url: z.string().nullable().optional(),
   weather: WeatherSlice.nullable().optional(),
 });
 

@@ -6,7 +6,7 @@
  */
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
-import { config, walkMinutes, buildingOf } from './config.mjs';
+import { config, walkMinutes, buildingOf, calculateWalkMinutes, googleMapsNavUrl } from './config.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 
 const MIN = 60 * 1000;
@@ -48,10 +48,33 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
     };
   }
 
-  const fromBuilding = config.homeBuilding;
+  // Determine origin: Assume the user is at their last class today.
+  // If no prior class exists today, fall back to home dorm (REV).
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const startOfDayMs = startOfDay.getTime();
+
+  const pastEventsToday = store
+    .rows('timeline_event', {
+      where: 'kind = ? AND starts_at >= ? AND starts_at < ?',
+      params: ['class', startOfDayMs, next.starts_at],
+    })
+    .filter((e) => Boolean(buildingOf(e.location)))
+    .sort((a, b) => b.starts_at - a.starts_at);
+
+  const lastClass = pastEventsToday[0];
+  const fromBuilding = lastClass ? buildingOf(lastClass.location) : config.homeBuilding;
+  const fromLocation = lastClass ? lastClass.location : config.homeBuilding;
+  const fromSource = lastClass ? `Last class (${fromBuilding})` : `Home (${fromBuilding})`;
+
   const toBuilding = buildingOf(next.location) || '';
-  const walk = next.kind === 'class' ? walkMinutes(fromBuilding, toBuilding) : 0;
+  const walk = next.kind === 'class'
+    ? await calculateWalkMinutes(fromBuilding, toBuilding, { useApi: useWeather })
+    : 0;
   const leaveBy = next.starts_at - walk * MIN;
+  const navUrl = next.location
+    ? googleMapsNavUrl(fromLocation, next.location)
+    : null;
 
   let weather = null;
   if (useWeather) {
@@ -82,6 +105,10 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       all_day: next.all_day,
       walk_minutes: next.kind === 'class' ? walk : null,
       leave_by: next.kind === 'class' ? leaveBy : null,
+      from_building: fromBuilding,
+      from_location: fromLocation,
+      from_source: fromSource,
+      nav_url: navUrl,
       weather,
     },
   };
@@ -91,7 +118,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
 export function dueSoonCard(store, { now = Date.now() } = {}) {
   const horizon = now + 7 * DAY;
   const due = store
-    .rows('timeline_event', { where: 'kind IN (?,?) AND starts_at BETWEEN ? AND ?', params: ['deadline', 'exam', now - DAY, horizon], limit: 300 })
+    .rows('timeline_event', { where: 'kind IN (?,?) AND starts_at BETWEEN ? AND ?', params: ['deadline', 'exam', now, horizon], limit: 300 })
     .sort((a, b) => a.starts_at - b.starts_at);
 
   const byCourse = new Map();

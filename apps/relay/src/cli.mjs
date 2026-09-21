@@ -10,6 +10,10 @@
  *   node apps/relay/src/cli.mjs serve [--port 8787]
  *   node apps/relay/src/cli.mjs runs [--limit 10]
  */
+try {
+  process.loadEnvFile?.();
+} catch {}
+
 import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';

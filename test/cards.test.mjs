@@ -85,6 +85,17 @@ test('due soon counts only the seven day window and groups by course', () => {
   assert.deepEqual(card.data.courses.map((c) => c.course).sort(), ['ECE 150', 'MATH 115']);
 });
 
+test('due soon ignores expired deadlines from yesterday or earlier today', () => {
+  const store = seed(new SqliteStore(':memory:'));
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-learn-ics', external_id: 'd_past', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'deadline', title: 'MATH 115 - Expired homework', starts_at: now - 3600_000, ends_at: now - 3600_000 },
+  ]);
+  const card = dueSoonCard(store, { now });
+  assert.equal(card.data.count, 2, 'expired deadline must not be counted');
+  assert.equal(card.data.courses.some((c) => c.items.some((i) => i.title.includes('Expired'))), false);
+  assert.ok(card.data.nearest_at >= now, 'nearest deadline must be in the future');
+});
+
 test('course codes are extracted from several title shapes', () => {
   assert.equal(courseOf('ECE 150 - Assignment 3 due'), 'ECE 150');
   assert.equal(courseOf('MATH115 Quiz'), 'MATH115');
@@ -126,3 +137,39 @@ test('a deadline with no room gets no walk time', async () => {
   assert.equal(card.data.walk_minutes, null);
   assert.equal(card.data.leave_by, null);
 });
+
+test('next commitment assumes user is at their last class today for walk calculation', async () => {
+  const store = new SqliteStore(':memory:');
+  const pastClassTime = now - 60 * MIN;
+  const nextClassTime = now + 60 * MIN;
+  store.upsertRows('timeline_event', [
+    {
+      source_id: 'uw',
+      external_id: 'c1',
+      observed_at: now,
+      valid_until: now + 24 * 3600_000,
+      kind: 'class',
+      title: 'Previous class',
+      location: 'E5 2004',
+      starts_at: pastClassTime,
+      ends_at: pastClassTime + 50 * MIN,
+    },
+    {
+      source_id: 'uw',
+      external_id: 'c2',
+      observed_at: now,
+      valid_until: now + 24 * 3600_000,
+      kind: 'class',
+      title: 'Next class',
+      location: 'E3 1001',
+      starts_at: nextClassTime,
+      ends_at: nextClassTime + 50 * MIN,
+    },
+  ]);
+  const card = await nextCommitmentCard(store, { now, useWeather: false });
+  assert.equal(card.data.from_building, 'E5');
+  assert.equal(card.data.walk_minutes, config.walkMinutes['E5->E3']);
+  assert.match(card.data.nav_url, /google\.com\/maps/);
+  assert.match(card.data.nav_url, /travelmode=walking/);
+});
+

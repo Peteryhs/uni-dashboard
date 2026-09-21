@@ -28,11 +28,41 @@ node apps/relay/src/cli.mjs poll                  # fetch, parse, validate, stor
 node apps/relay/src/cli.mjs bundle                # the four-card payload a client renders
 node apps/relay/src/cli.mjs health                 # per-source last run, age, circuit state
 node apps/relay/src/cli.mjs serve                  # http://127.0.0.1:8787/v1/dashboard
+node tools/inspect-db.mjs                         # what is actually stored, per shape
 node tools/menu-parse-bench.mjs                   # the CPU budget check
 ```
 
 Set `PORTAL_ICS_URL` and `LEARN_ICS_URL` for the real feeds. Without them those two sources
 report `skipped` and say which variable to set.
+
+## The dashboard
+
+```bash
+npm run web:install     # once
+npm run dash            # build the client, then serve it and the API on one origin
+                        # -> http://127.0.0.1:8787/
+```
+
+For UI work, run the relay and the Vite dev server side by side:
+
+```bash
+npm run serve           # terminal 1: relay on 8787
+npm run web:dev         # terminal 2: http://127.0.0.1:5173, proxies /v1 to 8787
+```
+
+One origin serves both the app shell and `/v1`, which is what Workers static assets gives for
+free, so there is no CORS path anywhere and no dev-only workaround to remove at deploy time.
+
+The client is Vite + React + Tailwind v4 + shadcn/ui. It imports the age ladder and the
+skip-unknown-card rule from `packages/contract` rather than restating them, so the web and Android
+clients cannot drift from the server.
+
+Two visible design rules:
+
+- **Amber means stale, and nothing else.** The accent is cool cyan on purpose. If the brand colour
+  were also warm, "this number is old" and "this is the theme" would look identical.
+- **The alert slot renders zero height when nothing is wrong.** A permanent "all normal" tile trains
+  the eye to skip exactly the region where a real outage would appear.
 
 ## Layout
 
@@ -43,9 +73,14 @@ sources/food/        marker scanner, zero imports, no DOM
 sources/ics/         RFC 5545 reader with weekly recurrence expansion, one adapter two roles
 sources/status/      Statuspage JSON
 apps/relay/          runner, SQLite store (D1 dialect), job scheduler, card builders, server, cli
+apps/relay/src/static.mjs   serves the built client; deleted when Workers static assets take over
+apps/web/            Vite + React + Tailwind v4 + shadcn/ui client
+  src/lib/contract.ts       typed bridge to packages/contract
+  src/components/freshness.tsx   the age ladder, rendered
+  src/components/cards/          one renderer per card type, plus the degrade chain
 fixtures/            captured real bytes plus labelled synthetic samples
 test/                61 tests
-tools/               fixture capture and the parse benchmark
+tools/               fixture capture, db inspection, the parse benchmark
 ```
 
 ## Load-bearing rules
@@ -70,6 +105,11 @@ tools/               fixture capture and the parse benchmark
 
 ## Next
 
-1. Point the two ICS sources at the real feeds.
-2. Move this code into a Worker: static assets, cron trigger, D1 binding.
-3. Build the food card as a real dark-first page.
+1. Point the two ICS sources at the real feeds. Until then the schedule and deadline cards render
+   fixture data, and the UI says so: both show an amber dashed hairline and the sources panel names
+   the missing variable.
+2. Make the client a PWA (`vite-plugin-pwa`). The last-good bundle already survives in
+   localStorage, but a cold start with the relay down cannot even load the shell yet, because the
+   relay is what serves it. A service worker is what closes that gap.
+3. Move this code into a Worker: static assets, cron trigger, D1 binding, tested with `wrangler dev`.
+4. Android (Kotlin/Compose) once the web side has proved the contract.
