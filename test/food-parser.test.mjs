@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { parseFoodPage, toMenuItems } from '../sources/food/parse.mjs';
 import * as foodSource from '../sources/food/source.mjs';
+import { SqliteStore } from '../apps/relay/src/store.mjs';
+import { runSource } from '../apps/relay/src/runner.mjs';
 import { validateRows } from '#contract/canonical.mjs';
 
 const FIXTURE = 'fixtures/food-2026-09-21.html';
@@ -72,6 +74,59 @@ test('menu rows satisfy the canonical contract and have unique ids', { skip: !ha
     assert.match(r.service_date, /^\d{4}-\d{2}-\d{2}$/);
     assert.ok(r.url === '' || r.url.startsWith('https://'));
   }
+});
+
+/**
+ * Regression, in two halves, because the first fix alone was not enough.
+ *
+ * The identity used to be `outlet::dish`, so one dish on two dates was one row: polling tomorrow
+ * rewrote today's rows. With the date in the key, the same poll still tombstoned today's rows,
+ * because the sweep compared against every row the source owned. A menu poll covers one service
+ * date, so it may only judge that date (sources/food/source.mjs declares `scopeColumn`).
+ */
+test('a poll for one date cannot delete another date, and still tombstones inside its own', async () => {
+  let current = ['Soup', 'Stew', 'Pie'];
+  const page = () =>
+    '<div class="food_header_title">REV</div>' +
+    current
+      .map((d) => `<div class="food_title"><a class="food_link" href="/food-services/daily-menu/${d}">${d}</a></div><div class="food_diet">vegetarian</div>`)
+      .join('');
+  const source = {
+    ...foodSource,
+    async fetchRaw() {
+      const body = page();
+      return { status: 200, contentType: 'text/html; charset=UTF-8', body, bytes: body.length };
+    },
+  };
+  const rowsOn = (store, date) => store.rows('menu_item', { where: 'service_date = ?', params: [date] });
+  const t0 = Date.UTC(2026, 8, 21, 12);
+  const store = new SqliteStore(':memory:');
+
+  const day1 = await runSource(source, store, { now: t0, date: '2026-09-21' });
+  assert.equal(day1.outcome, 'ok');
+  assert.equal(day1.rows_written, 3);
+
+  current = ['Soup', 'Stew']; // tomorrow's menu, and the pie is not on it
+  const day2 = await runSource(source, store, { now: t0 + 86_400_000, date: '2026-09-22' });
+  assert.equal(day2.outcome, 'ok');
+  assert.equal(day2.tombstones, 0, 'a poll for another date has no business judging this one');
+  assert.deepEqual(rowsOn(store, '2026-09-21').map((r) => r.dish).sort(), ['Pie', 'Soup', 'Stew']);
+  assert.equal(rowsOn(store, '2026-09-22').length, 2);
+
+  current = ['Soup']; // a dish really does leave the day being polled
+  const again = await runSource(source, store, { now: t0 + 86_400_000 + 3600_000, date: '2026-09-22' });
+  assert.equal(again.tombstones, 1);
+  assert.deepEqual(rowsOn(store, '2026-09-22').map((r) => r.dish), ['Soup']);
+  assert.equal(rowsOn(store, '2026-09-21').length, 3, 'the other date is still untouched');
+});
+
+test('a date with no menu is valid-empty, not a failure', () => {
+  // the page's own words, live on a future date (fixtures/ has no capture of this state)
+  const body = '<html><body><a href="/food-services/daily-menu">Daily menu</a><p>No daily menu found for the requested date.</p></body></html>';
+  const verdict = foodSource.plausible({ status: 200, contentType: 'text/html; charset=UTF-8', body, bytes: body.length });
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.empty, true, 'an off-term day must not count as a source failure');
+  assert.equal(verdict.credential, undefined);
 });
 
 test('valid_until covers the service day rather than an arbitrary window', () => {

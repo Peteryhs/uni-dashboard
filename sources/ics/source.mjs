@@ -14,6 +14,9 @@ export const needsSecret = true;
 
 const UA = 'uni-dashboard/0.1 (+personal dashboard)';
 
+/** No fetch in this app is unbounded: a hung socket would stall the whole poll loop. */
+const FETCH_TIMEOUT_MS = 10_000;
+
 const DEADLINE_RE = /\b(due|deadline|submit|submission|assignment|quiz|midterm|exam|test|lab report)\b/i;
 const EXAM_RE = /\b(midterm|final exam|exam)\b/i;
 
@@ -45,7 +48,11 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
         const body = await readFile(new URL(target), 'utf8');
         return { status: 200, contentType: 'text/calendar', body, bytes: body.length };
       }
-      const res = await fetch(target, { headers: { 'user-agent': UA }, redirect: 'follow' });
+      const res = await fetch(target, {
+        headers: { 'user-agent': UA },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       const body = await res.text();
       return {
         status: res.status,

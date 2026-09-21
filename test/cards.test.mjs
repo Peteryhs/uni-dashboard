@@ -16,8 +16,8 @@ function seed(store) {
     { source_id: 'uw-learn-ics', external_id: 'd3', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'deadline', title: 'Far future thing', starts_at: now + 30 * 24 * 3600_000, ends_at: now + 30 * 24 * 3600_000 },
   ]);
   store.upsertRows('menu_item', [
-    { source_id: 'uw-food-daily-menu', external_id: 'REV::Soup', observed_at: now - 3600_000, valid_until: now + 12 * 3600_000, outlet: 'REVelation - Residence Dining Hall', dish: 'Soup', service_date: '2026-09-21' },
-    { source_id: 'uw-food-daily-menu', external_id: 'OTH::Chicken', observed_at: now - 3600_000, valid_until: now + 12 * 3600_000, outlet: 'Station 57', dish: 'Chicken', service_date: '2026-09-21' },
+    { source_id: 'uw-food-daily-menu', external_id: '2026-09-21::REV::Soup', observed_at: now - 3600_000, valid_until: now + 12 * 3600_000, outlet: 'REVelation - Residence Dining Hall', dish: 'Soup', service_date: '2026-09-21' },
+    { source_id: 'uw-food-daily-menu', external_id: '2026-09-21::OTH::Chicken', observed_at: now - 3600_000, valid_until: now + 12 * 3600_000, outlet: 'Station 57', dish: 'Chicken', service_date: '2026-09-21' },
   ]);
   return store;
 }
@@ -76,6 +76,24 @@ test('an expired notice stops alerting', () => {
     { source_id: 'uw-status', external_id: 'n1', observed_at: now, valid_until: now - 1000, severity: 'critical', scope: 'campus', title: 'Old outage', url: '' },
   ]);
   assert.equal(alertCard(store, { now }).data.count, 0);
+});
+
+test('an all clear is only an all clear when it is recent', () => {
+  const store = seed(new SqliteStore(':memory:'));
+  // a status check that came back clean 20 seconds ago
+  store.insertRun({ source_id: 'uw-status', started_at: now - 30_000, finished_at: now - 20_000, outcome: 'empty', http_status: 200, bytes: 243 });
+
+  const fresh = alertCard(store, { now });
+  assert.equal(fresh.data.count, 0);
+  assert.equal(fresh.state, 'live');
+  assert.equal(fresh.data.checked_at, now - 20_000);
+
+  // the relay has not polled for three hours: the last known state is 'major' as far as we know,
+  // so the card must not read as good news (this is what it did before)
+  const old = alertCard(store, { now: now + 3 * 3600_000 });
+  assert.equal(old.data.count, 0);
+  assert.equal(old.state, 'dead', 'silence hours after the last check is not an all clear');
+  assert.equal(old.data.checked_at, now - 20_000);
 });
 
 test('due soon counts only the seven day window and groups by course', () => {

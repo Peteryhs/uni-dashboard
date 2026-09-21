@@ -183,12 +183,18 @@ export class SqliteStore {
    * Tombstone rows a source no longer reports, but only when the run was plausible and not
    * empty. Diffing happens in JS so no dialect-specific NOT IN gymnastics or bound-parameter
    * limits are involved.
+   *
+   * `scope` limits the sweep to the partition this run actually covered (`column` + `values`).
+   * A run that only fetched today's menu must not be allowed to judge rows for tomorrow, because
+   * "missing from this run" would then mean "belongs to another day", not "is gone".
    */
-  tombstoneMissing(shape, sourceId, seenExternalIds) {
+  tombstoneMissing(shape, sourceId, seenExternalIds, { column = null, values = [] } = {}) {
     const seen = new Set(seenExternalIds);
+    const scoped = column && values.length > 0;
+    const scopeWhere = scoped ? ` AND ${column} IN (${values.map(() => '?').join(',')})` : '';
     const existing = this.db
-      .prepare(`SELECT external_id FROM ${shape} WHERE source_id=? AND deleted=0`)
-      .all(sourceId)
+      .prepare(`SELECT external_id FROM ${shape} WHERE source_id=? AND deleted=0${scopeWhere}`)
+      .all(sourceId, ...(scoped ? values : []))
       .map((r) => r.external_id);
     const stale = existing.filter((e) => !seen.has(e));
     if (!stale.length) return 0;

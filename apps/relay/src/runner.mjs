@@ -43,9 +43,22 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
 
   const verdict = source.plausible(raw);
   if (!verdict.ok) {
-    receipt.outcome = verdict.skipped ? 'skipped' : verdict.credential ? 'implausible' : 'failed';
+    // Three different meanings, three different outcomes: no credentials, wrong content, and
+    // "the page is fine, it just has nothing for this date". Only the last one is normal, and it
+    // must not count towards the circuit breaker.
+    receipt.outcome = verdict.skipped
+      ? 'skipped'
+      : verdict.credential
+        ? 'implausible'
+        : verdict.empty
+          ? 'empty'
+          : 'failed';
     receipt.error = verdict.reason;
-    receipt.meta = { plausible: false, credential: Boolean(verdict.credential) };
+    receipt.meta = {
+      plausible: false,
+      credential: Boolean(verdict.credential),
+      empty: Boolean(verdict.empty),
+    };
     receipt.finished_at = Date.now();
     if (!dryRun) {
       store.insertRun(receipt);
@@ -105,7 +118,12 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
   }
 
   const written = store.upsertRows(source.shape, rows);
-  const tombstones = store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id));
+  // A source may declare a partition column (the food menu's service_date). Tombstoning then
+  // stays inside the partitions this run covered, so fetching another day cannot delete this one.
+  const tombstoneScope = source.scopeColumn
+    ? { column: source.scopeColumn, values: [...new Set(rows.map((r) => r[source.scopeColumn]))] }
+    : {};
+  const tombstones = store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
   store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
 
   receipt.outcome = 'ok';

@@ -14,8 +14,11 @@ export const needsSecret = false;
 
 const SEVERITY = { none: 'info', minor: 'minor', major: 'major', critical: 'critical' };
 
+/** No fetch in this app is unbounded: a hung socket would stall the whole poll loop. */
+const FETCH_TIMEOUT_MS = 10_000;
+
 export async function fetchRaw() {
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
+  const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   const body = await res.text();
   return {
     status: res.status,

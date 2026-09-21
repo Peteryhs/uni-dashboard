@@ -153,7 +153,10 @@ export function toMenuItems(parsed, { sourceId, serviceDate, observedAt, validUn
     for (const d of outlet.dishes) {
       rows.push({
         source_id: sourceId,
-        external_id: `${outlet.name}::${d.dish}`,
+        // The service date is part of the identity: the same dish appears on many days, and
+        // without the date a poll for one day rewrites the other day's rows under the same key
+        // (tombstoning them, or silently moving them to the new date).
+        external_id: `${serviceDate}::${outlet.name}::${d.dish}`,
         observed_at: observedAt,
         valid_until: validUntil,
         outlet: outlet.name,

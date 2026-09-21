@@ -91,6 +91,8 @@ export const FoodData = z.object({
 
 export const AlertData = z.object({
   count: z.number().int().nonnegative(),
+  /** when the status source last reported, so a client can render an old all clear as old */
+  checked_at: EPOCH_MS.nullable().optional(),
   notices: z.array(
     z.object({
       severity: z.string(),

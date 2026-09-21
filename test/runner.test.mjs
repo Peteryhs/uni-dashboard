@@ -81,6 +81,20 @@ test('a valid-empty run does not tombstone either', async () => {
   assert.equal(store.rows('timeline_event').length, 1, 'tomorrow menu not being posted must not delete today');
 });
 
+test('a page that is fine but has nothing for this date is empty, not failed', async () => {
+  const store = new SqliteStore(':memory:');
+  await runSource(source({ rows: [row(1), row(2)] }), store, { now: Date.UTC(2026, 8, 21, 12) });
+  const quiet = await runSource(
+    source({ rows: [], plausible: { ok: false, reason: 'no menu published for this date', empty: true } }),
+    store,
+    { now: Date.UTC(2026, 8, 21, 13) },
+  );
+  assert.equal(quiet.outcome, 'empty', 'a closed day is not a broken source');
+  assert.equal(quiet.tombstones, 0);
+  assert.equal(store.rows('timeline_event').length, 2, 'an off-term day must not delete the last good rows');
+  assert.equal(store.recentRuns(1)[0].meta.empty, true);
+});
+
 test('a row that breaks the contract fails the run instead of reaching the UI', async () => {
   const store = new SqliteStore(':memory:');
   const broken = { ...row(1) };

@@ -200,38 +200,55 @@ export function foodCard(store, { now = Date.now(), date = null } = {}) {
   };
 }
 
-/** Alert slot: usually invisible, because an empty slot renders zero height, not a green card. */
+/**
+ * Alert slot: usually invisible, because an empty slot renders zero height, not a green card.
+ *
+ * Silence has two meanings here: nothing is wrong, or nobody looked. The run record is the only
+ * thing that separates them. On the first live run this card went quiet five minutes after the
+ * last poll while status.json still said "major", because notice rows expire on their own
+ * valid_until and an expired row read as "no news". A dashboard must never report all clear on
+ * stale data, so an empty slot inherits the age ladder from the last status check.
+ */
 export function alertCard(store, { now = Date.now() } = {}) {
   const notices = store
     .rows('notice', { where: 'valid_until >= ?', params: [now], limit: 20 })
     .filter((n) => config.alertSeverities.includes(n.severity))
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
+  const run = store.lastRunPerSource().find((r) => r.source_id === STATUS_SOURCE) ?? null;
+  const checkedAt = run?.finished_at ?? null;
+
   if (!notices.length) {
     return {
       id: 'alert',
       type: 'alert',
       priority: 95,
-      state: 'empty',
-      observed_at: null,
-      valid_until: null,
-      source_id: 'uw-status',
-      data: { count: 0, notices: [] },
+      // no run at all means we have never looked, which is 'empty', not a clean bill of health
+      state: checkedAt == null ? 'empty' : ageState(checkedAt, STATUS_CADENCE_MS, now),
+      observed_at: checkedAt,
+      valid_until: checkedAt == null ? null : checkedAt + STATUS_CADENCE_MS,
+      source_id: STATUS_SOURCE,
+      data: { count: 0, checked_at: checkedAt, notices: [] },
     };
   }
-  const env = envelope(notices, { now, cadenceMs: MIN });
+  const env = envelope(notices, { now, cadenceMs: STATUS_CADENCE_MS });
   return {
     id: 'alert',
     type: 'alert',
     priority: 95,
     ...env,
-    source_id: 'uw-status',
+    source_id: STATUS_SOURCE,
     data: {
       count: notices.length,
+      checked_at: checkedAt ?? env.observed_at,
       notices: notices.map((n) => ({ severity: n.severity, title: n.title, url: n.url })),
     },
   };
 }
+
+/** The alert slot is the status source's card, so it uses the status source's own cadence. */
+const STATUS_SOURCE = 'uw-status';
+const STATUS_CADENCE_MS = MIN;
 
 function severityRank(s) {
   return { info: 0, minor: 1, major: 2, critical: 3, credential: 4 }[s] ?? 0;

@@ -15,13 +15,16 @@ const TZ = 'America/Toronto';
 
 const cache = { at: 0, byHour: new Map(), raw: null };
 
+/** No fetch in this app is unbounded: a hung socket would stall the whole poll loop. */
+const FETCH_TIMEOUT_MS = 10_000;
+
 export async function hourlyForecast(now = Date.now(), { force = false } = {}) {
   if (!force && now - cache.at < cadenceMs && cache.byHour.size) return cache.byHour;
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
     `&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m` +
     `&forecast_days=2&timezone=${encodeURIComponent(TZ)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`open-meteo http ${res.status}`);
   const j = await res.json();
   const byHour = new Map();

@@ -14,9 +14,17 @@ export const shape = 'menu_item';
 export const cadenceMs = 12 * 60 * 60 * 1000;
 export const url = 'https://uwaterloo.ca/food-services/daily-menu';
 export const needsSecret = false;
+/** A poll covers one service date, so tombstones must stay inside that date (see store). */
+export const scopeColumn = 'service_date';
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
+
+/** No fetch in this app is unbounded: a hung socket would stall the whole poll loop. */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/** The page's own words for "this date has no menu" (verified live 2026-09-21 on a future date). */
+const NO_MENU_TEXT = 'No daily menu found for the requested date';
 
 export function todayInToronto(now) {
   const p = Object.fromEntries(
@@ -42,6 +50,7 @@ export async function fetchRaw(ctx) {
   const res = await fetch(target, {
     headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml' },
     redirect: 'follow',
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const body = await res.text();
   return {
@@ -61,6 +70,12 @@ export function plausible(raw) {
   if (raw.status !== 200) return { ok: false, reason: `http ${raw.status}` };
   if (!/text\/html/i.test(raw.contentType)) return { ok: false, reason: `content-type ${raw.contentType}` };
   if (raw.body.indexOf('daily-menu') === -1) return { ok: false, reason: 'no daily-menu markers: not the menu page' };
+  // Out of term or on a date nothing was posted, the page still renders and says so in text. That
+  // is valid-empty, not failed: reading it as a failure logs five failures on a closed day and
+  // trips the circuit breaker, so a quiet week looks like a broken source.
+  if (raw.body.indexOf(NO_MENU_TEXT) !== -1) {
+    return { ok: false, reason: 'no menu published for this date', empty: true };
+  }
   if (raw.body.indexOf('food_header_title') === -1 && raw.body.indexOf('food_item') === -1) {
     return { ok: false, reason: 'no outlet headings and no dishes: redesign or error page' };
   }
@@ -80,4 +95,4 @@ export function parse(raw, ctx) {
   return { rows, meta: { outlets: parsed.outlets.length, dishes: rows.length, service_date: serviceDate } };
 }
 
-export default { id, shape, cadenceMs, url, needsSecret, fetchRaw, plausible, parse };
+export default { id, shape, cadenceMs, url, needsSecret, scopeColumn, fetchRaw, plausible, parse };
