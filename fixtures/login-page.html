@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sign in - University of Waterloo</title></head>
+<body>
+<div id="content">
+  <h1>Sign in</h1>
+  <p>Your session has expired. Please sign in again to continue.</p>
+  <form action="/idp/profile/SAML2/Redirect/SSO" method="post">
+    <label for="username">WatIAM user ID</label><input id="username" name="j_username" type="text">
+    <label for="password">Password</label><input id="password" name="j_password" type="password">
+    <button type="submit">Sign in</button>
+  </form>
+  <p>Duo two-factor authentication is required.</p>
+</div>
+</body>
+</html>

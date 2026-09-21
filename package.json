@@ -1,0 +1,41 @@
+{
+  "name": "uni-dashboard",
+  "version": "0.1.0",
+  "description": "Live dashboard for Waterloo student life",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test",
+    "sources": "node apps/relay/src/cli.mjs sources",
+    "poll": "node apps/relay/src/cli.mjs poll",
+    "bundle": "node apps/relay/src/cli.mjs bundle",
+    "serve": "node apps/relay/src/cli.mjs serve",
+    "fixtures": "node tools/fetch-fixtures.mjs",
+    "bench": "node tools/menu-parse-bench.mjs fixtures/food-$(date +%F).html 500"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Peteryhs/uni-dashboard.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Peteryhs/uni-dashboard/issues"
+  },
+  "homepage": "https://github.com/Peteryhs/uni-dashboard#readme",
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "imports": {
+    "#contract/*": "./packages/contract/src/*",
+    "#sources/*": "./sources/*"
+  },
+  "devDependencies": {
+    "cheerio": "^1.2.0"
+  }
+}
