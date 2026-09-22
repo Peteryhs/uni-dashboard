@@ -32,6 +32,87 @@ Postgres holds canonical rows, history and the raw snapshot archive.
 | the two token URLs | Worker secrets |
 | login | Cloudflare Access (free plan, per-user identity) |
 
+### What is actually built now (2026-09-22)
+
+The Worker port exists and was run locally against a real D1 and the live campus feeds. What ships:
+
+| File | Role |
+|---|---|
+| `wrangler.toml` | Worker name, `[assets]`, D1 binding `DB`, AI binding `AI`, cron `*/15 * * * *` |
+| `apps/relay/src/worker.mjs` | `fetch` + `scheduled` handlers; the same routes as the Node relay |
+| `apps/relay/src/d1-store.mjs` | D1 adapter, same storage contract as `SqliteStore` |
+| `apps/relay/src/schema.mjs` | table shapes, DDL, row converters, imported by both adapters |
+
+```
+npm run web:build                          # client into apps/web/dist, which [assets] uploads
+npx wrangler d1 create uni-dashboard       # once, then paste the id into wrangler.toml
+npx wrangler secret put PORTAL_ICS_URL     # also LEARN_ICS_URL and RELAY_TOKEN
+npm run deploy                             # build the client, then wrangler deploy
+```
+
+Two platform differences worth knowing, both found by running it rather than reading about it:
+
+- **D1 `exec()` runs one statement per line.** The shared DDL wraps `CREATE TABLE` across lines, so
+  it arrived truncated (`incomplete input: SQLITE_ERROR`). D1Store prepares each statement and runs
+  them as one `batch()`. A test asserts `exec()` is never used for the schema.
+- **`env.AI` has no local emulation.** `wrangler dev` wants a remote proxy session for it, which
+  needs credentials. Deployed, the binding is what makes the dining advisor free of API keys; the
+  local dev config simply omits it and the AI route fails loudly, which is the intended behaviour
+  when there is no model to call.
+
+The Worker bundle resolves no `node:` module at all (checked by grepping the built bundle). That was
+not free: `ai.mjs` reached for `node:fs` to write a dev cache file and `node:crypto` to hash a cache
+key, `store.mjs` needed `node:sqlite`, and the ICS adapter's fixture path imported `node:fs/promises`.
+Node builtins now arrive through `process.getBuiltinModule` where they are optional, the pure schema
+moved to `schema.mjs`, and the fixture import builds its specifier at runtime so no bundler folds it
+back into a static import.
+
+Verified locally on 2026-09-22 against a local D1 and the live feeds: `/healthz`, `/v1/dashboard`,
+`/v1/health/sources`, `/v1/poll`, `/v1/credentials`, `/v1/ai/models`, the SPA fallback, the 404
+route list, and the `scheduled` handler. The poll wrote 21 dishes from the live menu page and 1
+notice from live `status.json`; both unconfigured token feeds reported `skipped` and the two cards
+that depend on them rendered `degraded` instead of pretending nothing was scheduled.
+
+Not yet verified: the AI route on the deployed Worker, because that needs the account. It is the one
+piece that requires the `AI` binding to exist in the real account.
+
+### The free tier, and what it constrains in code
+
+Checked against Cloudflare's own pricing pages on 2026-09-22. Nothing here can produce a charge: on
+Workers Free the account has no payment method and over-limit usage fails instead of billing.
+
+| Resource | Free allowance | What this build uses |
+|---|---|---|
+| Worker requests | 100,000/day | a handful a day, one per dashboard load |
+| Static asset requests | free and unlimited | the whole client, so the SPA does not count |
+| CPU per invocation | 10 ms | the food parse measured 0.47 ms; nothing else is heavy |
+| Cron triggers | 5 per account | 1, every 15 minutes |
+| D1 rows read | 5 million/day | about 10 per dashboard load |
+| D1 rows written | 100,000/day | about 11,000/day with both ICS feeds live |
+| D1 storage | 5 GB total | megabytes; snapshots dedupe on body hash |
+| D1 queries per invocation | **50** | 38 measured for the worst tick, see below |
+| Workers AI | 10,000 neurons/day | about 16 per dining recommendation, cached 12 hours |
+| Workers Builds | 3,000 minutes/month | about 2 minutes per push |
+
+The 50-query ceiling is the one that shaped the code, and three decisions exist only because of it:
+
+- **The cron polls two sources per invocation**, not all four. All four measured **54 queries**, over
+  the ceiling; the two most expensive (both ICS feeds, ~80 rows each) measure **38**. The rest stay
+  due for the next tick, 15 minutes later, and `pollDue` returns their ids as `deferred` so the
+  deferral is visible instead of silent.
+- **The schema is created behind a probe.** A cron tick gets a fresh isolate, so running ten
+  `CREATE TABLE` statements every time would spend a fifth of the budget before any work. One
+  `sqlite_master` lookup replaces it.
+- **Rows are written in multi-row `VALUES` statements.** A statement per row cost 21 queries for one
+  day of menus; eight rows per statement costs 3.
+
+Two more, from the rows-read side: the run receipt log is pruned to 7 days (unbounded growth turns
+the latest-run-per-source query into a full table scan on every dashboard load), and a body already
+in `raw_snapshot` is never gzipped again (compression is CPU, and the menu page is 290 KB).
+
+Measurements come from `test/worker.test.mjs`, which counts prepared statements against a mocked D1
+binding and fails if a tick or a dashboard load crosses 50.
+
 Verified limits, Workers Free vs Paid:
 
 | Limit | Free | Paid ($5/mo) |

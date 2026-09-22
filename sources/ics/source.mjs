@@ -14,6 +14,14 @@ export const needsSecret = true;
 
 const UA = 'uni-dashboard/0.1 (+personal dashboard)';
 
+/**
+ * Node module names are assembled at runtime so a bundler cannot fold the concatenation back into
+ * a static specifier and pull the module into a Worker bundle.
+ */
+function nodeSpecifier(name) {
+  return 'node:' + name;
+}
+
 /** No fetch in this app is unbounded: a hung socket would stall the whole poll loop. */
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -41,10 +49,11 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
         return { status: 0, contentType: '', body: '', bytes: 0, missingSecret: true };
       }
       // file: targets exist so fixtures can exercise this path before the real tokens exist.
-      // The import is dynamic and inside the branch, so the module stays runtime-neutral and a
-      // Worker bundle never pulls in node:fs.
+      // The specifier is built at runtime on purpose: a literal import('node:fs/promises') is
+      // resolved by the bundler at build time, which is how a Worker bundle ends up carrying a
+      // node:fs it can never call. Only the fixture path on Node ever reaches this branch.
       if (target.startsWith('file:')) {
-        const { readFile } = await import('node:fs/promises');
+        const { readFile } = await import(nodeSpecifier('fs/promises'));
         const body = await readFile(new URL(target), 'utf8');
         return { status: 200, contentType: 'text/calendar', body, bytes: body.length };
       }

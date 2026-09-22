@@ -16,6 +16,7 @@ import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registr
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
+import { RUN_RETENTION_MS } from './schema.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 
 export function createServer({ store, sources = SOURCES, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true }) {
@@ -56,6 +57,9 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           store.scheduleJob(source.id, ready ? Date.now() : Date.now() + 6 * 60 * 60 * 1000);
         }
       }
+      // Same retention sweep as the Worker cron: receipts are an audit trail, not a history.
+      const pruned = await store.pruneRuns(now - RUN_RETENTION_MS);
+      if (pruned) log(`[poll] pruned ${pruned} run receipts older than ${Math.round(RUN_RETENTION_MS / 86_400_000)}d`);
     } finally {
       polling = false;
     }

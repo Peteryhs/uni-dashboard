@@ -94,6 +94,47 @@ test('due jobs are returned in due order', () => {
   assert.deepEqual(store.dueJobs(now).map((j) => j.source_id), ['sooner']);
 });
 
+test('a multi-row insert keeps every column aligned with its own row', () => {
+  const store = new SqliteStore(':memory:');
+  // 13 rows is more than one statement for timeline_event (16 params per row, 100 param ceiling).
+  const rows = Array.from({ length: 13 }, (_, i) => ({
+    source_id: 'uw-portal-ics',
+    external_id: `e${i}`,
+    observed_at: now,
+    valid_until: now + 1000,
+    kind: 'class',
+    title: `ECE 150 LEC 00${i}`,
+    location: `E7 23${10 + i}`,
+    starts_at: now + i * 60_000,
+    ends_at: now + i * 60_000 + 300_000,
+    all_day: false,
+  }));
+  store.upsertRows('timeline_event', rows);
+  const back = store.rows('timeline_event', { limit: 50 }).sort((a, b) => a.starts_at - b.starts_at);
+  assert.equal(back.length, 13);
+  for (let i = 0; i < 13; i += 1) {
+    assert.equal(back[i].title, `ECE 150 LEC 00${i}`);
+    assert.equal(back[i].location, `E7 23${10 + i}`);
+    assert.equal(back[i].starts_at, now + i * 60_000);
+  }
+});
+
+test('a second save of an identical body skips the gzip and the write', () => {
+  const store = new SqliteStore(':memory:');
+  const hash = store.saveSnapshot({ sourceId: 's', fetchedAt: now, contentType: 'text/html', body: '<html>same</html>' });
+  assert.equal(store.hasSnapshot(hash), true);
+  store.saveSnapshot({ sourceId: 's', fetchedAt: now + 1000, contentType: 'text/html', body: '<html>same</html>' });
+  assert.equal(store.snapshotCount(), 1);
+});
+
+test('run receipts older than the retention window are pruned', () => {
+  const store = new SqliteStore(':memory:');
+  store.insertRun({ source_id: 's', started_at: now - 30 * 86_400_000, finished_at: now - 30 * 86_400_000, outcome: 'ok' });
+  store.insertRun({ source_id: 's', started_at: now, finished_at: now, outcome: 'ok' });
+  assert.equal(store.pruneRuns(now - 7 * 86_400_000), 1);
+  assert.equal(store.recentRuns(10).length, 1);
+});
+
 test('the raw snapshot archive deduplicates identical bodies', () => {
   const store = new SqliteStore(':memory:');
   const a = store.saveSnapshot({ sourceId: 's', fetchedAt: now, contentType: 'text/html', body: '<html>same</html>' });

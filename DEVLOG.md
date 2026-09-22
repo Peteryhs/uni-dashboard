@@ -9,6 +9,67 @@ Chronological record of architectural changes, technical decisions, benchmarks, 
 
 ---
 
+## 2026-09-22: the Cloudflare Worker port, and the free tier that shaped it
+
+### What was added
+
+| File | Role |
+|---|---|
+| `wrangler.toml` | Worker, `[assets]` from `apps/web/dist`, D1 binding `DB`, AI binding `AI`, cron `*/15 * * * *` |
+| `apps/relay/src/worker.mjs` | `fetch` + `scheduled` handlers; the same routes as the Node relay |
+| `apps/relay/src/d1-store.mjs` | D1 adapter, same storage contract as `SqliteStore` |
+| `apps/relay/src/schema.mjs` | table shapes, DDL, row converters, shared by both adapters |
+
+The relay was already written for two targets, so the port is an adapter plus an entrypoint, not a
+rewrite. `cards.mjs` now goes through a `maybePromise` helper: with `SqliteStore` every card builder
+returns its object synchronously exactly as before, and with `D1Store` the same code returns a
+promise. The runner awaits its store calls, which is a no-op for the synchronous adapter.
+
+### Four platform facts, each found by running it
+
+1. **D1 `exec()` runs one statement per line.** The shared DDL wraps `CREATE TABLE` across lines, so
+   it arrived truncated (`incomplete input: SQLITE_ERROR`). The schema is now prepared statement by
+   statement and run as one `batch()`, and a test asserts `exec()` is never used for it.
+2. **The Worker bundle must resolve no `node:` module.** It was resolving four: `node:sqlite` via the
+   storage import, `node:crypto` and `node:fs` via the AI module (a cache key and a dev cache file),
+   and `node:fs/promises` via the ICS fixture path. Fixed by moving the pure schema into
+   `schema.mjs`, reaching optional Node builtins through `process.getBuiltinModule`, and building the
+   fixture specifier at runtime so no bundler folds it back into a static import. The built bundle
+   now contains zero `node:` specifiers, checked by grepping it.
+3. **`env.AI` has no local emulation.** `wrangler dev` tries a remote proxy session for it, which
+   needs credentials, so local development runs a config without the AI binding. The AI route then
+   fails loudly with "credentials not configured", which is the honest behaviour and is now a test.
+4. **The free tier caps D1 queries at 50 per invocation.** All four sources in one tick measured 54,
+   over the ceiling. Three changes came out of that number: the cron polls two sources per tick and
+   reports the rest as `deferred`; the schema is created behind a single `sqlite_master` probe
+   instead of ten `CREATE` statements per fresh isolate; and rows are written in multi-row `VALUES`
+   statements (21 dishes went from 21 queries to 3). Worst measured tick is now 38.
+
+Two smaller ones on the read side: the run receipt log is pruned to 7 days, because unbounded growth
+turns the latest-run-per-source query into a full table scan on every dashboard load, and a body
+already in `raw_snapshot` is never gzipped twice.
+
+### Also fixed on the way through
+
+- `cards.mjs` passed database nulls straight into card payloads, so a row with no `url`, `subtitle`,
+  `location` or `all_day` failed contract validation and took the whole bundle down with it. The D1
+  end-to-end test is what surfaced it; the Node tests had always seeded those fields.
+- The model picker offered `@cf/zhipu/glm-4.7-flash`. The live Workers AI catalogue has it under
+  `@cf/zai-org/glm-4.7-flash`, so that entry would have failed on selection.
+
+### Verified
+
+99/99 tests under `TZ=America/Toronto` and `TZ=UTC`. The Worker was run locally against a real D1 and
+the live feeds: `/healthz`, `/v1/dashboard`, `/v1/health/sources`, `/v1/poll`, `/v1/credentials`,
+`/v1/ai/models`, the SPA fallback, the 404 route list, and the `scheduled` handler. The poll wrote 21
+dishes from the live menu page and 1 notice from live `status.json`; both unconfigured token feeds
+reported `skipped` and their cards rendered `degraded` rather than an empty schedule. The bundle
+builds with all three bindings (`wrangler deploy --dry-run`).
+
+Not verified: the AI route on a deployed Worker, which needs the account.
+
+---
+
 ## 2026-09-21: v0.2.0 - Antislop Cleansing, Dynamic Routing & Dashboard Refinement
 
 ### 1. Context & Motivation

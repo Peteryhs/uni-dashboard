@@ -6,9 +6,6 @@
  * 2. Node.js relay / CLI / VPS: calls Cloudflare Workers AI REST API if credentials are set
  * 3. Offline / dev fallback: deterministic rule-based ranking engine if no credentials are configured
  */
-import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { FoodAiRecommendation } from '#contract/card-data.mjs';
 
 try {
@@ -24,7 +21,7 @@ export const POPULAR_MODELS = [
     tag: 'Recommended · 4B Active MoE',
   },
   {
-    id: '@cf/zhipu/glm-4.7-flash',
+    id: '@cf/zai-org/glm-4.7-flash',
     name: 'GLM-4.7 Flash',
     tag: 'Ultra-Fast Flash',
   },
@@ -47,17 +44,40 @@ export const POPULAR_MODELS = [
 
 const FETCH_TIMEOUT_MS = 90_000;
 
-/** In-memory and persistent disk cache for evaluated recommendations: key -> { data, expiresAt } */
+/** In-memory cache of evaluated recommendations: key -> { data, expiresAt } */
 const recommendationCache = new Map();
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours (matches menu update cadence)
-const CACHE_FILE = resolve(process.cwd(), '.ai-cache.json');
+
+/**
+ * Node builtins are reached through getBuiltinModule, never through a static import.
+ *
+ * The disk cache is a local-development nicety. A static `import ... from 'node:fs'` here made a
+ * Cloudflare Worker bundle resolve node:fs for a cache file that a Worker could never write:
+ * Workers have no writable filesystem and no getBuiltinModule, so they keep the in-memory cache
+ * and skip the disk one.
+ */
+function nodeBuiltin(name) {
+  try {
+    return globalThis.process?.getBuiltinModule?.(name) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const diskCache = (() => {
+  const fs = nodeBuiltin('node:fs');
+  const path = nodeBuiltin('node:path');
+  if (!fs || !path) return null;
+  return { fs, file: path.resolve(process.cwd(), '.ai-cache.json') };
+})();
 
 function loadPersistentCache() {
+  if (!diskCache) return;
   try {
-    if (existsSync(CACHE_FILE)) {
-      const entries = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+    const { fs, file } = diskCache;
+    if (fs.existsSync(file)) {
       const now = Date.now();
-      for (const [k, v] of Object.entries(entries)) {
+      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) {
         if (v && v.expiresAt > now && v.data) {
           recommendationCache.set(k, v);
         }
@@ -67,7 +87,9 @@ function loadPersistentCache() {
 }
 
 function savePersistentCache() {
+  if (!diskCache) return;
   try {
+    const { fs, file } = diskCache;
     const now = Date.now();
     const obj = {};
     for (const [k, v] of recommendationCache.entries()) {
@@ -75,12 +97,28 @@ function savePersistentCache() {
         obj[k] = v;
       }
     }
-    writeFileSync(CACHE_FILE, JSON.stringify(obj, null, 2), 'utf8');
+    fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
   } catch {}
 }
 
 // Populate cache on startup
 loadPersistentCache();
+
+/**
+ * Cache key: FNV-1a run twice with different offsets, hex encoded. Dependency-free, stable across
+ * runtimes, and enough to key a 12 hour cache on. This used to be node:crypto sha256, which the
+ * cache key never needed.
+ */
+function hashKey(text) {
+  let h1 = 0x811c9dc5;
+  let h2 = 0xc9dc5118;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0;
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+}
 
 export function cacheKey(serviceDate, model, tasteProfile) {
   const payload = JSON.stringify({
@@ -91,15 +129,14 @@ export function cacheKey(serviceDate, model, tasteProfile) {
     goals: (tasteProfile?.dietaryGoals ?? []).slice().sort(),
     diet: tasteProfile?.dietaryFilter ?? 'all',
   });
-  return createHash('sha256').update(payload).digest('hex');
+  return hashKey(payload);
 }
 
 export function clearAiCache() {
   recommendationCache.clear();
+  if (!diskCache) return;
   try {
-    if (existsSync(CACHE_FILE)) {
-      writeFileSync(CACHE_FILE, '{}', 'utf8');
-    }
+    diskCache.fs.writeFileSync(diskCache.file, '{}', 'utf8');
   } catch {}
 }
 

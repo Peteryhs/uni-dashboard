@@ -1,0 +1,43 @@
+# Cloudflare deployment: one Worker serves the API, the static client and the cron poller.
+#
+#   npm run web:build          # apps/web -> apps/web/dist, which [assets] below uploads
+#   npx wrangler d1 create uni-dashboard     # once, then paste the id into database_id
+#   npx wrangler secret put PORTAL_ICS_URL   # and LEARN_ICS_URL, RELAY_TOKEN
+#   npx wrangler deploy
+#
+# Nothing here is secret. Token feed URLs and the device token are Worker secrets, never vars.
+
+name = "uni-dashboard"
+main = "apps/relay/src/worker.mjs"
+compatibility_date = "2026-09-01"
+# nodejs_compat is needed for process.env (the source adapters read it) and for Buffer/Blob paths
+# the storage and AI modules use. No Node-only module is imported by the Worker entrypoint.
+compatibility_flags = ["nodejs_compat"]
+
+# The Vite client, served from the same origin as /v1 so there is no CORS path anywhere.
+# single-page-application means unknown paths fall back to index.html instead of 404.
+[assets]
+directory = "apps/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Canonical rows. D1 is SQLite, which is the dialect the storage interface was written against.
+# The schema is created by D1Store.init() on first use (CREATE TABLE IF NOT EXISTS), so there is no
+# migration step to run by hand.
+[[d1_databases]]
+binding = "DB"
+database_name = "uni-dashboard"
+database_id = "PASTE_THE_ID_FROM_wrangler_d1_create"
+
+# Workers AI: the dining advisor calls env.AI.run(), so no CLOUDFLARE_API_TOKEN is needed on the
+# Worker and there is no REST round trip.
+[ai]
+binding = "AI"
+
+# The cron only asks the job table what is due. Per-source cadence and the failure backoff live in
+# that table, so this interval just sets how often the table is consulted.
+[triggers]
+crons = ["*/15 * * * *"]
+
+[observability]
+enabled = true

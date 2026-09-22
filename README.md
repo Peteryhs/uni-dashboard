@@ -3,7 +3,9 @@
 A live dashboard for Waterloo student life: one web app and one Android app, fed by real
 campus data, readable at a glance.
 
-Status: the v1 relay works end to end and is covered by tests. Not deployed yet.
+Status: the v1 relay works end to end and is covered by tests. The same code also runs as a
+Cloudflare Worker (built and exercised locally against a real D1 and the live feeds, not deployed to
+an account yet).
 
 ## What runs today
 
@@ -18,11 +20,25 @@ Status: the v1 relay works end to end and is covered by tests. Not deployed yet.
 The two token feeds are written and tested against fixtures, and they stay blocked until the
 owner copies the URLs out of Portal and LEARN. Everything else is real data.
 
+## Where it runs
+
+Two targets, one codebase:
+
+| | Local / VPS | Cloudflare |
+|---|---|---|
+| process | `apps/relay/src/server.mjs`, polls on an interval | `apps/relay/src/worker.mjs`, polls on a cron |
+| storage | `store.mjs` (node:sqlite) | `d1-store.mjs` (D1), same contract |
+| client | `apps/web/dist` read from disk | `apps/web/dist` uploaded as static assets |
+| secrets | `.env` | Worker secrets |
+
+`docs/DEPLOYMENT.md` has the deploy steps and the free-tier budget the code is shaped around (50 D1
+queries per invocation, measured 38 for the worst cron tick).
+
 ## Quickstart
 
 ```bash
 npm install
-npm test                                          # 66 tests
+npm test                                          # 99 tests
 node apps/relay/src/cli.mjs sources               # readiness, and which env var is missing
 node apps/relay/src/cli.mjs poll                  # fetch, parse, validate, store
 node apps/relay/src/cli.mjs bundle                # the four-card payload a client renders
@@ -30,6 +46,14 @@ node apps/relay/src/cli.mjs health                 # per-source last run, age, c
 node apps/relay/src/cli.mjs serve                  # http://127.0.0.1:8787/v1/dashboard
 node tools/inspect-db.mjs                         # what is actually stored, per shape
 node tools/menu-parse-bench.mjs                   # the CPU budget check
+```
+
+Cloudflare, without an account:
+
+```bash
+npm run worker:check    # bundle the Worker and print the bindings, no deploy
+npm run worker:dev      # build the client, then run the Worker on a local D1
+npm run deploy          # build the client, then wrangler deploy (needs a real D1 id)
 ```
 
 Set `PORTAL_ICS_URL` and `LEARN_ICS_URL` for the real feeds. Without them those two sources

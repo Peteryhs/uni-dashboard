@@ -8,7 +8,6 @@
  * login page from deleting a timetable.
  */
 import { validateRows } from '#contract/canonical.mjs';
-import { sha256 } from './store.mjs';
 
 export async function runSource(source, store, { now = Date.now(), date = null, dryRun = false } = {}) {
   const startedAt = now;
@@ -33,13 +32,13 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
   } catch (e) {
     receipt.error = `fetch threw: ${e.message}`;
     receipt.finished_at = Date.now();
-    if (!dryRun) store.insertRun(receipt);
+    if (!dryRun) await store.insertRun(receipt);
     return receipt;
   }
 
   receipt.http_status = raw.status || null;
   receipt.bytes = raw.bytes ?? 0;
-  receipt.body_sha256 = raw.body ? sha256(raw.body) : '';
+  receipt.body_sha256 = raw.body ? await store.sha256(raw.body) : '';
 
   const verdict = source.plausible(raw);
   if (!verdict.ok) {
@@ -61,8 +60,8 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     };
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      store.insertRun(receipt);
-      if (raw.body) store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+      await store.insertRun(receipt);
+      if (raw.body) await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
     }
     return receipt;
   }
@@ -75,8 +74,8 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     receipt.error = `parse threw: ${e.message}`;
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      store.insertRun(receipt);
-      store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+      await store.insertRun(receipt);
+      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
     }
     return receipt;
   }
@@ -89,8 +88,8 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     receipt.error = `contract rejected rows: ${e.message}`;
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      store.insertRun(receipt);
-      store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+      await store.insertRun(receipt);
+      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
     }
     return receipt;
   }
@@ -104,8 +103,8 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     receipt.error = '';
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      store.insertRun(receipt);
-      store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+      await store.insertRun(receipt);
+      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
     }
     return receipt;
   }
@@ -117,19 +116,19 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     return receipt;
   }
 
-  const written = store.upsertRows(source.shape, rows);
+  const written = await store.upsertRows(source.shape, rows);
   // A source may declare a partition column (the food menu's service_date). Tombstoning then
   // stays inside the partitions this run covered, so fetching another day cannot delete this one.
   const tombstoneScope = source.scopeColumn
     ? { column: source.scopeColumn, values: [...new Set(rows.map((r) => r[source.scopeColumn]))] }
     : {};
-  const tombstones = store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
-  store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+  const tombstones = await store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
+  await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
 
   receipt.outcome = 'ok';
   receipt.rows_written = written;
   receipt.tombstones = tombstones;
   receipt.finished_at = Date.now();
-  store.insertRun(receipt);
+  await store.insertRun(receipt);
   return receipt;
 }
