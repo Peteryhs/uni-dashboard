@@ -1,5 +1,8 @@
+import { useMemo, useState } from 'react';
 import { RefreshCw, WifiOff, LayoutGrid, LayoutList, Utensils, CalendarClock, ClipboardList, ShieldAlert } from 'lucide-react';
 import { CardRenderer } from '@/components/cards';
+import { DueSoonDetail } from '@/components/cards/due-soon-detail';
+import { taskKey } from '@/components/cards/due-soon';
 import { SourcesPanel } from '@/components/sources-panel';
 import { CustomizationSheet } from '@/components/customization-sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -32,6 +35,23 @@ export default function App() {
   } = usePreferences();
 
   const isCompact = preferences.density === 'compact';
+
+  /**
+   * The task whose detail panel is open, looked up from the current bundle every render.
+   *
+   * Only the key is stored, so a refetch that drops the task closes the panel on its own instead of
+   * leaving a panel showing a deadline that no longer exists.
+   */
+  const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
+  const dueCard = cards.find((c) => c.type === 'due_soon') as Card<DueSoonData> | undefined;
+  const selectedTask = useMemo(() => {
+    if (!selectedTaskKey || !dueCard) return null;
+    for (const group of dueCard.data.courses) {
+      const item = group.items.find((i) => taskKey(i) === selectedTaskKey);
+      if (item) return { item, course: group.course };
+    }
+    return null;
+  }, [selectedTaskKey, dueCard]);
 
   return (
     <div className="relative min-h-dvh bg-background text-foreground antialiased selection:bg-live/30 selection:text-live">
@@ -84,11 +104,29 @@ export default function App() {
                     <CardRenderer key={nextCard.id} card={nextCard} now={now} className="h-full" />
                   )}
                   {dueCard && (
-                    <CardRenderer key={dueCard.id} card={dueCard} now={now} className="h-full" />
+                    <CardRenderer
+                      key={dueCard.id}
+                      card={dueCard}
+                      now={now}
+                      className="h-full"
+                      selectedTaskKey={selectedTaskKey}
+                      onSelectTask={(item) => setSelectedTaskKey(taskKey(item))}
+                    />
                   )}
                 </div>
               );
             })()}
+
+            {/* The task detail panel, full width, right below the commitments row. */}
+            {selectedTask && dueCard && (
+              <DueSoonDetail
+                card={dueCard}
+                item={selectedTask.item}
+                course={selectedTask.course}
+                now={now}
+                onClose={() => setSelectedTaskKey(null)}
+              />
+            )}
 
             {/* Remaining Cards (Dining / Food full width) */}
             {cards

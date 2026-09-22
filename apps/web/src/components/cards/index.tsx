@@ -14,25 +14,49 @@ import { DueSoonCard } from '@/components/cards/due-soon';
 import { FoodCard } from '@/components/cards/food';
 import { NextCommitmentCard } from '@/components/cards/next-commitment';
 import { CardShell } from '@/components/card-shell';
-import type { Card as CardT } from '@/lib/contract';
+import type { Card as CardT, DueSoonItem } from '@/lib/contract';
 import { cn } from '@/lib/utils';
 
-export function CardRenderer({ card, now, className }: { card: CardT; now: number; className?: string }) {
+export function CardRenderer({
+  card,
+  now,
+  className,
+  selectedTaskKey = null,
+  onSelectTask,
+}: {
+  card: CardT;
+  now: number;
+  className?: string;
+  selectedTaskKey?: string | null;
+  onSelectTask?: (item: DueSoonItem, course: string) => void;
+}) {
   return (
     <div className={cn('h-full flex flex-col', className)}>
       <CardErrorBoundary card={card} now={now}>
-        {renderCard(card, now)}
+        {renderCard(card, now, selectedTaskKey, onSelectTask)}
       </CardErrorBoundary>
     </div>
   );
 }
 
-function renderCard(card: CardT, now: number): ReactNode {
+function renderCard(
+  card: CardT,
+  now: number,
+  selectedTaskKey: string | null,
+  onSelectTask?: (item: DueSoonItem, course: string) => void,
+): ReactNode {
   switch (card.type) {
     case 'next_commitment':
       return <NextCommitmentCard card={card as CardT<never>} now={now} />;
     case 'due_soon':
-      return <DueSoonCard card={card as CardT<never>} now={now} />;
+      return (
+        <DueSoonCard
+          card={card as CardT<never>}
+          now={now}
+          selectedKey={selectedTaskKey}
+          onSelectTask={onSelectTask}
+        />
+      );
     case 'food':
       return <FoodCard card={card as CardT<never>} now={now} />;
     case 'alert':

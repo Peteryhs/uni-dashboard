@@ -118,12 +118,16 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
             valid_until: now + 24 * 60 * 60 * 1000,
             kind: this.classify(event),
             title: event.summary || '(untitled)',
-            subtitle: '',
+            // Portal puts the course name in DESCRIPTION ("Fundamentals of Programming") and the room
+            // in LOCATION. LEARN is the other way round: LOCATION holds the course and DESCRIPTION
+            // holds instructions plus the links, which the card builder parses out of `description`.
+            subtitle: this.role === 'portal' ? (event.description ?? '').trim().slice(0, 120) : '',
             location: event.location ?? '',
             all_day: Boolean(event.allDay),
             starts_at: startsAt,
             ends_at: occ.end,
             url: event.url ?? '',
+            description: event.description ?? '',
           });
         }
       }

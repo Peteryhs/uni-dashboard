@@ -7,6 +7,7 @@
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
 import { config } from './config.mjs';
+import { taskContext } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 
 const MIN = 60 * 1000;
@@ -151,13 +152,20 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
       const due = (rawDue || []).slice().sort((a, b) => a.starts_at - b.starts_at);
       const byCourse = new Map();
       for (const d of due) {
-        const course = courseOf(d.title);
+        // The course the feed gives us wins over the one guessed from the title, and the links and
+        // instructions live in the description text, so they are parsed here rather than in the UI.
+        const ctx = taskContext({ title: d.title, location: d.location, description: d.description });
+        const course = ctx.course || courseOf(d.title);
         if (!byCourse.has(course)) byCourse.set(course, []);
         byCourse.get(course).push({
           title: d.title,
           starts_at: d.starts_at,
           ...(d.kind ? { kind: d.kind } : {}),
-          ...(d.url ? { url: d.url } : {}),
+          ...(ctx.url ? { url: ctx.url } : {}),
+          ...(ctx.course ? { course: ctx.course } : {}),
+          ...(ctx.place ? { location: ctx.place } : {}),
+          ...(ctx.body ? { description: ctx.body.slice(0, 1500) } : {}),
+          ...(ctx.links.length ? { links: ctx.links } : {}),
         });
       }
 

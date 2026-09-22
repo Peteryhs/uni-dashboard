@@ -30,7 +30,18 @@ function getCourseTone(course: string) {
   };
 }
 
-export function DueSoonCard({ card, now }: { card: CardT<DueSoonData>; now: number }) {
+export function DueSoonCard({
+  card,
+  now,
+  selectedKey = null,
+  onSelectTask,
+}: {
+  card: CardT<DueSoonData>;
+  now: number;
+  /** key of the task whose detail panel is open, so the row can show it is the selected one */
+  selectedKey?: string | null;
+  onSelectTask?: (item: DueSoonData['courses'][number]['items'][number], course: string) => void;
+}) {
   const d = card.data;
   const muted = mutedIfStale(card.state);
   const { preferences } = usePreferences();
@@ -169,6 +180,8 @@ export function DueSoonCard({ card, now }: { card: CardT<DueSoonData>; now: numb
                 muted={muted}
                 compact={true}
                 course={item.course}
+                selected={selectedKey === taskKey(item)}
+                onSelect={onSelectTask}
               />
             ))}
           </ul>
@@ -219,6 +232,9 @@ export function DueSoonCard({ card, now }: { card: CardT<DueSoonData>; now: numb
                       item={item}
                       now={now}
                       muted={muted}
+                      course={group.course}
+                      selected={selectedKey === taskKey(item)}
+                      onSelect={onSelectTask}
                     />
                   ))}
                 </ul>
@@ -231,18 +247,27 @@ export function DueSoonCard({ card, now }: { card: CardT<DueSoonData>; now: numb
   );
 }
 
+/** One key per task, used by the row and by the detail panel so they cannot disagree. */
+export function taskKey(item: DueSoonData['courses'][number]['items'][number]) {
+  return `${item.title}@${item.starts_at}`;
+}
+
 function DueItem({
   item,
   now,
   muted,
   compact,
   course,
+  selected,
+  onSelect,
 }: {
   item: DueSoonData['courses'][number]['items'][number];
   now: number;
   muted: string;
   compact?: boolean;
   course?: string;
+  selected?: boolean;
+  onSelect?: (item: DueSoonData['courses'][number]['items'][number], course: string) => void;
 }) {
   const offset = dayOffset(item.starts_at, now);
   const when =
@@ -258,19 +283,13 @@ function DueItem({
   // Strip redundant course prefix
   const cleanTitle = item.title.replace(/^[A-Z]{2,6}\s?\d{2,3}[A-Z]?\s*[-–]\s*/, '');
   const courseTone = course ? getCourseTone(course) : null;
+  const hasDetail = Boolean(item.description || (item.links?.length ?? 0) > 0);
+  const clickable = Boolean(onSelect);
 
-  return (
-    <li
-      className={cn(
-        'group flex items-center justify-between gap-2.5 transition-colors hover:bg-secondary/40',
-        compact ? 'py-0.5 px-1.5 rounded' : 'py-1 px-2 rounded-lg',
-        urgent && 'bg-amber/5 border border-amber/20',
-      )}
-    >
+  const row = (
+    <>
       <div className="flex min-w-0 items-center gap-2">
-        {urgent && (
-          <AlertCircle className="size-3.5 shrink-0 text-amber" />
-        )}
+        {urgent && <AlertCircle className="size-3.5 shrink-0 text-amber" />}
         {course && (
           <span
             className={cn(
@@ -281,34 +300,18 @@ function DueItem({
             {course}
           </span>
         )}
-        {item.url ? (
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="group/link flex min-w-0 items-baseline gap-1 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live rounded"
-          >
-            <span
-              className={cn(
-                'truncate text-xs transition-colors group-hover/link:text-live-foreground',
-                urgent ? 'font-medium text-foreground' : 'text-zinc-200',
-                muted,
-              )}
-            >
-              {cleanTitle}
-            </span>
-            <ExternalLink className="size-2.5 shrink-0 self-center text-zinc-400 opacity-60 transition-opacity group-hover/link:opacity-100" />
-          </a>
-        ) : (
-          <span
-            className={cn(
-              'truncate text-xs',
-              urgent ? 'font-medium text-foreground' : 'text-zinc-200',
-              muted,
-            )}
-          >
-            {cleanTitle}
-          </span>
+        <span
+          className={cn(
+            'truncate text-xs',
+            urgent ? 'font-medium text-foreground' : 'text-zinc-200',
+            muted,
+          )}
+        >
+          {cleanTitle}
+        </span>
+        {/* a hint that this task has somewhere to go, without stealing the row's click */}
+        {hasDetail && (
+          <ExternalLink className="size-2.5 shrink-0 text-zinc-500" aria-hidden="true" />
         )}
       </div>
 
@@ -326,6 +329,32 @@ function DueItem({
           {when}
         </span>
       </div>
+    </>
+  );
+
+  const shared = cn(
+    'group flex w-full items-center justify-between gap-2.5 text-left transition-colors',
+    compact ? 'py-0.5 px-1.5 rounded' : 'py-1 px-2 rounded-lg',
+    urgent && 'bg-amber/5 border border-amber/20',
+    clickable && 'hover:bg-secondary/40 cursor-pointer',
+    selected && 'bg-secondary/60 ring-1 ring-live/40',
+  );
+
+  return (
+    <li>
+      {clickable ? (
+        <button
+          type="button"
+          onClick={() => onSelect?.(item, course ?? '')}
+          aria-expanded={selected}
+          aria-label={`Show detail for ${cleanTitle}`}
+          className={cn(shared, 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live')}
+        >
+          {row}
+        </button>
+      ) : (
+        <div className={shared}>{row}</div>
+      )}
     </li>
   );
 }

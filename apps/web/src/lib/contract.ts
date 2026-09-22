@@ -98,11 +98,25 @@ export interface NextCommitmentData {
   weather?: WeatherSlice | null;
 }
 
+export interface DueSoonLink {
+  label: string;
+  url: string;
+  kind: string;
+}
+
 export interface DueSoonItem {
   title: string;
   starts_at: number;
   kind?: string;
   url?: string;
+  /** the course the feed states, e.g. "ECE 198" */
+  course?: string;
+  /** a room or venue; usually empty for LEARN tasks, where LOCATION holds the course instead */
+  location?: string;
+  /** the task's own instructions, link plumbing removed */
+  description?: string;
+  /** every link the feed carried, most useful first (dropbox and quiz before "view event") */
+  links?: DueSoonLink[];
 }
 
 export interface DueSoonData {

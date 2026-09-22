@@ -29,6 +29,13 @@ export const TimelineEvent = z.object({
   starts_at: EPOCH_MS,
   ends_at: EPOCH_MS,
   url: z.string().default(''),
+  /**
+   * The feed's own text for this event. It matters more than it looks: LEARN puts the task's links
+   * and instructions in DESCRIPTION and nothing in the URL property, so dropping this field drops
+   * the only route from a deadline to the dropbox or quiz it belongs to. Zod strips unknown keys, so
+   * a field that is not declared here never reaches storage at all.
+   */
+  description: z.string().default(''),
 });
 
 export const MenuItem = z.object({

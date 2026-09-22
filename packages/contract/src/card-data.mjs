@@ -33,6 +33,27 @@ export const NextCommitmentData = z.object({
   weather: WeatherSlice.nullable().optional(),
 });
 
+export const DueSoonLink = z.object({
+  label: z.string(),
+  url: z.string(),
+  kind: z.string(),
+});
+
+export const DueSoonItem = z.object({
+  title: z.string(),
+  starts_at: EPOCH_MS,
+  kind: z.string().optional(),
+  url: z.string().optional(),
+  /** the course the feed itself states, when it states one */
+  course: z.string().optional(),
+  /** a room or venue; for LEARN tasks the course arrives in LOCATION, so this is usually empty */
+  location: z.string().optional(),
+  /** the instructions, with the link plumbing stripped out */
+  description: z.string().optional(),
+  /** every link the feed carried, most useful first */
+  links: z.array(DueSoonLink).default([]),
+});
+
 export const DueSoonData = z.object({
   count: z.number().int().nonnegative(),
   nearest_at: EPOCH_MS.nullable(),
@@ -41,14 +62,7 @@ export const DueSoonData = z.object({
     z.object({
       course: z.string(),
       count: z.number().int().nonnegative(),
-      items: z.array(
-        z.object({
-          title: z.string(),
-          starts_at: EPOCH_MS,
-          kind: z.string().optional(),
-          url: z.string().optional(),
-        }),
-      ),
+      items: z.array(DueSoonItem),
     }),
   ),
   error: z.string().optional(),
