@@ -371,7 +371,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
   return { server, pollDue, store };
 }
 
-export async function start({ port = 8787, dbPath = 'relay.db', intervalMs = 30 * 1000, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true } = {}) {
+export async function start({ port = 8787, host = '127.0.0.1', dbPath = 'relay.db', intervalMs = 30 * 1000, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true } = {}) {
   const store = new SqliteStore(dbPath);
   const { server, pollDue } = createServer({ store, token, log, webRoot, serveWeb });
 
@@ -391,8 +391,9 @@ export async function start({ port = 8787, dbPath = 'relay.db', intervalMs = 30 
   }, intervalMs);
   timer.unref?.();
 
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
-  log(`relay listening on http://127.0.0.1:${port}${token ? ' (bearer auth on)' : ' (OPEN, no token set)'}`);
-  if (hasWeb) log(`dashboard at  http://127.0.0.1:${port}/`);
+  await new Promise((resolve) => server.listen(port, host, resolve));
+  log(`relay listening on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}${token ? ' (bearer auth on)' : ' (OPEN, no token set)'}`);
+  if (host === '0.0.0.0') log(`reachable from another device on this network at http://<this-box-ip>:${port}/`);
+  if (hasWeb) log(`dashboard at  http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`);
   return { server, store, pollDue, close: () => { clearInterval(timer); server.close(); store.close(); } };
 }

@@ -130,7 +130,15 @@ switch (cmd) {
 
   case 'serve': {
     const { start } = await import('./server.mjs');
-    const handle = await start({ port: numberFlag('port', 8787, { min: 1, max: 65535 }), dbPath, intervalMs: numberFlag('interval', 30000, { min: 1000 }) });
+    const handle = await start({
+      port: numberFlag('port', 8787, { min: 1, max: 65535 }),
+      dbPath,
+      intervalMs: numberFlag('interval', 30000, { min: 1000 }),
+      // 127.0.0.1 by default. --host 0.0.0.0 is for the case where the relay runs on one machine and
+      // you want to click it from another, which is the normal case here: the box has the fixtures
+      // and the browser is on a different device.
+      host: typeof flags.host === 'string' ? flags.host : '127.0.0.1',
+    });
     process.on('SIGINT', () => {
       handle.close();
       process.exit(0);
