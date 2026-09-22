@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
-import { dueSoonCard, foodCard, alertCard, nextCommitmentCard, courseOf } from '../apps/relay/src/cards.mjs';
+import { dueSoonCard, foodCard, alertCard, nextCommitmentCard, courseOf, significant } from '../apps/relay/src/cards.mjs';
 import { config } from '../apps/relay/src/config.mjs';
 
 const now = Date.UTC(2026, 8, 21, 12); // 2026-09-21 08:00 in Toronto
@@ -156,6 +156,60 @@ test('course codes are extracted from several title shapes', () => {
   assert.equal(courseOf('ECE 150 - Assignment 3 due'), 'ECE 150');
   assert.equal(courseOf('MATH115 Quiz'), 'MATH115');
   assert.equal(courseOf('Some announcement'), 'Other');
+});
+
+test('significant identifies exams and major milestones without including standard assignments', () => {
+  assert.equal(significant({ kind: 'exam', title: 'Calculus Final' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'ECE190 midterm test' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'Group Deliverable 1 (Part 1) submission [Sec 002 Groups 1-20] - Due' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'Major Assignment 1: Memo Report' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'Process Task: Progress Report' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'Project 1 - Grade calculator - Due' }), true);
+  assert.equal(significant({ kind: 'deadline', title: 'Quiz #2' }), false);
+  assert.equal(significant({ kind: 'deadline', title: 'Assignment #2 due' }), false);
+});
+
+test('dueSoonCard separates Opens, Due, Ahead and ignores portal admin deadlines', () => {
+  const store = new SqliteStore(':memory:');
+  const DAY = 24 * 3600_000;
+  store.upsertRows('timeline_event', [
+    // Portal admin event that had deadline kind
+    { source_id: 'uw-portal-ics', external_id: 'p1', observed_at: now, valid_until: now + DAY, kind: 'deadline', title: 'Not Fees Arranged (NFA) holds applied', starts_at: now + 2 * DAY, ends_at: now + 2 * DAY },
+    // Learn event: due within 7 days
+    { source_id: 'uw-learn-ics', external_id: 'l1#2026-09-23', uid: 'l1', observed_at: now, valid_until: now + DAY, kind: 'deadline', title: 'Prework 2 Quiz - Due', starts_at: now + 2 * DAY, ends_at: now + 2 * DAY },
+    // Learn event: opens within 7 days
+    { source_id: 'uw-learn-ics', external_id: 'l2#2026-09-24', uid: 'l2', observed_at: now, valid_until: now + DAY, kind: 'deadline', title: 'MATH 117 Tutorial 4 - Available', starts_at: now + 3 * DAY, ends_at: now + 3 * DAY },
+    // Learn event: significant ahead event in 29 days
+    { source_id: 'uw-learn-ics', external_id: 'l3#2026-10-20', uid: 'l3', observed_at: now, valid_until: now + DAY, kind: 'deadline', title: 'ECE190 midterm test', starts_at: now + 29 * DAY, ends_at: now + 29 * DAY },
+    // Learn event: regular non-significant assignment in 35 days (should NOT appear in ahead)
+    { source_id: 'uw-learn-ics', external_id: 'l4#2026-10-26', uid: 'l4', observed_at: now, valid_until: now + DAY, kind: 'deadline', title: 'Assignment #5 due', starts_at: now + 35 * DAY, ends_at: now + 35 * DAY },
+  ]);
+
+  const card = dueSoonCard(store, { now });
+  // 1. Portal event is excluded
+  assert.equal(card.data.due.some((d) => d.title.includes('Fees Arranged')), false);
+  assert.equal(card.data.items.some((d) => d.title.includes('Fees Arranged')), false);
+
+  // 2. Opens contains the '- Available' event and minimal fields (no links/description)
+  assert.equal(card.data.opens.length, 1);
+  assert.equal(card.data.opens[0].title, 'MATH 117 Tutorial 4 - Available');
+  assert.equal(card.data.opens[0].phase, 'opens');
+  assert.equal(card.data.opens[0].description, undefined);
+
+  // 3. Due contains the '- Due' event
+  assert.equal(card.data.due.length, 1);
+  assert.equal(card.data.due[0].title, 'Prework 2 Quiz - Due');
+  assert.equal(card.data.due[0].phase, 'due');
+
+  // 4. Ahead contains ECE190 midterm grouped by week, and excludes Assignment #5 due
+  assert.ok(card.data.ahead.length >= 1);
+  const allAheadItems = card.data.ahead.flatMap((g) => g.items);
+  assert.ok(allAheadItems.some((i) => i.title === 'ECE190 midterm test'));
+  assert.equal(allAheadItems.some((i) => i.title.includes('Assignment #5')), false);
+
+  // 5. next_major points to ECE190 midterm
+  assert.ok(card.data.next_major);
+  assert.equal(card.data.next_major.title, 'ECE190 midterm test');
 });
 
 test('next commitment prefers the sooner of class and deadline', async () => {

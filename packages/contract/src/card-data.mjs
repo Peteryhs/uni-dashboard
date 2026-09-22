@@ -52,6 +52,23 @@ export const DueSoonItem = z.object({
   description: z.string().optional(),
   /** every link the feed carried, most useful first */
   links: z.array(DueSoonLink).default([]),
+  uid: z.string().optional(),
+  occurrence_id: z.string().optional(),
+  phase: z.enum(['due', 'opens']).optional(),
+  all_day: z.boolean().optional(),
+  significant: z.boolean().optional(),
+  group_scope: z
+    .object({
+      section: z.number().nullable(),
+      groups: z.tuple([z.number(), z.number()]).nullable(),
+    })
+    .optional(),
+});
+
+export const DueSoonAheadGroup = z.object({
+  week_start: EPOCH_MS,
+  label: z.string(),
+  items: z.array(DueSoonItem),
 });
 
 export const DueSoonData = z.object({
@@ -67,6 +84,17 @@ export const DueSoonData = z.object({
       items: z.array(DueSoonItem),
     }),
   ),
+  due: z.array(DueSoonItem).default([]),
+  opens: z.array(DueSoonItem).default([]) ,
+  ahead: z.array(DueSoonAheadGroup).default([]),
+  next_major: z
+    .object({
+      title: z.string(),
+      course: z.string().optional(),
+      starts_at: EPOCH_MS,
+    })
+    .nullable()
+    .optional(),
   error: z.string().optional(),
 });
 

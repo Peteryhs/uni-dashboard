@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { courseFromLocation, extractLinks, descriptionBody, taskContext, unescapeIcsText } from '../apps/relay/src/task-context.mjs';
+import { courseFromLocation, extractLinks, descriptionBody, taskContext, unescapeIcsText, phaseOf, groupScope } from '../apps/relay/src/task-context.mjs';
 
 /**
  * Every string in this file was copied out of the live LEARN and Portal feeds on 2026-09-22, so the
@@ -96,4 +96,30 @@ test('a task with no links anywhere does not invent one', () => {
 
 test('ICS escapes are undone before anything is parsed', () => {
   assert.equal(unescapeIcsText('Course Drop\\, Penalty 1\\nSecond line'), 'Course Drop, Penalty 1\nSecond line');
+});
+
+test('phaseOf separates opening dates from due dates', () => {
+  assert.equal(phaseOf('MATH 117 Tutorial 4 - Available'), 'opens');
+  assert.equal(phaseOf('Project Team Contract - Available'), 'opens');
+  assert.equal(phaseOf('Prework 2 Quiz - Due'), 'due');
+  assert.equal(phaseOf('Assignment #2 due'), 'due');
+  assert.equal(phaseOf('Residence Experience - Availability Ends'), 'due', 'Availability Ends is a deadline, not an opening');
+  assert.equal(phaseOf('ECE190 midterm test'), 'due');
+});
+
+test('groupScope parses section and group bounds from title brackets', () => {
+  const g1 = groupScope('Group Deliverable 1 (Part 1) submission [Sec 002 Groups 1-20] - Due');
+  assert.equal(g1.section, 2);
+  assert.deepEqual(g1.groups, [1, 20]);
+  assert.equal(g1.base, 'Group Deliverable 1 (Part 1) submission - Due');
+
+  const g2 = groupScope('Group Agreement Form submission [Sec 002 Groups 1-40] - Due');
+  assert.equal(g2.section, 2);
+  assert.deepEqual(g2.groups, [1, 40]);
+  assert.equal(g2.base, 'Group Agreement Form submission - Due');
+
+  const g3 = groupScope('Quiz #2');
+  assert.equal(g3.section, null);
+  assert.equal(g3.groups, null);
+  assert.equal(g3.base, 'Quiz #2');
 });

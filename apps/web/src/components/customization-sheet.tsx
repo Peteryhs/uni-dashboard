@@ -16,6 +16,7 @@ import {
   Sparkles,
   Cpu,
   Bot,
+  GraduationCap,
 } from 'lucide-react';
 import {
   Sheet,
@@ -39,12 +40,13 @@ import {
   triggerPoll,
   type CredentialsStatus,
 } from '@/lib/api';
-import type {
-  DietaryPreference,
-  LayoutDensity,
-  SpiceLevel,
-  TasteProfile,
-  UserPreferences,
+import {
+  usePreferences,
+  type DietaryPreference,
+  type LayoutDensity,
+  type SpiceLevel,
+  type TasteProfile,
+  type UserPreferences,
 } from '@/lib/preferences-store';
 import { cn } from '@/lib/utils';
 
@@ -124,6 +126,7 @@ export function CustomizationSheet({
   updateTasteProfile: (patch: Partial<TasteProfile>) => void;
   resetPreferences: () => void;
 }) {
+  const { setSection, setGroupNumber, undismissTask } = usePreferences();
   const [activeTab, setActiveTab] = useState<'preferences' | 'taste' | 'credentials'>('taste');
 
   return (
@@ -426,6 +429,100 @@ export function CustomizationSheet({
                   </p>
                 </div>
               )}
+            </div>
+
+            <Separator className="bg-border/60" />
+
+            {/* Courses & Group Scope Section */}
+            <div>
+              <Label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                <GraduationCap className="size-3.5 text-cyan-400" /> Course Group & Section
+              </Label>
+              <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
+                LEARN publishes every group's deadline; tell us yours to hide the rest.
+              </p>
+
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="course-section" className="text-xs font-medium text-foreground">
+                    Section
+                  </Label>
+                  <Input
+                    id="course-section"
+                    type="number"
+                    min={1}
+                    max={999}
+                    placeholder="e.g. 2"
+                    value={preferences.section ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setSection(val ? Number(val) : null);
+                    }}
+                    className="h-8 text-xs bg-secondary/30 border-border/70"
+                  />
+                  <p className="text-[10px] text-zinc-400">Section number (e.g. 2 for Sec 002)</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="course-group" className="text-xs font-medium text-foreground">
+                    Group Number
+                  </Label>
+                  <Input
+                    id="course-group"
+                    type="number"
+                    min={1}
+                    max={999}
+                    placeholder="e.g. 7"
+                    value={preferences.groupNumber ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      setGroupNumber(val ? Number(val) : null);
+                    }}
+                    className="h-8 text-xs bg-secondary/30 border-border/70"
+                  />
+                  <p className="text-[10px] text-zinc-400">Your assigned team or group number</p>
+                </div>
+              </div>
+
+              {/* Dismissed Tasks Manager */}
+              <div className="mt-4 pt-3 border-t border-border/40">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-foreground">
+                    Hidden Deadlines & Tasks
+                  </Label>
+                  <span className="text-[11px] font-mono text-zinc-400">
+                    {preferences.dismissedTasks.length} hidden
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  Tasks you have hidden from the deadlines card.
+                </p>
+
+                {preferences.dismissedTasks.length > 0 ? (
+                  <div className="mt-2.5 space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {preferences.dismissedTasks.map((id) => (
+                      <div
+                        key={id}
+                        className="flex items-center justify-between gap-2 rounded-md bg-secondary/25 border border-border/50 px-2.5 py-1 text-xs text-zinc-300"
+                      >
+                        <span className="truncate max-w-[280px]" title={id}>
+                          {id.includes('@') ? id.split('@')[0] : id}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => undismissTask(id)}
+                          className="h-6 px-1.5 text-[10px] text-live hover:text-live hover:bg-live/10 gap-1"
+                        >
+                          <RotateCcw className="size-2.5" /> Restore
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-zinc-400 italic">No tasks currently hidden.</p>
+                )}
+              </div>
             </div>
 
             <Separator className="bg-border/60" />

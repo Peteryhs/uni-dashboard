@@ -117,6 +117,21 @@ export interface DueSoonItem {
   description?: string;
   /** every link the feed carried, most useful first (dropbox and quiz before "view event") */
   links?: DueSoonLink[];
+  uid?: string;
+  occurrence_id?: string;
+  phase?: 'due' | 'opens';
+  all_day?: boolean;
+  significant?: boolean;
+  group_scope?: {
+    section: number | null;
+    groups: [number, number] | null;
+  };
+}
+
+export interface DueSoonAheadGroup {
+  week_start: number;
+  label: string;
+  items: DueSoonItem[];
 }
 
 export interface DueSoonData {
@@ -126,6 +141,14 @@ export interface DueSoonData {
   /** the same tasks in time order, which is the order the card reads them in */
   items?: DueSoonItem[];
   courses: { course: string; count: number; items: DueSoonItem[] }[];
+  due?: DueSoonItem[];
+  opens?: DueSoonItem[];
+  ahead?: DueSoonAheadGroup[];
+  next_major?: {
+    title: string;
+    course?: string;
+    starts_at: number;
+  } | null;
   error?: string;
 }
 

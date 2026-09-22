@@ -24,7 +24,7 @@ export function CardRenderer({
   selectedTaskKey = null,
   onSelectTask,
 }: {
-  card: CardT;
+  card: CardT<any>;
   now: number;
   className?: string;
   selectedTaskKey?: string | null;
@@ -40,7 +40,7 @@ export function CardRenderer({
 }
 
 function renderCard(
-  card: CardT,
+  card: CardT<any>,
   now: number,
   selectedTaskKey: string | null,
   onSelectTask?: (item: DueSoonItem, course: string) => void,
@@ -69,7 +69,7 @@ function renderCard(
 }
 
 interface BoundaryProps {
-  card: CardT;
+  card: CardT<any>;
   now: number;
   children: ReactNode;
 }

@@ -140,3 +140,27 @@ export function taskContext({ title = '', location = '', description = '', title
     body: descriptionBody(description),
   };
 }
+
+/** Determines whether an event signals work opening or work due. */
+export function phaseOf(title = '') {
+  return /-\s*Available\s*$/i.test(String(title ?? '').trim()) ? 'opens' : 'due';
+}
+
+const GROUP_SCOPE_RE = /\[\s*(?:Sec(?:tion)?\s*(\d+))?\s*(?:Groups?\s*(\d+)\s*-\s*(\d+))?\s*\]/i;
+
+/** Extracts section and group range from titles like "[Sec 002 Groups 1-20]". */
+export function groupScope(title = '') {
+  const raw = String(title ?? '');
+  const m = GROUP_SCOPE_RE.exec(raw);
+  if (!m || (!m[1] && !m[2])) {
+    return { section: null, groups: null, base: raw.trim() };
+  }
+  const section = m[1] ? Number(m[1]) : null;
+  const groups = m[2] && m[3] ? [Number(m[2]), Number(m[3])] : null;
+  const base = raw
+    .replace(m[0], '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+-\s+Due$/i, ' - Due')
+    .trim();
+  return { section, groups, base };
+}

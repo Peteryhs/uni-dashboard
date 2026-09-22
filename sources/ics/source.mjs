@@ -114,6 +114,7 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
           rows.push({
             source_id: this.id,
             external_id: `${event.uid}#${iso}`,
+            uid: event.uid,
             observed_at: now,
             valid_until: now + 24 * 60 * 60 * 1000,
             kind: this.classify(event),

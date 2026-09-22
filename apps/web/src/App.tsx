@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState, useMemo } from 'react';
 import { RefreshCw, WifiOff, LayoutGrid, LayoutList, Utensils, CalendarClock, ClipboardList, ShieldAlert } from 'lucide-react';
 import { CardRenderer } from '@/components/cards';
 import { DueSoonDetail } from '@/components/cards/due-soon-detail';
@@ -11,7 +11,7 @@ import { useDashboard, useNow } from '@/hooks/use-dashboard';
 import { usePreferences } from '@/lib/preferences-store';
 import { formatDay, formatTime, shortAge } from '@/lib/time';
 import { cn } from '@/lib/utils';
-import type { FoodData, NextCommitmentData, DueSoonData, AlertData, Card } from '@/lib/contract';
+import type { FoodData, NextCommitmentData, DueSoonData, AlertData, Card, DueSoonItem } from '@/lib/contract';
 
 /**
  * Uni Dashboard: The Live Student Life Command Center
@@ -37,20 +37,25 @@ export default function App() {
   const isCompact = preferences.density === 'compact';
 
   /**
-   * The task whose detail panel is open, looked up from the current bundle every render.
-   *
-   * Only the key is stored, so a refetch that drops the task closes the panel on its own instead of
-   * leaving a panel showing a deadline that no longer exists.
+   * The task whose detail panel is open in compact view, looked up from the current bundle.
+   * Only the key is stored, so a refetch that drops the task closes the panel automatically.
    */
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const dueCard = cards.find((c) => c.type === 'due_soon') as Card<DueSoonData> | undefined;
+
   const selectedTask = useMemo(() => {
     if (!selectedTaskKey || !dueCard) return null;
-    for (const group of dueCard.data.courses) {
-      const item = group.items.find((i) => taskKey(i) === selectedTaskKey);
-      if (item) return { item, course: group.course };
-    }
-    return null;
+    const d = dueCard.data;
+    const allItems: DueSoonItem[] = [
+      ...(d.due ?? []),
+      ...(d.opens ?? []),
+      ...(d.ahead?.flatMap((g) => g.items) ?? []),
+      ...(d.items ?? []),
+      ...(d.courses?.flatMap((c) => c.items) ?? []),
+    ];
+    const item = allItems.find((i) => taskKey(i) === selectedTaskKey);
+    if (!item) return null;
+    return { item, course: item.course ?? '' };
   }, [selectedTaskKey, dueCard]);
 
   return (
@@ -93,40 +98,63 @@ export default function App() {
           <ConnectionError message={error.message} onRetry={refetch} />
         ) : (
           <main className={cn(isCompact ? 'mt-3 space-y-3' : 'mt-4 space-y-4 lg:space-y-5')} id="dashboard-cards">
-            {/* Primary Row: Next Class & Due Dates combined onto one line on desktop */}
+            {/* Primary Cards: Next Commitment & Upcoming Deadlines */}
             {(() => {
               const nextCard = cards.find((c) => c.type === 'next_commitment');
-              const dueCard = cards.find((c) => c.type === 'due_soon');
               if (!nextCard && !dueCard) return null;
+
+              if (isCompact) {
+                return (
+                  <>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+                      {nextCard && (
+                        <CardRenderer key={nextCard.id} card={nextCard} now={now} className="h-full" />
+                      )}
+                      {dueCard && (
+                        <CardRenderer
+                          key={dueCard.id}
+                          card={dueCard}
+                          now={now}
+                          className="h-full"
+                          selectedTaskKey={selectedTaskKey}
+                          onSelectTask={(item) =>
+                            setSelectedTaskKey((prev) => (prev === taskKey(item) ? null : taskKey(item)))
+                          }
+                        />
+                      )}
+                    </div>
+
+                    {/* Compact View: separate card structure for task detail */}
+                    {selectedTask && dueCard && (
+                      <DueSoonDetail
+                        card={dueCard}
+                        item={selectedTask.item}
+                        course={selectedTask.course}
+                        now={now}
+                        onClose={() => setSelectedTaskKey(null)}
+                      />
+                    )}
+                  </>
+                );
+              }
+
+              // In detailed view, each card is its own full-width horizontal card
               return (
-                <div className={cn('grid grid-cols-1 items-stretch', isCompact ? 'lg:grid-cols-2 gap-3' : 'lg:grid-cols-2 gap-4 lg:gap-5')}>
+                <>
                   {nextCard && (
-                    <CardRenderer key={nextCard.id} card={nextCard} now={now} className="h-full" />
+                    <CardRenderer key={nextCard.id} card={nextCard} now={now} className="w-full" />
                   )}
                   {dueCard && (
                     <CardRenderer
                       key={dueCard.id}
                       card={dueCard}
                       now={now}
-                      className="h-full"
-                      selectedTaskKey={selectedTaskKey}
-                      onSelectTask={(item) => setSelectedTaskKey(taskKey(item))}
+                      className="w-full"
                     />
                   )}
-                </div>
+                </>
               );
             })()}
-
-            {/* The task detail panel, full width, right below the commitments row. */}
-            {selectedTask && dueCard && (
-              <DueSoonDetail
-                card={dueCard}
-                item={selectedTask.item}
-                course={selectedTask.course}
-                now={now}
-                onClose={() => setSelectedTaskKey(null)}
-              />
-            )}
 
             {/* Remaining Cards (Dining / Food full width) */}
             {cards

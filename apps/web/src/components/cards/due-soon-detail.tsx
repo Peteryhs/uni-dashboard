@@ -9,6 +9,7 @@
  * Everything here comes from the feed. When the feed carries no description the panel says so
  * instead of showing an empty box.
  */
+import { useState } from 'react';
 import {
   BookOpen,
   CalendarDays,
@@ -27,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import type { Card as CardT, DueSoonData, DueSoonItem, DueSoonLink } from '@/lib/contract';
 import { countdown, dayOffset, formatShortDay, formatTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { getCourseTone } from './due-soon';
 
 const LINK_ICONS: Record<string, typeof ExternalLink> = {
   submit: FileUp,
@@ -68,10 +70,23 @@ export function DueSoonDetail({
   now: number;
   onClose: () => void;
 }) {
+  const isOpens = item.phase === 'opens';
+  const courseTone = getCourseTone(course);
   const links: DueSoonLink[] = item.links ?? [];
-  const overdue = item.starts_at - now <= 0;
-  const urgent = item.starts_at - now <= 24 * 60 * 60_000;
-  const cleanTitle = item.title.replace(/^[A-Z]{2,6}\s?\d{2,3}[A-Z]?\s*[-–]\s*/, '');
+  const overdue = !isOpens && item.starts_at - now <= 0;
+  const urgent = !isOpens && item.starts_at - now <= 24 * 60 * 60_000 && item.starts_at - now > 0;
+  const cleanTitle = item.title
+    .replace(/^[A-Z]{2,6}\s?\d{2,3}[A-Z]?\s*[-–]\s*/, '')
+    .replace(/\s+-\s+(?:Due|Available)$/i, '')
+    .replace(/\s+due$/i, '')
+    .trim();
+
+  const [isTextExpanded, setIsTextExpanded] = useState(false);
+  const trimmedDesc = item.description?.trim() ?? '';
+  const hasDesc = trimmedDesc.length > 0;
+  const words = trimmedDesc.split(/\s+/);
+  const isLonger = words.length > 20;
+  const truncatedDesc = isLonger ? words.slice(0, 20).join(' ') : trimmedDesc;
 
   return (
     <CardShell
@@ -94,18 +109,45 @@ export function DueSoonDetail({
       }
     >
       <div className="space-y-3">
-        {/* Top: which course, which task, and when it is due. */}
+        {/* Top: which course, which task, and when it is due or opens. */}
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
           {course && (
-            <span className="rounded-md border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-xs font-semibold tracking-tight text-amber-foreground">
+            <span
+              className={cn(
+                'rounded-md border px-2 py-0.5 font-mono text-xs font-semibold tracking-tight',
+                isOpens
+                  ? 'border-zinc-700/50 bg-secondary/30 text-zinc-400 opacity-75'
+                  : courseTone.badge,
+              )}
+            >
               {course}
             </span>
           )}
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider font-semibold shrink-0',
+              isOpens
+                ? 'border border-border/40 bg-secondary/30 text-zinc-400 font-medium'
+                : urgent
+                  ? 'border border-amber-500/30 bg-amber-500/15 text-amber-300'
+                  : overdue
+                    ? 'border border-rose-500/30 bg-rose-500/15 text-rose-300'
+                    : 'border border-white/10 bg-secondary/50 text-zinc-200',
+            )}
+          >
+            {isOpens ? 'Opens' : urgent ? 'Due Soon' : overdue ? 'Overdue' : 'Due'}
+          </span>
           <h3 className="text-[15px] font-semibold text-foreground">{cleanTitle}</h3>
           <span
             className={cn(
-              'inline-flex items-center gap-1 text-xs font-medium tabular-nums',
-              overdue ? 'text-rose-400' : urgent ? 'text-amber-foreground' : 'text-zinc-400',
+              'inline-flex items-center gap-1 text-xs tabular-nums',
+              isOpens
+                ? 'text-zinc-400'
+                : overdue
+                  ? 'text-rose-400 font-semibold'
+                  : urgent
+                    ? 'text-amber-300 font-semibold'
+                    : 'text-zinc-400',
             )}
           >
             <Clock className="size-3" />
@@ -116,10 +158,13 @@ export function DueSoonDetail({
               variant="outline"
               className={cn(
                 'py-0 px-2 text-[10px] font-medium tracking-wide',
-                urgent ? 'border-amber/50 bg-amber/15 text-amber-foreground' : 'border-white/10 bg-secondary/30 text-muted-foreground',
+                urgent
+                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-300'
+                  : 'border-white/10 bg-secondary/30 text-muted-foreground',
               )}
             >
-              in {countdown(item.starts_at, now)}
+              {isOpens ? 'opens in ' : 'in '}
+              {countdown(item.starts_at, now)}
             </Badge>
           )}
           {item.location && (
@@ -162,19 +207,45 @@ export function DueSoonDetail({
           </p>
         )}
 
-        {/* Bottom: what the feed actually says, at full length. */}
-        <div className="rounded-lg border border-border/70 bg-card/60 p-3">
-          <h4 className="mb-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase">
-            Description
-          </h4>
-          {item.description ? (
-            <p className="text-[13px] leading-relaxed whitespace-pre-line text-zinc-200">{item.description}</p>
-          ) : (
-            <p className="text-[13px] text-zinc-400">
-              No description in the feed for this task. That is the feed being quiet, not the panel.
-            </p>
-          )}
-        </div>
+        {/* Bottom: what the feed says. In all views, if there is no desc, dont display; limit to 20 words, expand on click. */}
+        {hasDesc && (
+          <div className="rounded-lg border border-border/70 bg-card/60 p-3">
+            <h4 className="mb-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase">
+              Description
+            </h4>
+            {isLonger ? (
+              <div className="text-[13px] leading-relaxed text-zinc-200">
+                {isTextExpanded ? (
+                  <div>
+                    <p className="whitespace-pre-line break-words">{trimmedDesc}</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsTextExpanded(false)}
+                      className="mt-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                    >
+                      Show less
+                    </button>
+                  </div>
+                ) : (
+                  <p
+                    onClick={() => setIsTextExpanded(true)}
+                    className="cursor-pointer group/desc break-words"
+                    title="Click to expand full description"
+                  >
+                    <span>{truncatedDesc}… </span>
+                    <span className="text-xs font-semibold text-live group-hover/desc:underline transition-colors">
+                      Show more
+                    </span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-[13px] leading-relaxed whitespace-pre-line break-words text-zinc-200">
+                {trimmedDesc}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </CardShell>
   );

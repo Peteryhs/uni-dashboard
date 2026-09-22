@@ -7,7 +7,7 @@
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
 import { config } from './config.mjs';
-import { taskContext } from './task-context.mjs';
+import { taskContext, phaseOf, groupScope } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 
 const MIN = 60 * 1000;
@@ -159,22 +159,47 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
   };
 }
 
-/** Card 2: what is due. Count plus nearest, grouped by course, seven day window. */
-export function dueSoonCard(store, { now = Date.now() } = {}) {
-  const horizon = now + 7 * DAY;
-  return maybePromise(
-    store.rows('timeline_event', { where: 'kind IN (?,?) AND starts_at BETWEEN ? AND ?', params: ['deadline', 'exam', now, horizon], limit: 300 }),
-    (rawDue) => {
-      const due = (rawDue || []).slice().sort((a, b) => a.starts_at - b.starts_at);
+export function significant(item = {}) {
+  return (
+    item.kind === 'exam' ||
+    /\b(group deliverable|major assignment|process task|project|midterm|final exam|report|presentation)\b/i.test(item.title ?? '')
+  );
+}
 
-      // Enrich once, then use the same items for the flat list and for the per-course counts. Sending
-      // the raw rows in one place and enriched items in the other is how a null url reached the
-      // contract and took the whole bundle down.
-      const enriched = due.map((d) => {
-        // The course the feed gives us wins over the one guessed from the title, and the links and
-        // instructions live in the description text, so they are parsed here rather than in the UI.
+function getWeekInfo(epochMs, timezone = config.timezone) {
+  const d = new Date(epochMs);
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const [y, m, day] = formatter.format(d).split('-').map(Number);
+  const weekdayStr = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(d);
+  const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  const diff = dayMap[weekdayStr] ?? 0;
+  const monDate = new Date(Date.UTC(y, m - 1, day - diff));
+  const monYear = monDate.getUTCFullYear();
+  const monMonth = monDate.getUTCMonth();
+  const monDay = monDate.getUTCDate();
+  const monthName = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(monYear, monMonth, monDay)));
+  const label = `Week of ${monthName} ${monDay}`;
+  return { label, week_start: Date.UTC(monYear, monMonth, monDay) };
+}
+
+/** Card 2: what is due. Count plus nearest, grouped by course, seven day window. Opens, Due, Ahead. */
+export function dueSoonCard(store, { now = Date.now() } = {}) {
+  const horizon = now + 120 * DAY;
+  return maybePromise(
+    store.rows('timeline_event', {
+      where: 'source_id = ? AND starts_at BETWEEN ? AND ?',
+      params: ['uw-learn-ics', now - 5 * MIN, horizon],
+      limit: 500,
+    }),
+    (rawRows) => {
+      const rows = (rawRows || []).slice().sort((a, b) => a.starts_at - b.starts_at);
+
+      const enriched = rows.map((d) => {
         const ctx = taskContext({ title: d.title, location: d.location, description: d.description });
-        const course = ctx.course || courseOf(d.title);
+        const course = ctx.course || courseOf(d.title, d.location);
+        const phase = phaseOf(d.title);
+        const gs = groupScope(d.title);
+        const isSig = significant({ kind: d.kind, title: d.title });
         return {
           course,
           item: {
@@ -186,20 +211,64 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
             ...(ctx.place ? { location: ctx.place } : {}),
             ...(ctx.body ? { description: ctx.body.slice(0, 1500) } : {}),
             ...(ctx.links.length ? { links: ctx.links } : {}),
+            ...(d.uid ? { uid: d.uid } : {}),
+            occurrence_id: d.external_id,
+            phase,
+            all_day: Boolean(d.all_day),
+            significant: isSig,
+            group_scope: { section: gs.section, groups: gs.groups },
           },
         };
       });
 
+      const due = enriched
+        .map((e) => e.item)
+        .filter((i) => i.phase === 'due' && i.starts_at <= now + 7 * DAY);
+
+      const opens = enriched
+        .map((e) => e.item)
+        .filter((i) => i.phase === 'opens' && i.starts_at <= now + 7 * DAY)
+        .map((item) => ({
+          ...item,
+          description: undefined,
+          links: [],
+        }));
+
+      const candidateMajors = enriched
+        .map((e) => e.item)
+        .filter((i) => i.phase === 'due' && i.significant && i.starts_at > now + 3 * DAY);
+
+      const nextMajorItem = candidateMajors[0] ?? null;
+      const next_major = nextMajorItem
+        ? { title: nextMajorItem.title, course: nextMajorItem.course, starts_at: nextMajorItem.starts_at }
+        : null;
+
+      const aheadItems = candidateMajors.slice(0, 24);
+      const weekGroups = new Map();
+      for (const item of aheadItems) {
+        const { label, week_start } = getWeekInfo(item.starts_at, config.timezone);
+        if (!weekGroups.has(week_start)) {
+          weekGroups.set(week_start, { week_start, label, items: [] });
+        }
+        weekGroups.get(week_start).items.push({
+          ...item,
+          description: undefined,
+          links: [],
+        });
+      }
+      const ahead = [...weekGroups.values()].sort((a, b) => a.week_start - b.week_start);
+
       const byCourse = new Map();
-      for (const { course, item } of enriched) {
-        if (!byCourse.has(course)) byCourse.set(course, []);
-        byCourse.get(course).push(item);
+      for (const item of due) {
+        const c = item.course ?? 'Other';
+        if (!byCourse.has(c)) byCourse.set(c, []);
+        byCourse.get(c).push(item);
       }
 
       return maybePromise(
         sourceHealth(store, 'uw-learn-ics', 15 * MIN, now),
         (health) => {
-          if (!due.length && !health.ok) {
+          if (!rows.length && !health.ok) {
             return {
               id: 'due_soon',
               type: 'due_soon',
@@ -212,29 +281,34 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
                 count: 0,
                 nearest_at: null,
                 window_days: 7,
+                items: [],
                 courses: [],
+                due: [],
+                opens: [],
+                ahead: [],
+                next_major: null,
                 error: health.error,
               },
             };
           }
 
-          const env = envelope(due, { now, cadenceMs: 15 * MIN });
+          const env = envelope(rows, { now, cadenceMs: 15 * MIN });
           return {
             id: 'due_soon',
             type: 'due_soon',
             priority: 90,
             ...env,
-            source_id: due[0]?.source_id ?? 'uw-learn-ics',
+            source_id: 'uw-learn-ics',
             data: {
               count: due.length,
               nearest_at: due[0]?.starts_at ?? null,
               window_days: 7,
-              /**
-               * The flat list, in time order, which is how the card reads: what is due next, then what
-               * is due after that. `courses` stays for counts and for a client that predates this field.
-               */
-              items: enriched.slice(0, 12).map((e) => e.item),
+              items: due,
               courses: [...byCourse.entries()].map(([course, items]) => ({ course, count: items.length, items: items.slice(0, 3) })),
+              due,
+              opens,
+              ahead,
+              next_major,
             },
           };
         },
@@ -245,9 +319,11 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
 
 const COURSE_RE = /^([A-Z]{2,6}\s?\d{2,3}[A-Z]?)\b/;
 
-export function courseOf(title) {
+export function courseOf(title, location = '') {
   const m = COURSE_RE.exec(title ?? '');
-  return m ? m[1].toUpperCase() : 'Other';
+  if (m) return m[1].toUpperCase();
+  if (/(?:^|[\s\b])(?:CFE|r[ée]sum[ée]|resume)(?:[\s\b]|$)/i.test(title ?? '') || /\bCFE\b/i.test(location ?? '')) return 'CFE';
+  return 'Other';
 }
 
 /**
