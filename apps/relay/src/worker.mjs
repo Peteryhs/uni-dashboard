@@ -32,6 +32,40 @@ const ENV_KEYS = [
 ];
 
 /**
+ * Keys the app is allowed to write, with the shape each one has to match.
+ *
+ * Validation lives here rather than in the UI because this is the boundary that matters: the value
+ * ends up in an environment variable that the adapters read, so anything with whitespace in it could
+ * smuggle a second variable, and anything that is not https is not a feed.
+ */
+const WRITABLE_SETTINGS = {
+  PORTAL_ICS_URL: (v) => /^https:\/\/\S+$/.test(v),
+  GOOGLE_CALENDAR_ICS_URL: (v) => /^https:\/\/\S+$/.test(v),
+  LEARN_ICS_URL: (v) => /^https:\/\/\S+$/.test(v),
+  CLOUDFLARE_ACCOUNT_ID: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
+  CLOUDFLARE_API_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
+  RELAY_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
+};
+
+const SETTING_KEYS = Object.keys(WRITABLE_SETTINGS);
+
+/**
+ * Apply the settings saved from the app onto process.env, which is where the source adapters read
+ * their configuration. Returns which keys came from the database, so the credentials route can say
+ * where a value it is reporting actually lives.
+ */
+async function applySettings(store) {
+  const rows = await store.settings();
+  const fromDb = [];
+  for (const row of rows) {
+    if (!SETTING_KEYS.includes(row.name) || !row.value) continue;
+    process.env[row.name] = row.value;
+    fromDb.push(row.name);
+  }
+  return fromDb;
+}
+
+/**
  * Bridge Worker bindings onto process.env so the source adapters, which read process.env because
  * they also run under Node, work unchanged. A Worker has one isolate per request, so this cannot
  * leak across requests.
@@ -127,13 +161,20 @@ async function handleFetch(request, env) {
     return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
   }
 
-  const token = env.RELAY_TOKEN || '';
+  const store = storeFor(env);
+  await store.init();
+
+  /**
+   * Settings the owner saved from the app are applied before the token check, because RELAY_TOKEN
+   * can be one of them: a token set in the UI has to be able to gate the very next request. A value
+   * saved from the app wins over a Worker secret, because it is the more recent explicit choice.
+   */
+  const saved = await applySettings(store);
+
+  const token = process.env.RELAY_TOKEN || env.RELAY_TOKEN || '';
   if (token && request.headers.get('authorization') !== `Bearer ${token}`) {
     return json({ error: 'unauthorized' }, 401);
   }
-
-  const store = storeFor(env);
-  await store.init();
 
   if (path === '/v1/dashboard') {
     return json(await buildDashboard(store, { now: Date.now() }));
@@ -231,9 +272,13 @@ async function handleFetch(request, env) {
   }
 
   /**
-   * Credentials are read-only on Workers. A .env file is the local write path; a Worker secret is
-   * set with `wrangler secret put`, so the POST that works locally is refused here on purpose
-   * rather than silently pretending it saved something.
+   * Credentials, writable from the app.
+   *
+   * Values are stored as rows in D1 and applied to the environment on every request, so the app can
+   * be configured without the dashboard. Two rules keep this honest: a value is validated before it
+   * is stored (it ends up in an environment variable), and a value is never echoed back, only
+   * whether it is configured and where it came from. A Worker secret still works and is what the
+   * app reports when nothing was saved here.
    */
   if (path === '/v1/credentials') {
     const scheduleUrl = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
@@ -242,12 +287,14 @@ async function handleFetch(request, env) {
         portal: {
           configured: Boolean(scheduleUrl),
           env_var: process.env.GOOGLE_CALENDAR_ICS_URL ? 'GOOGLE_CALENDAR_ICS_URL' : 'PORTAL_ICS_URL',
+          source: saved.includes('GOOGLE_CALENDAR_ICS_URL') || saved.includes('PORTAL_ICS_URL') ? 'saved in the app' : scheduleUrl ? 'Worker secret' : 'not set',
           name: 'Schedule Feed (Google Calendar or UW Portal)',
           role: 'Class timetable, personal events and exams',
         },
         learn: {
           configured: Boolean(process.env.LEARN_ICS_URL),
           env_var: 'LEARN_ICS_URL',
+          source: saved.includes('LEARN_ICS_URL') ? 'saved in the app' : process.env.LEARN_ICS_URL ? 'Worker secret' : 'not set',
           name: 'Waterloo LEARN Deadlines Feed',
           role: 'Upcoming assignments, quizzes, homework and project due dates',
         },
@@ -257,16 +304,64 @@ async function handleFetch(request, env) {
           name: 'Cloudflare Workers AI',
           role: 'Daily menu ranking and dish highlights (bound, no key needed)',
         },
-        writable: false,
+        relay_token: {
+          configured: Boolean(process.env.RELAY_TOKEN || env.RELAY_TOKEN),
+          source: saved.includes('RELAY_TOKEN') ? 'saved in the app' : process.env.RELAY_TOKEN || env.RELAY_TOKEN ? 'Worker secret' : 'not set',
+          role: 'Bearer token that gates every /v1 route',
+        },
+        writable: true,
+        storage: 'd1',
       });
     }
-    return json(
-      {
-        error: 'credentials are read-only on this deployment',
-        detail: 'set them as Worker secrets: npx wrangler secret put PORTAL_ICS_URL (and LEARN_ICS_URL)',
-      },
-      501,
-    );
+
+    if (request.method === 'POST') {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'invalid json' }, 400);
+      }
+
+      const stored = [];
+      for (const [name, value] of Object.entries(body)) {
+        if (!SETTING_KEYS.includes(name)) continue;
+        if (typeof value !== 'string') return json({ error: `${name} must be a string` }, 400);
+        const trimmed = value.trim();
+        if (!trimmed) {
+          await store.deleteSetting(name); // an empty value clears it, same as the local .env path
+          delete process.env[name];
+          stored.push({ name, cleared: true });
+          continue;
+        }
+        if (!WRITABLE_SETTINGS[name](trimmed)) {
+          return json(
+            { error: name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' || name === 'LEARN_ICS_URL' ? `${name} must be an https URL with no whitespace` : `${name} must contain only letters, numbers, underscores and hyphens` },
+            400,
+          );
+        }
+        await store.setSetting(name, trimmed, Date.now());
+        process.env[name] = trimmed;
+        stored.push({ name, cleared: false });
+      }
+
+      // A new feed URL should show up now, not on the next cron tick.
+      const changed = stored.some((s) => !s.cleared);
+      let polled = [];
+      if (changed) {
+        const { receipts } = await pollDue(store, Date.now(), 1);
+        polled = receipts.map((r) => `${r.source_id}:${r.outcome}`);
+      }
+
+      return json({
+        ok: true,
+        stored,
+        polled,
+        portal_configured: Boolean(process.env.PORTAL_ICS_URL || process.env.GOOGLE_CALENDAR_ICS_URL),
+        learn_configured: Boolean(process.env.LEARN_ICS_URL),
+      });
+    }
+
+    return json({ error: `method ${request.method} not allowed` }, 405);
   }
 
   return json(
@@ -296,6 +391,8 @@ export default {
     bridgeEnv(env);
     const store = storeFor(env);
     await store.init();
+    // settings saved from the app first: the cron polls the feeds the app was configured with
+    await applySettings(store);
     const { receipts, deferred, pruned } = await pollDue(store, Date.now());
     const summary = receipts.map((r) => `${r.source_id}:${r.outcome}`).join(' ');
     console.log(

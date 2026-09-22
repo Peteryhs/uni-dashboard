@@ -91,6 +91,13 @@ function ddlStatements() {
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     circuit_state TEXT NOT NULL DEFAULT 'closed'
   );`);
+  // Configuration the owner can change from the app. Deliberately its own table rather than a
+  // SHAPES entry: settings carry no freshness envelope and no source_id, they are not observations.
+  parts.push(`CREATE TABLE IF NOT EXISTS setting (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`);
   parts.push('CREATE INDEX IF NOT EXISTS idx_timeline_starts ON timeline_event (starts_at, deleted);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_menu_date ON menu_item (service_date, deleted);');
   return parts;
@@ -196,4 +203,12 @@ const RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const SHAPE_COLUMNS = SHAPES;
 
-export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, CHUNK };
+/**
+ * Every table this schema expects. D1Store compares this list against `sqlite_master` before it runs
+ * any DDL, so a database created by an older version picks up tables added later. Probing one known
+ * table would have missed exactly that case: the table exists, the new one does not, and the DDL
+ * never runs again.
+ */
+const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting'];
+
+export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, TABLES, CHUNK };

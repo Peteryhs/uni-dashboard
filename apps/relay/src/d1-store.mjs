@@ -11,7 +11,7 @@
  *
  * The pure parts (shapes, DDL, row converters, batch size) come from `schema.mjs`.
  */
-import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, CHUNK } from './schema.mjs';
+import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, CHUNK } from './schema.mjs';
 
 /** Web Crypto sha256, hex encoded. Same value the Node adapter produces for the same bytes. */
 async function sha256Hex(text) {
@@ -41,17 +41,21 @@ export class D1Store {
   /**
    * DDL, idempotent and run at most once per isolate, behind a single probe.
    *
-   * The probe is the point: a cron invocation gets a fresh isolate, so paying ten CREATE statements
-   * every 15 minutes would spend a fifth of the free tier's 50-query budget before any work happens.
-   * One `sqlite_master` lookup answers the same question.
+   * The probe compares the tables this schema expects against `sqlite_master`, and the DDL runs only
+   * when one is missing. Two reasons it is a count and not a lookup of one known table: a cron
+   * invocation gets a fresh isolate, so paying ten CREATE statements every 15 minutes would spend a
+   * fifth of the free tier's 50-query budget before any work happens; and a database created by an
+   * older version has to pick up a table added later, which a single-table probe would never notice.
    */
   async init() {
     if (!this._initPromise) {
       this._initPromise = (async () => {
-        const probe = await this.db
-          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='job'")
+        const placeholders = TABLES.map(() => '?').join(',');
+        const row = await this.db
+          .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`)
+          .bind(...TABLES)
           .first();
-        if (probe) return;
+        if (Number(row?.n ?? 0) === TABLES.length) return;
         // Prepared one statement at a time and batched: D1's exec() runs a statement per line, so a
         // CREATE TABLE wrapped across lines arrives truncated.
         await this.db.batch(ddlStatements().map((sql) => this.db.prepare(sql)));
@@ -247,5 +251,27 @@ export class D1Store {
   async jobs() {
     const res = await this.db.prepare('SELECT * FROM job ORDER BY source_id').all();
     return res.results || [];
+  }
+
+  /** Configuration rows set from the app, as { name, value, updated_at }. */
+  async settings() {
+    const res = await this.db.prepare('SELECT name, value, updated_at FROM setting ORDER BY name').all();
+    return res.results || [];
+  }
+
+  async setSetting(name, value, now = Date.now()) {
+    await this.db
+      .prepare(
+        `INSERT INTO setting (name, value, updated_at) VALUES (?,?,?)
+         ON CONFLICT (name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+      )
+      .bind(name, value, now)
+      .run();
+    return { name, updated_at: now };
+  }
+
+  async deleteSetting(name) {
+    const res = await this.db.prepare('DELETE FROM setting WHERE name=?').bind(name).run();
+    return res?.meta?.changes ?? 0;
   }
 }

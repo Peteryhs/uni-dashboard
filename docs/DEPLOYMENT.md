@@ -113,6 +113,32 @@ in `raw_snapshot` is never gzipped again (compression is CPU, and the menu page 
 Measurements come from `test/worker.test.mjs`, which counts prepared statements against a mocked D1
 binding and fails if a tick or a dashboard load crosses 50.
 
+### Credentials from the app, stored in D1
+
+The app's own sources panel configures the Worker deployment. There is no `.env` file on Cloudflare,
+so the values are rows in a `setting` table, applied to the environment at the start of every request
+and every cron tick, which is where the source adapters read their configuration from.
+
+Three rules, all enforced in `worker.mjs` and all tested:
+
+- **Validated before storage.** A value ends up in an environment variable, so it is checked first:
+  the feed URLs must be `https` with no whitespace (whitespace would smuggle a second variable), and
+  the tokens must be alphanumeric with `-` and `_`.
+- **Never echoed back.** `GET /v1/credentials` reports `configured`, where the value came from
+  (`saved in the app` or `Worker secret`), and nothing else. A test asserts the saved URL does not
+  appear anywhere in the response.
+- **A value saved in the app wins over a Worker secret**, because it is the more recent explicit
+  choice, and it can set `RELAY_TOKEN`, which is applied before the token check so the token gates
+  the very next request.
+
+An empty string clears a setting, matching the local `.env` behaviour. Worker secrets still work and
+are the fallback when nothing was saved from the app, so both paths are live at once.
+
+Schema changes are picked up by an existing database: `D1Store.init()` compares the expected table
+list against `sqlite_master` and runs the (idempotent) DDL when any table is missing. Probing for one
+known table was the first attempt and it silently skipped the new table on a database created before
+it existed, which is exactly what a deployed instance is.
+
 Verified limits, Workers Free vs Paid:
 
 | Limit | Free | Paid ($5/mo) |

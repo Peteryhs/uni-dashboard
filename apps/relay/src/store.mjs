@@ -205,6 +205,25 @@ export class SqliteStore {
   jobs() {
     return this.db.prepare('SELECT * FROM job ORDER BY source_id').all();
   }
+
+  /** Configuration rows set from the app, as { name, value, updated_at }. */
+  settings() {
+    return this.db.prepare('SELECT name, value, updated_at FROM setting ORDER BY name').all();
+  }
+
+  setSetting(name, value, now = Date.now()) {
+    this.db
+      .prepare(
+        `INSERT INTO setting (name, value, updated_at) VALUES (?,?,?)
+         ON CONFLICT (name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+      )
+      .run(name, value, now);
+    return { name, updated_at: now };
+  }
+
+  deleteSetting(name) {
+    return this.db.prepare('DELETE FROM setting WHERE name=?').run(name).changes;
+  }
 }
 
 export { SHAPES, SHAPE_COLUMNS, ddl, rowToParams, paramsToRow, CHUNK };

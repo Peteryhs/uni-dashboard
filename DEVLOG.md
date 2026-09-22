@@ -70,6 +70,42 @@ Not verified: the AI route on a deployed Worker, which needs the account.
 
 ---
 
+## 2026-09-22 (later): credentials from the app, stored in D1
+
+The Worker shipped without a way to configure it: no `.env` file exists on Cloudflare, and the app's
+sources panel POSTs to `/v1/credentials`, which returned 501 on purpose. Worker secrets in the
+dashboard were the only path, which is fine for the owner and useless for the "one-click for other
+people" target in DEPLOYMENT.md.
+
+Now the panel works on the Worker. Values are rows in a `setting` table, applied to `process.env` at
+the start of every request and every cron tick, which is where the adapters already read config. The
+code changed in four places: the table, two adapter methods, `applySettings` in the Worker, and the
+credentials route. Nothing downstream knows where the value came from.
+
+Rules, because this route writes environment variables from an HTTP request:
+
+- validated before storage: feed URLs must be `https` with no whitespace, tokens must be
+  alphanumeric with `-` and `_`. A newline in a feed URL would have smuggled a second variable.
+- never echoed back: the GET reports `configured` and the source (`saved in the app`, `Worker
+  secret`, `not set`), and a test asserts the URL appears nowhere in the response.
+- a value saved in the app beats a Worker secret, and `RELAY_TOKEN` can be one of them, so settings
+  are applied *before* the token check. A token set from the UI gates the very next request.
+- an empty string clears a setting, same as the local `.env` path.
+
+**The bug that only a live run could find:** `D1Store.init()` probed for one known table (`job`) and
+skipped the DDL when it existed. That is fine on a fresh database and wrong on every deployed one:
+the new `setting` table never got created, and `/v1/credentials` returned 500 against the dev
+database that already had the old schema. The probe now compares the full expected table list against
+`sqlite_master`, so an existing database self-heals when a table is added. Three tests cover it:
+fresh database runs the DDL, complete database pays nothing, database missing one table runs it again.
+
+104 tests. Verified live on the local Worker: save two feed URLs, watch `uw-learn-ics` flip to
+`ready`, confirm the URL never comes back out of the API, reject `http://` and a newline injection,
+set `RELAY_TOKEN` from the API and watch the next unauthenticated request get 401, then clear
+everything. The client needed no change: its panel already POSTs to that route.
+
+---
+
 ## 2026-09-21: v0.2.0 - Antislop Cleansing, Dynamic Routing & Dashboard Refinement
 
 ### 1. Context & Motivation

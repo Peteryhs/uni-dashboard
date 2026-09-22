@@ -216,6 +216,34 @@ test('D1Store prunes old run receipts', async () => {
   assert.equal(kept.length, 1);
 });
 
+test('init() skips the DDL when every table exists, and runs it when one is missing', async () => {
+  const calls = { batch: 0 };
+  const mockD1 = createMockD1();
+  const spy = {
+    ...mockD1,
+    batch: async (stmts) => {
+      calls.batch += 1;
+      return mockD1.batch(stmts);
+    },
+  };
+
+  const first = new D1Store(spy);
+  await first.init();
+  assert.equal(calls.batch, 1, 'a fresh database gets the schema');
+
+  const second = new D1Store(spy);
+  await second.init();
+  assert.equal(calls.batch, 1, 'a database that already has every table pays no DDL');
+
+  // drop a table, which is what an older deployment looks like after a new table is added
+  await mockD1.exec('DROP TABLE setting');
+  const third = new D1Store(spy);
+  await third.init();
+  assert.equal(calls.batch, 2, 'a missing table means the DDL runs again, so old databases self-heal');
+  await third.setSetting('LEARN_ICS_URL', 'https://learn.test/feed.ics');
+  assert.equal((await third.settings()).length, 1);
+});
+
 test('buildDashboard works end-to-end on D1Store', async () => {
   const mockD1 = createMockD1();
   const store = new D1Store(mockD1);

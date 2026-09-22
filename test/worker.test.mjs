@@ -165,20 +165,137 @@ test('a bearer token gates /v1 and leaves /healthz open', async () => {
   assert.equal((await worker.fetch(new Request('https://dash.test/healthz'), env, {})).status, 200);
 });
 
-test('credentials are read-only on a Worker, and say so instead of pretending', async () => {
+const SETTING_KEYS = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'RELAY_TOKEN'];
+
+/** Settings land in process.env, which is shared by the whole test process, so clean up after. */
+function clearEnvSettings() {
+  for (const k of SETTING_KEYS) delete process.env[k];
+}
+
+test('credentials saved from the app land in D1 and configure the feeds', async (t) => {
+  t.after(clearEnvSettings);
   const { api } = createMockD1();
   const env = { DB: api };
 
-  const get = await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {});
-  assert.equal(get.status, 200);
-  assert.equal((await get.json()).writable, false);
+  const before = await (await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {})).json();
+  assert.equal(before.portal.configured, false);
+  assert.equal(before.writable, true, 'the app can configure a Worker deployment now');
 
+  const portal = 'https://calendar.google.com/calendar/ical/secret/basic.ics';
   const post = await worker.fetch(
-    new Request('https://dash.test/v1/credentials', { method: 'POST', body: '{}' }),
+    new Request('https://dash.test/v1/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ PORTAL_ICS_URL: portal, LEARN_ICS_URL: 'https://learn.test/feed.ics?token=abc' }),
+    }),
     env,
     {},
   );
-  assert.equal(post.status, 501, 'a .env write path does not exist here: wrangler secret put is the answer');
+  assert.equal(post.status, 200);
+  const posted = await post.json();
+  assert.equal(posted.ok, true);
+  assert.equal(posted.portal_configured, true);
+
+  const after = await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {});
+  const status = await after.json();
+  assert.equal(status.portal.configured, true);
+  assert.equal(status.portal.source, 'saved in the app');
+  assert.equal(status.learn.configured, true);
+  assert.ok(!JSON.stringify(status).includes(portal), 'the saved URL must never come back out of the API');
+  assert.ok(!JSON.stringify(status).includes('token=abc'));
+});
+
+test('the saved feeds actually configure the sources', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  const env = { DB: api };
+
+  const blocked = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
+  assert.equal(blocked.sources.find((s) => s.id === 'uw-learn-ics').ready, false);
+
+  await worker.fetch(
+    new Request('https://dash.test/v1/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ LEARN_ICS_URL: 'https://learn.test/feed.ics' }),
+    }),
+    env,
+    {},
+  );
+
+  const ready = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
+  const learn = ready.sources.find((s) => s.id === 'uw-learn-ics');
+  assert.equal(learn.ready, true, 'a feed URL saved from the app must satisfy the source that needs it');
+  assert.equal(learn.blocked_by, '');
+});
+
+test('a saved credential is validated before it becomes an environment variable', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  const env = { DB: api };
+
+  const notHttps = await worker.fetch(
+    new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ PORTAL_ICS_URL: 'http://portal.test/feed.ics' }) }),
+    env,
+    {},
+  );
+  assert.equal(notHttps.status, 400);
+
+  const injection = await worker.fetch(
+    new Request('https://dash.test/v1/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ PORTAL_ICS_URL: 'https://ok.test/feed.ics\nRELAY_TOKEN=attacker' }),
+    }),
+    env,
+    {},
+  );
+  assert.equal(injection.status, 400, 'whitespace would smuggle a second variable');
+  assert.equal(process.env.RELAY_TOKEN, undefined);
+});
+
+test('an empty value clears a saved credential', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  const env = { DB: api };
+
+  await worker.fetch(
+    new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ LEARN_ICS_URL: 'https://learn.test/feed.ics' }) }),
+    env,
+    {},
+  );
+  const cleared = await worker.fetch(
+    new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ LEARN_ICS_URL: '' }) }),
+    env,
+    {},
+  );
+  assert.equal(cleared.status, 200);
+  const status = await (await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {})).json();
+  assert.equal(status.learn.configured, false);
+});
+
+test('a token saved from the app gates the very next request', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  const env = { DB: api };
+
+  // no token yet, so /v1 is open and the app can set one
+  const open = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
+  assert.equal(open.status, 200);
+
+  const saved = await worker.fetch(
+    new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ RELAY_TOKEN: 'app-token-123' }) }),
+    env,
+    {},
+  );
+  assert.equal(saved.status, 200);
+
+  const blocked = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
+  assert.equal(blocked.status, 401, 'the token saved in the app must gate the next request');
+
+  const allowed = await worker.fetch(
+    new Request('https://dash.test/v1/dashboard', { headers: { authorization: 'Bearer app-token-123' } }),
+    env,
+    {},
+  );
+  assert.equal(allowed.status, 200);
 });
 
 test('the AI route fails loudly when there is no binding and no REST credentials', async () => {
