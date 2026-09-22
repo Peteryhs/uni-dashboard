@@ -96,6 +96,44 @@ test('an all clear is only an all clear when it is recent', () => {
   assert.equal(old.data.checked_at, now - 20_000);
 });
 
+test('the hero card keeps the schedule feed even when a deadline is sooner', () => {
+  const store = new SqliteStore(':memory:');
+  const t = (h) => Date.UTC(2026, 8, 21, h);
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-portal-ics', external_id: 'c1', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: t(20), ends_at: t(21) },
+    // a LEARN task due an hour before that class
+    { source_id: 'uw-learn-ics', external_id: 'd1', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'deadline', title: 'ECE 150 - Assignment 3 due', starts_at: t(19), ends_at: t(19) },
+  ]);
+  return nextCommitmentCard(store, { now, useWeather: false }).then((card) => {
+    assert.equal(card.data.title, 'ECE 150 LEC 001', 'LEARN must not override the countdown to the next class');
+    assert.equal(card.data.kind, 'class');
+  });
+});
+
+test('a deadline takes the hero slot only when nothing is scheduled ahead', () => {
+  const store = new SqliteStore(':memory:');
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-learn-ics', external_id: 'd1', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'deadline', title: 'MATH 115 - Quiz 2 opens', starts_at: now + 3600_000, ends_at: now + 3600_000 },
+  ]);
+  return nextCommitmentCard(store, { now, useWeather: false }).then((card) => {
+    assert.equal(card.data.title, 'MATH 115 - Quiz 2 opens', 'with no class ahead, the deadline is the honest hero');
+  });
+});
+
+test('the deadlines card sends a flat list in time order, not one list per course', () => {
+  const store = seed(new SqliteStore(':memory:'));
+  const card = dueSoonCard(store, { now });
+  const items = card.data.items;
+  assert.equal(items.length, 2, 'both items are in the window');
+  assert.deepEqual(
+    items.map((i) => i.title),
+    ['ECE 150 - Assignment 3 due', 'MATH 115 - Quiz 2'],
+    'soonest first, regardless of course',
+  );
+  for (const i of items) assert.ok(i.course, 'every item still says which course it belongs to');
+  assert.ok(!items.some((i) => i.url === null), 'a null url fails the contract, so it must never be sent');
+});
+
 test('due soon counts only the seven day window and groups by course', () => {
   const store = seed(new SqliteStore(':memory:'));
   const card = dueSoonCard(store, { now });

@@ -123,6 +123,8 @@ export interface DueSoonData {
   count: number;
   nearest_at: number | null;
   window_days: number;
+  /** the same tasks in time order, which is the order the card reads them in */
+  items?: DueSoonItem[];
   courses: { course: string; count: number; items: DueSoonItem[] }[];
   error?: string;
 }

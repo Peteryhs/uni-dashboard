@@ -68,21 +68,37 @@ function sourceHealth(store, sourceId, cadenceMs, now) {
   });
 }
 
-/** Card 1: next class or deadline, whichever is sooner. What, where and when, nothing else. */
+/** Card 1: the next class, with the deadlines card as its own space. What, where and when. */
 export async function nextCommitmentCard(store, { now = Date.now(), useWeather = true } = {}) {
-  const upcomingRows = await store.rows('timeline_event', { where: 'starts_at >= ?', params: [now - 5 * MIN], limit: 200 });
-  const upcoming = upcomingRows
-    .filter((e) => e.kind !== 'deadline' || e.all_day)
-    .sort((a, b) => a.starts_at - b.starts_at);
+  /**
+   * The hero card belongs to the schedule feed.
+   *
+   * It used to take the soonest of anything, class or deadline, which sounded right and read wrong:
+   * LEARN carries far more items than a timetable does (84 upcoming events against a handful of
+   * classes), so a term date or a quiz opening hijacked the countdown to the next class. The
+   * schedule feed goes first, and a deadline only takes the hero slot when nothing is scheduled
+   * ahead, which is the honest fallback rather than a permanent override.
+   */
+  const schedule = (
+    await store.rows('timeline_event', {
+      where: 'source_id = ? AND starts_at >= ?',
+      params: [SCHEDULE_SOURCE, now - 5 * MIN],
+      limit: 200,
+    })
+  ).sort((a, b) => a.starts_at - b.starts_at);
 
-  const deadlineRows = await store.rows('timeline_event', { where: 'starts_at >= ? AND kind IN (?,?)', params: [now - 5 * MIN, 'deadline', 'exam'], limit: 200 });
-  const deadlines = deadlineRows.sort((a, b) => a.starts_at - b.starts_at);
+  const deadlines = (
+    await store.rows('timeline_event', {
+      where: 'kind IN (?,?) AND starts_at >= ?',
+      params: ['deadline', 'exam', now - 5 * MIN],
+      limit: 200,
+    })
+  ).sort((a, b) => a.starts_at - b.starts_at);
 
-  const candidates = [...upcoming, ...deadlines].sort((a, b) => a.starts_at - b.starts_at);
-  const next = candidates[0];
+  const next = schedule[0] ?? deadlines[0];
 
   if (!next) {
-    const health = await sourceHealth(store, 'uw-portal-ics', 15 * MIN, now);
+    const health = await sourceHealth(store, SCHEDULE_SOURCE, 15 * MIN, now);
     if (!health.ok) {
       return {
         id: 'next_commitment',
@@ -91,7 +107,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
         state: health.state,
         observed_at: null,
         valid_until: null,
-        source_id: 'uw-portal-ics',
+        source_id: SCHEDULE_SOURCE,
         data: {
           title: health.state === 'failed' ? 'Unable to fetch schedule' : 'Schedule feed not configured',
           subtitle: health.error,
@@ -150,23 +166,34 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
     store.rows('timeline_event', { where: 'kind IN (?,?) AND starts_at BETWEEN ? AND ?', params: ['deadline', 'exam', now, horizon], limit: 300 }),
     (rawDue) => {
       const due = (rawDue || []).slice().sort((a, b) => a.starts_at - b.starts_at);
-      const byCourse = new Map();
-      for (const d of due) {
+
+      // Enrich once, then use the same items for the flat list and for the per-course counts. Sending
+      // the raw rows in one place and enriched items in the other is how a null url reached the
+      // contract and took the whole bundle down.
+      const enriched = due.map((d) => {
         // The course the feed gives us wins over the one guessed from the title, and the links and
         // instructions live in the description text, so they are parsed here rather than in the UI.
         const ctx = taskContext({ title: d.title, location: d.location, description: d.description });
         const course = ctx.course || courseOf(d.title);
+        return {
+          course,
+          item: {
+            title: d.title,
+            starts_at: d.starts_at,
+            course,
+            ...(d.kind ? { kind: d.kind } : {}),
+            ...(ctx.url ? { url: ctx.url } : {}),
+            ...(ctx.place ? { location: ctx.place } : {}),
+            ...(ctx.body ? { description: ctx.body.slice(0, 1500) } : {}),
+            ...(ctx.links.length ? { links: ctx.links } : {}),
+          },
+        };
+      });
+
+      const byCourse = new Map();
+      for (const { course, item } of enriched) {
         if (!byCourse.has(course)) byCourse.set(course, []);
-        byCourse.get(course).push({
-          title: d.title,
-          starts_at: d.starts_at,
-          ...(d.kind ? { kind: d.kind } : {}),
-          ...(ctx.url ? { url: ctx.url } : {}),
-          ...(ctx.course ? { course: ctx.course } : {}),
-          ...(ctx.place ? { location: ctx.place } : {}),
-          ...(ctx.body ? { description: ctx.body.slice(0, 1500) } : {}),
-          ...(ctx.links.length ? { links: ctx.links } : {}),
-        });
+        byCourse.get(course).push(item);
       }
 
       return maybePromise(
@@ -202,6 +229,11 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
               count: due.length,
               nearest_at: due[0]?.starts_at ?? null,
               window_days: 7,
+              /**
+               * The flat list, in time order, which is how the card reads: what is due next, then what
+               * is due after that. `courses` stays for counts and for a client that predates this field.
+               */
+              items: enriched.slice(0, 12).map((e) => e.item),
               courses: [...byCourse.entries()].map(([course, items]) => ({ course, count: items.length, items: items.slice(0, 3) })),
             },
           };
@@ -369,6 +401,9 @@ export function alertCard(store, { now = Date.now() } = {}) {
 /** The alert slot is the status source's card, so it uses the status source's own cadence. */
 const STATUS_SOURCE = 'uw-status';
 const STATUS_CADENCE_MS = MIN;
+
+/** The schedule feed, whatever URL it points at: the Portal export or a Google Calendar secret. */
+const SCHEDULE_SOURCE = 'uw-portal-ics';
 
 function severityRank(s) {
   return { info: 0, minor: 1, major: 2, critical: 3, credential: 4 }[s] ?? 0;

@@ -127,10 +127,19 @@ export function DueSoonCard({
   const nearestUrgent = nextItemAt != null && nextItemAt - now <= 24 * 60 * 60_000;
 
   const isCompact = preferences.density === 'compact';
-  const allFutureItems = activeCourses.flatMap((g) =>
-    g.items.map((i) => ({ ...i, course: g.course })),
-  );
-  const sortedFutureItems = [...allFutureItems].sort((a, b) => a.starts_at - b.starts_at);
+  /**
+   * One chronological list, not a list per course.
+   *
+   * A grouped card answered "what does this course want" when the question is "what is next". The
+   * flat list comes from the server already sorted; older bundles without it are flattened here so a
+   * stale cache still renders.
+   */
+  const timeline = (d.items?.length
+    ? d.items
+    : activeCourses.flatMap((g) => g.items.map((i) => ({ ...i, course: i.course ?? g.course })))
+  )
+    .filter((i) => i.starts_at >= now)
+    .sort((a, b) => a.starts_at - b.starts_at);
 
   return (
     <CardShell
@@ -172,9 +181,9 @@ export function DueSoonCard({
         /* Reduced info density: Just the immediate 3 nearest upcoming deadlines */
         <div className="space-y-2">
           <ul className="space-y-1.5">
-            {sortedFutureItems.slice(0, 3).map((item) => (
+            {timeline.slice(0, 3).map((item) => (
               <DueItem
-                key={`${item.course}-${item.title}-${item.starts_at}`}
+                key={taskKey(item)}
                 item={item}
                 now={now}
                 muted={muted}
@@ -185,63 +194,27 @@ export function DueSoonCard({
               />
             ))}
           </ul>
-          {sortedFutureItems.length > 3 && (
+          {timeline.length > 3 && (
             <p className="pt-1 text-[11px] text-zinc-400">
-              +{sortedFutureItems.length - 3} more later this week · <span className="text-zinc-300">Detailed view has full breakdown</span>
+              +{timeline.length - 3} more later this week · <span className="text-zinc-300">Detailed view has full breakdown</span>
             </p>
           )}
         </div>
       ) : (
-        /* Detailed view: Full breakdown grouped by course */
-        <div className="space-y-2.5">
-          {activeCourses.map((group) => {
-            const tone = getCourseTone(group.course);
-            return (
-              <div
-                key={group.course}
-                className="rounded-lg border border-border/70 bg-card/60 p-2.5 transition-colors hover:border-border"
-              >
-                {/* Course Group Header */}
-                <div className="mb-1.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        'rounded-md border px-2 py-0.5 font-mono text-xs font-semibold tracking-tight',
-                        tone.badge,
-                      )}
-                    >
-                      {group.course}
-                    </span>
-                    <span className="text-xs text-zinc-400">
-                      {group.count} item{group.count === 1 ? '' : 's'}
-                    </span>
-                  </div>
-
-                  {group.count > group.items.length && (
-                    <span className="text-xs text-zinc-400">
-                      Showing {group.items.length}
-                    </span>
-                  )}
-                </div>
-
-                {/* Course Items */}
-                <ul className="space-y-1">
-                  {group.items.map((item) => (
-                    <DueItem
-                      key={`${item.title}-${item.starts_at}`}
-                      item={item}
-                      now={now}
-                      muted={muted}
-                      course={group.course}
-                      selected={selectedKey === taskKey(item)}
-                      onSelect={onSelectTask}
-                    />
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
+        /* Detailed view: one chronological list, soonest first */
+        <ul className="space-y-1">
+          {timeline.map((item) => (
+            <DueItem
+              key={taskKey(item)}
+              item={item}
+              now={now}
+              muted={muted}
+              course={item.course}
+              selected={selectedKey === taskKey(item)}
+              onSelect={onSelectTask}
+            />
+          ))}
+        </ul>
       )}
     </CardShell>
   );

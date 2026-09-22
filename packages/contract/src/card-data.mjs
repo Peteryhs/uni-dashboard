@@ -58,6 +58,8 @@ export const DueSoonData = z.object({
   count: z.number().int().nonnegative(),
   nearest_at: EPOCH_MS.nullable(),
   window_days: z.number().int().positive(),
+  /** the same tasks in time order, which is the order the card reads them in */
+  items: z.array(DueSoonItem).default([]),
   courses: z.array(
     z.object({
       course: z.string(),
