@@ -35,6 +35,52 @@ export function NextCommitmentCard({
   const muted = mutedIfStale(card.state);
   const { preferences } = usePreferences();
 
+  if (card.state === 'failed') {
+    return (
+      <CardShell
+        title="Next Commitment"
+        icon={<CalendarClock className="size-3.5" />}
+        state="failed"
+        observedAt={card.observed_at}
+        sourceId={card.source_id || undefined}
+        now={now}
+        showFreshness={false}
+      >
+        <div className="py-2">
+          <p className="text-[15px] font-semibold text-rose-400">
+            {d.title || 'Unable to fetch schedule'}
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {d.subtitle || 'Could not connect to calendar feed. Please check feed settings.'}
+          </p>
+        </div>
+      </CardShell>
+    );
+  }
+
+  if (card.state === 'degraded') {
+    return (
+      <CardShell
+        title="Next Commitment"
+        icon={<CalendarClock className="size-3.5" />}
+        state="degraded"
+        observedAt={card.observed_at}
+        sourceId={card.source_id || undefined}
+        now={now}
+        showFreshness={false}
+      >
+        <div className="py-2">
+          <p className="text-[15px] font-medium text-amber-300">
+            {d.title || 'Schedule feed not configured'}
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {d.subtitle || 'Add your Google Calendar or Portal ICS link in Settings to see upcoming classes.'}
+          </p>
+        </div>
+      </CardShell>
+    );
+  }
+
   if (card.state === 'empty' || !d.starts_at) {
     return (
       <CardShell
@@ -59,6 +105,8 @@ export function NextCommitmentCard({
     ? `${dayWord} ${formatTime(d.starts_at)}`
     : formatWeekdayTime(d.starts_at);
 
+  const isCompact = preferences.density === 'compact';
+
   return (
     <CardShell
       title="Next Commitment"
@@ -78,21 +126,33 @@ export function NextCommitmentCard({
         ) : undefined
       }
     >
-      <div className={cn('space-y-3', changed && 'value-changed')}>
+      <div className={cn('flex-1 flex flex-col justify-between', isCompact ? 'space-y-2' : 'space-y-3', changed && 'value-changed')}>
         {/* Main Title & Subtitle */}
         <div>
-          <div className="flex items-baseline justify-between gap-3">
-            <h3 className={cn('text-xl font-bold tracking-tight text-foreground sm:text-2xl', muted)}>
+          <div className="flex items-baseline justify-between gap-2.5">
+            <h3 className={cn(
+              'font-bold tracking-tight text-foreground leading-snug break-words',
+              isCompact ? 'text-base sm:text-lg' : 'text-lg sm:text-xl',
+              muted,
+            )}>
               {d.title}
             </h3>
-            <span className="shrink-0 rounded-md bg-secondary/50 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-foreground border border-border/60">
+            <span className={cn(
+              'shrink-0 rounded-md bg-secondary/50 font-semibold tabular-nums text-foreground border border-border/60',
+              isCompact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-0.5 text-xs',
+            )}>
               {countdown(d.starts_at, now)}
             </span>
           </div>
 
-          {d.subtitle && <p className="mt-0.5 text-xs text-zinc-400">{d.subtitle}</p>}
+          {/* Subtitle only in detailed mode to reduce info density in compact */}
+          {!isCompact && d.subtitle && (
+            <p className="mt-1 text-xs text-zinc-400 leading-normal">
+              {d.subtitle}
+            </p>
+          )}
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-zinc-400">
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-zinc-400">
             <span className={cn('flex items-center gap-1 font-medium text-foreground', muted)}>
               <Clock className="size-3.5 text-live" />
               {whenLine}
@@ -112,8 +172,8 @@ export function NextCommitmentCard({
           </div>
         </div>
 
-        {/* Advisory Weather line */}
-        {preferences.density === 'detailed' && d.weather && !d.weather.error && d.weather.temp_c != null && (
+        {/* Advisory Weather line only in detailed mode */}
+        {!isCompact && d.weather && !d.weather.error && d.weather.temp_c != null && (
           <WeatherPill weather={d.weather} />
         )}
       </div>

@@ -150,3 +150,66 @@ test('the card carries what, where and when, and nothing about leaving', async (
   }
 });
 
+test('when a schedule feed failed and has no recent success, card reports failed state instead of fake nothing scheduled', async () => {
+  const store = new SqliteStore(':memory:');
+  store.insertRun({
+    source_id: 'uw-portal-ics',
+    started_at: now - 60_000,
+    finished_at: now - 50_000,
+    outcome: 'failed',
+    error: 'HTTP 500 Internal Server Error',
+  });
+
+  const card = await nextCommitmentCard(store, { now, useWeather: false });
+  assert.equal(card.state, 'failed', 'failed fetch must produce failed card state');
+  assert.equal(card.data.title, 'Unable to fetch schedule');
+  assert.match(card.data.subtitle, /HTTP 500/);
+});
+
+test('when a schedule feed is unconfigured, card reports degraded state instead of fake nothing scheduled', async () => {
+  const store = new SqliteStore(':memory:');
+  store.insertRun({
+    source_id: 'uw-portal-ics',
+    started_at: now - 60_000,
+    finished_at: now - 50_000,
+    outcome: 'skipped',
+    error: 'missing PORTAL_ICS_URL',
+  });
+
+  const card = await nextCommitmentCard(store, { now, useWeather: false });
+  assert.equal(card.state, 'degraded', 'unconfigured feed must produce degraded state');
+  assert.equal(card.data.title, 'Schedule feed not configured');
+});
+
+test('when learn feed failed and has no recent success, due soon card reports failed state', () => {
+  const store = new SqliteStore(':memory:');
+  store.insertRun({
+    source_id: 'uw-learn-ics',
+    started_at: now - 60_000,
+    finished_at: now - 50_000,
+    outcome: 'failed',
+    error: 'Network timeout',
+  });
+
+  const card = dueSoonCard(store, { now });
+  assert.equal(card.state, 'failed');
+  assert.equal(card.data.count, 0);
+  assert.match(card.data.error, /Network timeout/);
+});
+
+test('when food feed failed and has no recent success, food card reports failed state', () => {
+  const store = new SqliteStore(':memory:');
+  store.insertRun({
+    source_id: 'uw-food-daily-menu',
+    started_at: now - 60_000,
+    finished_at: now - 50_000,
+    outcome: 'failed',
+    error: 'Downstream DNS error',
+  });
+
+  const card = foodCard(store, { now, date: '2026-09-21' });
+  assert.equal(card.state, 'failed');
+  assert.match(card.data.error, /Downstream DNS error/);
+});
+
+

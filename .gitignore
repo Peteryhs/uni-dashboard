@@ -16,3 +16,4 @@ apps/web/.vite/
 
 # scratch files
 .tmp-*
+.ai-cache.json

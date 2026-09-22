@@ -7,15 +7,28 @@
  * 3. Instant search & dietary filtering across all dining halls.
  * 4. Density awareness: Full detailed view vs compact summary view.
  */
-import { useMemo, useState } from 'react';
-import { UtensilsCrossed, Search, Star, X, ChevronRight, MapPin, Compass, Building2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  UtensilsCrossed,
+  Search,
+  Star,
+  X,
+  ChevronRight,
+  MapPin,
+  Compass,
+  Building2,
+  Sparkles,
+  RefreshCw,
+  AlertCircle,
+} from 'lucide-react';
 import { CardShell, EmptyState } from '@/components/card-shell';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { mutedIfStale } from '@/components/freshness';
 import { usePreferences, type DietaryPreference } from '@/lib/preferences-store';
-import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned } from '@/lib/contract';
+import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned, FoodAiRecommendation } from '@/lib/contract';
+import { rankFoodWithAi } from '@/lib/api';
 import { dayOffset, dietLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
@@ -35,7 +48,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'REV',
     campusZone: 'West Campus',
     description: 'Main REV Residence Dining Hall · Hot entrees, wok, grill & pizza',
-    walkHint: 'Home base (0 min)',
+    walkHint: 'West Campus residence',
   },
   {
     name: "Mudie's",
@@ -43,7 +56,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'V1',
     campusZone: 'North Campus',
     description: 'Main V1 Residence Dining Hall · Daily hot counters, grill & fresh bakery',
-    walkHint: '~12 min walk from REV',
+    walkHint: 'North Campus residence',
   },
   {
     name: 'The Market',
@@ -51,7 +64,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'CMH',
     campusZone: 'East Campus',
     description: 'CMH Residence Dining Hall · Made-to-order bowls, market & grocery',
-    walkHint: '~16 min walk from REV',
+    walkHint: 'East Campus residence',
   },
   {
     name: 'Brubakers Food Court',
@@ -59,7 +72,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'SLC',
     campusZone: 'Central Campus',
     description: 'SLC Lower Level · Subway, Pita Pit, Quesada, Shawarma Hub, Teriyaki',
-    walkHint: '~10 min walk from REV',
+    walkHint: 'Central Campus SLC',
   },
   {
     name: 'Tim Hortons (5 Hubs)',
@@ -67,7 +80,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'TIMS',
     campusZone: 'Campus Wide',
     description: 'Coffee, donuts, breakfast wraps & bagels across 5 campus spots',
-    walkHint: 'Davis Centre & SLC hubs',
+    walkHint: 'Campus Wide',
   },
   {
     name: 'Browsers Café',
@@ -75,7 +88,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'DPL',
     campusZone: 'South Campus',
     description: 'Dana Porter Arts Library Ground Floor · Coffee, espresso & snacks',
-    walkHint: '~15 min walk from REV',
+    walkHint: 'South Campus library',
   },
   {
     name: 'South Side Marketplace',
@@ -83,7 +96,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'SCH',
     campusZone: 'South Campus Entrance',
     description: 'Beside main University Ave entrance · Hot lunches, deli & soup bar',
-    walkHint: '~16 min walk from REV',
+    walkHint: 'South Campus entrance',
   },
   {
     name: 'Liquid Assets Café',
@@ -91,7 +104,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'HH',
     campusZone: 'Arts Quad',
     description: 'Hagey Hall Atrium · Gourmet coffee, sandwiches & pastry case',
-    walkHint: '~15 min walk from REV',
+    walkHint: 'Arts Quad',
   },
   {
     name: 'CEIT Café',
@@ -99,7 +112,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'EIT',
     campusZone: 'North-Central Campus',
     description: 'EIT Dinosaur Museum Atrium · Coffee, light lunches & treats',
-    walkHint: '~18 min walk from REV',
+    walkHint: 'Science & Engineering',
   },
   {
     name: 'Ev3rgreen Café',
@@ -107,7 +120,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'EV3',
     campusZone: 'Central Campus',
     description: 'Environment 3 Living Wall Atrium · Fair trade & plant-forward items',
-    walkHint: '~12 min walk from REV',
+    walkHint: 'Environment Quad',
   },
   {
     name: "ML's Diner",
@@ -115,7 +128,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'ML',
     campusZone: 'Arts Quad',
     description: 'Modern Languages Ground Floor · All-day breakfast, burgers & poutine',
-    walkHint: '~14 min walk from REV',
+    walkHint: 'Arts Quad',
   },
   {
     name: 'Starbucks',
@@ -123,7 +136,7 @@ export const CAMPUS_DINING_LOCATIONS: OutletLocationInfo[] = [
     code: 'STC',
     campusZone: 'Science Quad',
     description: 'Science Teaching Complex Ground Floor · Espresso & cold brews',
-    walkHint: '~16 min walk from REV',
+    walkHint: 'Science Quad',
   },
 ];
 
@@ -159,6 +172,18 @@ const DIET_TONE: Record<string, string> = {
   gluten: 'border-white/10 bg-secondary/30 text-muted-foreground',
 };
 
+function shortDietLabel(tag: string, compact?: boolean): string {
+  if (!compact) return dietLabel(tag);
+  const lower = tag.toLowerCase();
+  if (lower === 'vegan') return 'VG';
+  if (lower === 'vegetarian') return 'V';
+  if (lower === 'halal') return 'H';
+  if (lower === 'kosher') return 'K';
+  if (lower === 'dairy') return 'DF';
+  if (lower === 'gluten') return 'GF';
+  return tag.slice(0, 2).toUpperCase();
+}
+
 const DIETARY_TAGS: { id: DietaryPreference; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'halal', label: 'Halal' },
@@ -166,6 +191,43 @@ const DIETARY_TAGS: { id: DietaryPreference; label: string }[] = [
   { id: 'vegetarian', label: 'Veg' },
   { id: 'dairy', label: 'Dairy' },
 ];
+
+const AI_REC_CACHE_KEY_PREFIX = 'uni-dashboard:ai-rec:v1:';
+const AI_REC_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+function computeAiRecCacheKey(serviceDate: string, tasteProfile: unknown, model: string): string {
+  const p = (tasteProfile || {}) as Record<string, unknown>;
+  const bio = String(p.bio || '').trim().toLowerCase();
+  const spice = String(p.spiceLevel || 'medium');
+  const goals = Array.isArray(p.dietaryGoals) ? [...p.dietaryGoals].sort().join(',') : '';
+  return `${AI_REC_CACHE_KEY_PREFIX}${serviceDate}:${model}:${bio}:${spice}:${goals}`;
+}
+
+function loadCachedAiRec(serviceDate: string, tasteProfile: unknown, model: string): FoodAiRecommendation | null {
+  try {
+    const key = computeAiRecCacheKey(serviceDate, tasteProfile, model);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const item = JSON.parse(raw);
+    if (item && item.expiresAt && Date.now() < item.expiresAt && item.data) {
+      return item.data as FoodAiRecommendation;
+    }
+  } catch {}
+  return null;
+}
+
+function saveCachedAiRec(serviceDate: string, tasteProfile: unknown, model: string, data: FoodAiRecommendation) {
+  try {
+    const key = computeAiRecCacheKey(serviceDate, tasteProfile, model);
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        data,
+        expiresAt: Date.now() + AI_REC_CACHE_TTL_MS,
+      }),
+    );
+  } catch {}
+}
 
 export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) {
   const d = card.data;
@@ -178,17 +240,98 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
     setOnlyFavorites,
   } = usePreferences();
 
+  const isCompact = preferences.density === 'compact';
+
   const [localSearch, setLocalSearch] = useState('');
   const [selectedOutlet, setSelectedOutlet] = useState<string>('all');
   const [showCampusDirectory, setShowCampusDirectory] = useState(false);
+
+  // Workers AI Dining Advisor state with persistent local cache
+  const currentModel = preferences.tasteProfile.selectedAiModel;
+  const [aiRec, setAiRec] = useState<FoodAiRecommendation | null>(() =>
+    loadCachedAiRec(d.service_date, preferences.tasteProfile, currentModel),
+  );
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const lastKeyRef = useRef<string | null>(null);
 
   const offset = dayOffset(Date.parse(`${d.service_date}T12:00:00Z`), now);
   const dayLabel = offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : d.service_date;
   const nothingAtAll = d.total_dishes === 0;
 
+  const fetchAiRanking = useCallback(
+    async (force = false) => {
+      if (nothingAtAll) return;
+      const key = computeAiRecCacheKey(d.service_date, preferences.tasteProfile, currentModel);
+
+      // If not forcing a refresh, check if we have a valid cache first
+      if (!force) {
+        const cached = loadCachedAiRec(d.service_date, preferences.tasteProfile, currentModel);
+        if (cached) {
+          setAiRec(cached);
+          lastKeyRef.current = key;
+          return;
+        }
+      }
+
+      try {
+        setAiLoading(true);
+        setAiError(null);
+        const res = await rankFoodWithAi({
+          tasteProfile: preferences.tasteProfile,
+          model: currentModel,
+          date: d.service_date,
+          force,
+        });
+        setAiRec(res);
+        saveCachedAiRec(d.service_date, preferences.tasteProfile, currentModel, res);
+        lastKeyRef.current = key;
+      } catch (err: unknown) {
+        setAiError(err instanceof Error ? err.message : 'AI ranking unavailable');
+      } finally {
+        setAiLoading(false);
+      }
+    },
+    [preferences.tasteProfile, currentModel, d.service_date, nothingAtAll],
+  );
+
+  useEffect(() => {
+    const key = computeAiRecCacheKey(d.service_date, preferences.tasteProfile, currentModel);
+    if (lastKeyRef.current === key) return;
+
+    // Fast check: if local cache matches, populate immediately without fetching
+    const cached = loadCachedAiRec(d.service_date, preferences.tasteProfile, currentModel);
+    if (cached) {
+      setAiRec(cached);
+      lastKeyRef.current = key;
+      return;
+    }
+
+    fetchAiRanking(false);
+  }, [fetchAiRanking, d.service_date, preferences.tasteProfile, currentModel]);
+
+  // Map of outlet -> AI rank details
+  const aiRankMap = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        rank: number;
+        match_score: number;
+        verdict: string;
+        highlights: { dish: string; why: string }[];
+      }
+    >();
+    if (aiRec?.ranked_outlets) {
+      for (const r of aiRec.ranked_outlets) {
+        map.set(r.outlet, r);
+      }
+    }
+    return map;
+  }, [aiRec]);
+
   // Filtered pinned outlets
   const processedOutlets = useMemo(() => {
-    return d.pinned.map((outlet) => {
+    const list = d.pinned.map((outlet) => {
       let dishes = [...outlet.dishes];
 
       // 1. Dietary filter
@@ -217,14 +360,36 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
         return bFav - aFav;
       });
 
+      const aiInfo = aiRankMap.get(outlet.outlet);
+
       return {
         ...outlet,
         dishes,
         serving: outlet.serving,
         matchCount: dishes.length,
+        aiInfo,
       };
     });
-  }, [d.pinned, preferences.dietaryFilter, preferences.onlyFavorites, localSearch, isFavoriteDish]);
+
+    // Reorder outlets by AI rank when enabled
+    if (preferences.tasteProfile.sortByAiRank && aiRankMap.size > 0) {
+      list.sort((a, b) => {
+        const aRank = a.aiInfo?.rank ?? 99;
+        const bRank = b.aiInfo?.rank ?? 99;
+        return aRank - bRank;
+      });
+    }
+
+    return list;
+  }, [
+    d.pinned,
+    preferences.dietaryFilter,
+    preferences.onlyFavorites,
+    preferences.tasteProfile.sortByAiRank,
+    localSearch,
+    isFavoriteDish,
+    aiRankMap,
+  ]);
 
   const visibleOutlets = useMemo(() => {
     if (selectedOutlet === 'all') return processedOutlets;
@@ -254,34 +419,183 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
         </div>
       }
     >
-      {nothingAtAll ? (
+      {card.state === 'failed' ? (
+        <div className="py-2">
+          <p className="text-[15px] font-semibold text-rose-400">
+            Unable to fetch daily menu
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {d.error || 'Failed to sync with Waterloo Food Services feed. Menu items could not be loaded.'}
+          </p>
+        </div>
+      ) : nothingAtAll ? (
         <EmptyState hint="The daily menu feed has nothing posted for this service date.">
           No menu posted
         </EmptyState>
       ) : (
-        <div className="space-y-3.5">
-          {/* Controls Bar: Search & Quick Diet Chips */}
-          <div className="flex flex-col gap-2 pt-1">
-            <div className="relative flex items-center">
-              <Search className="pointer-events-none absolute left-2.5 size-3.5 text-zinc-400" />
-              <Input
-                type="text"
-                value={localSearch}
-                onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder="Search dishes across dining halls (e.g. lasagna, chicken, tofu)..."
-                className="h-8 pl-8 pr-8 text-xs bg-card border-border/80 text-foreground placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-              />
-              {localSearch && (
+        <div className={preferences.density === 'compact' ? 'space-y-2.5' : 'space-y-3.5'}>
+          {/* AI Dining Advisor */}
+          {preferences.density === 'compact' ? (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-border/80 bg-secondary/25 px-3 py-1.5 text-xs shadow-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex size-5 items-center justify-center rounded border border-amber/30 bg-amber/10 text-amber shrink-0">
+                  <Sparkles className="size-3 fill-amber" />
+                </div>
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="font-semibold text-foreground text-xs shrink-0">
+                    {aiRec?.top_outlet ? (
+                      <>Today Pick: <span className="text-amber">{getOutletLocation(aiRec.top_outlet).name}</span></>
+                    ) : (
+                      'AI Dining Advisor'
+                    )}
+                  </span>
+                  {aiRec?.ranked_outlets?.[0]?.match_score !== undefined && (
+                    <span className="rounded bg-amber/15 border border-amber/30 px-1 py-0 text-[9px] font-bold text-amber-foreground shrink-0">
+                      {aiRec.ranked_outlets[0].match_score}% Match
+                    </span>
+                  )}
+                  <span className="text-zinc-400 truncate text-[11px]">
+                    {aiLoading ? (
+                      'Evaluating dishes with AI...'
+                    ) : aiRec?.headline ? (
+                      `· ${aiRec.headline}`
+                    ) : aiError ? (
+                      '· AI ranking offline'
+                    ) : (
+                      '· Customize profile in Settings'
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setLocalSearch('')}
-                  aria-label="Clear search input"
-                  className="absolute right-2.5 rounded-md p-0.5 text-zinc-400 hover:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                  onClick={() => fetchAiRanking(true)}
+                  disabled={aiLoading}
+                  aria-label="Re-rank daily menu with AI"
+                  className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary/40 px-2 py-0.5 text-[11px] text-zinc-300 hover:text-foreground transition-colors"
+                  title="Re-evaluate today menu against your taste profile"
                 >
-                  <X className="size-3" />
+                  <RefreshCw className={cn('size-2.5', aiLoading && 'animate-spin text-amber')} />
+                  <span className="hidden sm:inline">{aiLoading ? '...' : 'Re-rank'}</span>
                 </button>
-              )}
+              </div>
             </div>
+          ) : (
+            <div className="rounded-lg border border-border/80 bg-secondary/25 p-3 sm:p-3.5 shadow-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex size-6 items-center justify-center rounded-md border border-amber/30 bg-amber/10 text-amber shrink-0">
+                    <Sparkles className="size-3.5 fill-amber" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold text-foreground">
+                        {aiRec?.top_outlet ? (
+                          <>Today Top Pick: <span className="text-amber">{getOutletLocation(aiRec.top_outlet).name}</span></>
+                        ) : (
+                          'AI Dining Advisor'
+                        )}
+                      </span>
+                      {aiRec?.ranked_outlets?.[0]?.match_score !== undefined && (
+                        <span className="rounded bg-amber/15 border border-amber/30 px-1.5 py-0.2 text-[10px] font-bold text-amber-foreground">
+                          {aiRec.ranked_outlets[0].match_score}% Match
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono text-zinc-400">
+                        {preferences.tasteProfile.selectedAiModel.includes('gemma')
+                          ? 'Gemma 4'
+                          : preferences.tasteProfile.selectedAiModel.includes('glm')
+                            ? 'GLM-4.7'
+                            : preferences.tasteProfile.selectedAiModel.includes('llama')
+                              ? 'Llama 4'
+                              : preferences.tasteProfile.selectedAiModel.includes('deepseek')
+                                ? 'DeepSeek-R1'
+                                : 'Workers AI'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => fetchAiRanking(true)}
+                    disabled={aiLoading}
+                    aria-label="Re-rank daily menu with AI"
+                    className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary/30 px-2 py-1 text-[11px] text-zinc-300 hover:border-white/20 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                    title="Re-evaluate today menu against your taste profile"
+                  >
+                    <RefreshCw className={cn('size-3', aiLoading && 'animate-spin text-amber')} />
+                    <span className="hidden sm:inline">{aiLoading ? 'Evaluating...' : 'Re-rank'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Content / Verdict */}
+              <div className="mt-2 text-xs text-zinc-300 leading-relaxed">
+                {aiLoading ? (
+                  <p className="text-zinc-400 italic">
+                    Evaluating today dining hall dishes against your taste profile...
+                  </p>
+                ) : aiRec ? (
+                  <div className="space-y-1">
+                    <p className="font-medium text-foreground">
+                      {aiRec.headline}
+                    </p>
+                    {aiRec.tip && (
+                      <p className="text-[11px] text-zinc-400">
+                        Tip: {aiRec.tip}
+                      </p>
+                    )}
+                  </div>
+                ) : aiError ? (
+                  <div className="rounded-md border border-amber/30 bg-amber/10 p-2.5">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="size-4 text-amber shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-foreground text-xs">AI Menu Ranking Unavailable</p>
+                        <p className="text-[11px] text-zinc-300 mt-0.5 leading-relaxed">{aiError}</p>
+                        <p className="text-[10px] text-zinc-500 mt-1">
+                          Showing official dining hall menus below in standard campus order without AI scoring.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-zinc-400">
+                    Enter your taste profile and cravings in Settings to get ranked recommendations.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Controls Bar: Search (Detailed mode only) & Quick Diet Chips */}
+          <div className="flex flex-col gap-2 pt-1">
+            {!isCompact && (
+              <div className="relative flex items-center">
+                <Search className="pointer-events-none absolute left-2.5 size-3.5 text-zinc-400" />
+                <Input
+                  type="text"
+                  value={localSearch}
+                  onChange={(e) => setLocalSearch(e.target.value)}
+                  placeholder="Search dishes across dining halls (e.g. lasagna, chicken, tofu)..."
+                  className="h-8 pl-8 pr-8 text-xs bg-card border-border/80 text-foreground placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                />
+                {localSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setLocalSearch('')}
+                    aria-label="Clear search input"
+                    className="absolute right-2.5 rounded-md p-0.5 text-zinc-400 hover:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Outlet selector tabs, dietary filter pills, and guide button */}
             <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -367,22 +681,24 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
                   <span>Favorites</span>
                 </button>
 
-                {/* Campus Locations Directory toggle */}
-                <button
-                  type="button"
-                  onClick={() => setShowCampusDirectory(!showCampusDirectory)}
-                  title="View Waterloo campus dining locations & building codes"
-                  className={cn(
-                    'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-                    showCampusDirectory
-                      ? 'border border-live/60 bg-live/15 text-live'
-                      : 'border border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground',
-                  )}
-                >
-                  <Compass className="size-3.5 text-live" />
-                  <span className="hidden sm:inline">Location Guide</span>
-                  <span className="sm:hidden">Guide</span>
-                </button>
+                {/* Campus Locations Directory toggle (Detailed mode only) */}
+                {!isCompact && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCampusDirectory(!showCampusDirectory)}
+                    title="View Waterloo campus dining locations & building codes"
+                    className={cn(
+                      'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                      showCampusDirectory
+                        ? 'border border-live/60 bg-live/15 text-live'
+                        : 'border border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground',
+                    )}
+                  >
+                    <Compass className="size-3.5 text-live" />
+                    <span className="hidden sm:inline">Location Guide</span>
+                    <span className="sm:hidden">Guide</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -477,8 +793,8 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
             )}
           </div>
 
-          {/* Secondary Outlets Section (e.g. Other Campus Locations) */}
-          {d.others.length > 0 && selectedOutlet === 'all' && !localSearch && (
+          {/* Secondary Outlets Section (Detailed mode only to reduce info density in compact) */}
+          {!isCompact && d.others.length > 0 && selectedOutlet === 'all' && !localSearch && (
             <>
               <Separator className="bg-border/60" />
               <div className="rounded-lg bg-secondary/20 p-3 border border-border/60">
@@ -503,12 +819,12 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
                             {loc.code}
                           </span>
                           <div>
-                            <span className="font-medium text-foreground">{loc.name}</span>
-                            <span className="ml-1.5 text-xs text-zinc-400">· {loc.building} ({loc.campusZone})</span>
+                            <span className="font-semibold text-foreground">{loc.name}</span>
+                            <span className="text-zinc-400 ml-1.5 text-[11px]">· {loc.building}</span>
                           </div>
                         </div>
-                        <span className="tabular-nums text-xs text-zinc-400">
-                          {o.dish_count} dishes serving
+                        <span className="text-[11px] text-zinc-400 font-mono">
+                          {loc.campusZone}
                         </span>
                       </div>
                     );
@@ -518,15 +834,17 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
             </>
           )}
 
-          {/* Summary footer line */}
-          <div className="flex items-center justify-between pt-1 text-xs text-zinc-400">
-            <span>
-              Showing {totalFilteredDishes} of {d.total_dishes} dishes
-            </span>
-            <span className="flex items-center gap-1.5 text-zinc-300">
-              <Star className="size-3 text-amber fill-amber" /> Click ★ to rank dishes to your taste
-            </span>
-          </div>
+          {/* Summary footer line (Detailed mode only) */}
+          {!isCompact && (
+            <div className="flex items-center justify-between pt-1 text-xs text-zinc-400">
+              <span>
+                Showing {totalFilteredDishes} of {d.total_dishes} dishes
+              </span>
+              <span className="flex items-center gap-1.5 text-zinc-300">
+                <Star className="size-3 text-amber fill-amber" /> Click ★ to rank dishes to your taste
+              </span>
+            </div>
+          )}
         </div>
       )}
     </CardShell>
@@ -540,7 +858,15 @@ function PinnedOutletSection({
   isFavoriteDish,
   toggleFavoriteDish,
 }: {
-  outlet: FoodOutletPinned & { matchCount?: number };
+  outlet: FoodOutletPinned & {
+    matchCount?: number;
+    aiInfo?: {
+      rank: number;
+      match_score: number;
+      verdict: string;
+      highlights: { dish: string; why: string }[];
+    };
+  };
   muted: string;
   density: 'detailed' | 'compact';
   isFavoriteDish: (name: string) => boolean;
@@ -550,11 +876,14 @@ function PinnedOutletSection({
   const loc = getOutletLocation(outlet.outlet);
 
   return (
-    <div className="flex flex-col rounded-lg border border-border/80 bg-card/70 p-3.5 transition-colors hover:border-border">
+    <div className={cn(
+      'flex flex-col rounded-lg border border-border/80 bg-card/70 transition-colors hover:border-border',
+      density === 'compact' ? 'p-2.5 gap-1.5' : 'p-3.5 gap-2',
+    )}>
       {/* Outlet Header */}
-      <div className="flex flex-col gap-2 border-b border-border/60 pb-2.5">
+      <div className={cn('flex flex-col border-b border-border/60', density === 'compact' ? 'gap-1 pb-1.5' : 'gap-2 pb-2.5')}>
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-start gap-2.5">
+          <div className="flex items-start gap-2">
             <button
               type="button"
               onClick={() => setExpanded(!expanded)}
@@ -569,35 +898,38 @@ function PinnedOutletSection({
               />
             </button>
 
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="rounded bg-live/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-live border border-live/30">
                   {loc.code}
                 </span>
                 <h3 className={cn('text-sm font-semibold tracking-tight text-foreground', muted)}>
                   {loc.name}
                 </h3>
-              </div>
-
-              {/* Direct location badge with building, campus zone, and walking hint */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
-                <span className="inline-flex items-center gap-1 font-medium text-foreground">
-                  <MapPin className="size-3 text-live shrink-0" />
-                  {loc.building} ({loc.code})
-                </span>
-                <span>·</span>
-                <span className="text-zinc-300">{loc.campusZone}</span>
-                {loc.walkHint && (
-                  <>
-                    <span>·</span>
-                    <span className="text-[11px] text-zinc-400 font-mono">{loc.walkHint}</span>
-                  </>
+                {!loc.name.toLowerCase().includes(loc.building.toLowerCase()) && (
+                  <span className="text-xs text-zinc-400 font-normal">· {loc.building}</span>
+                )}
+                {outlet.aiInfo && (
+                  <span
+                    className={cn(
+                      'rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                      outlet.aiInfo.rank === 1
+                        ? 'border-amber/40 bg-amber/15 text-amber-200'
+                        : 'border-border/80 bg-secondary/40 text-zinc-300',
+                    )}
+                  >
+                    #{outlet.aiInfo.rank} Match ({outlet.aiInfo.match_score}%)
+                  </span>
                 )}
               </div>
 
-              <p className="text-xs text-zinc-400">
-                {loc.description}
-              </p>
+              {/* AI Verdict summary for this outlet (Detailed mode only) */}
+              {density !== 'compact' && outlet.aiInfo?.verdict && (
+                <div className="mt-1 flex items-start gap-1.5 rounded-md bg-secondary/30 px-2 py-1 text-[11px] text-zinc-300 border border-border/50">
+                  <Sparkles className="size-3 text-amber shrink-0 mt-0.5" />
+                  <span className="leading-snug">{outlet.aiInfo.verdict}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -623,16 +955,23 @@ function PinnedOutletSection({
 
       {/* Dishes List */}
       {expanded && (
-        <div className="mt-2.5 pt-1">
+        <div className={density === 'compact' ? 'mt-1.5 pt-0.5' : 'mt-2.5 pt-1'}>
           {outlet.serving ? (
             outlet.dishes.length > 0 ? (
               <div className={density === 'compact' ? 'space-y-1' : 'space-y-1.5'}>
-                {outlet.dishes.map((dish) => {
+                {(density === 'compact' ? outlet.dishes.slice(0, 3) : outlet.dishes).map((dish) => {
                   const isFav = isFavoriteDish(dish.dish);
+                  const highlight = outlet.aiInfo?.highlights?.find(
+                    (h) =>
+                      h.dish.toLowerCase() === dish.dish.toLowerCase() ||
+                      dish.dish.toLowerCase().includes(h.dish.toLowerCase()) ||
+                      h.dish.toLowerCase().includes(dish.dish.toLowerCase()),
+                  );
                   return (
                     <DishItem
                       key={dish.dish}
                       dish={dish}
+                      aiHighlight={density === 'compact' ? undefined : highlight?.why}
                       muted={muted}
                       isFavorite={isFav}
                       onToggleFavorite={() => toggleFavoriteDish(dish.dish)}
@@ -640,15 +979,20 @@ function PinnedOutletSection({
                     />
                   );
                 })}
-                {outlet.hidden_dishes > 0 && (
+                {density === 'compact' && outlet.dishes.length > 3 && (
+                  <p className="pt-0.5 text-[11px] text-zinc-400 pl-6">
+                    +{outlet.dishes.length - 3} more dishes · <span className="text-zinc-300">Detailed view has full menu</span>
+                  </p>
+                )}
+                {density !== 'compact' && outlet.hidden_dishes > 0 && (
                   <p className="pt-1 text-xs text-zinc-400 pl-6">
                     +{outlet.hidden_dishes} additional items
                   </p>
                 )}
               </div>
             ) : (
-              <p className="py-1 text-xs text-zinc-400 pl-6">
-                No dishes matching the active filters.
+              <p className="text-xs text-zinc-400 pl-6">
+                No dishes found matching current filters.
               </p>
             )
           ) : (
@@ -664,12 +1008,14 @@ function PinnedOutletSection({
 
 function DishItem({
   dish,
+  aiHighlight,
   muted,
   isFavorite,
   onToggleFavorite,
   compact,
 }: {
   dish: FoodDish;
+  aiHighlight?: string;
   muted: string;
   isFavorite: boolean;
   onToggleFavorite: () => void;
@@ -678,12 +1024,12 @@ function DishItem({
   return (
     <div
       className={cn(
-        'group flex items-center justify-between gap-2 rounded-lg px-2 transition-colors hover:bg-secondary/40',
-        compact ? 'py-0.5' : 'py-1',
+        'group flex items-center justify-between gap-1.5 transition-colors hover:bg-secondary/40',
+        compact ? 'py-0.5 px-1.5 rounded' : 'py-1 px-2 rounded-lg',
         isFavorite && 'bg-amber/5 border border-amber/20',
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center gap-1.5">
         <button
           type="button"
           onClick={onToggleFavorite}
@@ -692,7 +1038,8 @@ function DishItem({
         >
           <Star
             className={cn(
-              'size-3.5 transition-all',
+              'transition-all',
+              compact ? 'size-3' : 'size-3.5',
               isFavorite
                 ? 'fill-amber text-amber scale-110'
                 : 'text-zinc-500 hover:text-amber group-hover:text-zinc-400',
@@ -724,20 +1071,34 @@ function DishItem({
             {dish.dish}
           </span>
         )}
+
+        {aiHighlight && (
+          <span
+            title={aiHighlight}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-md border border-amber/40 bg-amber/15 font-medium text-amber-200 shrink-0',
+              compact ? 'px-1 py-0 text-[9px] max-w-[100px] sm:max-w-[130px]' : 'px-1.5 py-0.5 text-[10px] max-w-[140px] sm:max-w-[200px]',
+            )}
+          >
+            <Sparkles className={cn(compact ? 'size-2' : 'size-2.5', 'text-amber shrink-0')} />
+            <span className="truncate">{aiHighlight}</span>
+          </span>
+        )}
       </div>
 
       {/* Diet chips */}
       {dish.diet.length > 0 && (
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           {dish.diet.map((tag) => (
             <span
               key={tag}
               className={cn(
-                'rounded-md border px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase',
+                'rounded border font-semibold tracking-wider uppercase',
+                compact ? 'px-1 py-0 text-[8.5px]' : 'px-1.5 py-0.5 text-[9px]',
                 DIET_TONE[tag.toLowerCase()] ?? 'border-white/10 bg-secondary/30 text-zinc-300',
               )}
             >
-              {dietLabel(tag)}
+              {shortDietLabel(tag, compact)}
             </span>
           ))}
         </div>

@@ -95,3 +95,40 @@ stalled the whole poll loop. 61 tests to 66.
 - **Typecheck**: `npm run web:typecheck` passed with 0 errors.
 - **Bundle Build**: `npm run web:build` succeeded in 3.37s.
 - **Runtime Sanity**: Verified `http://127.0.0.1:8787/v1/dashboard` returns live bundle with active origin `from: 'Last class (PSE)'`, `walk: 0`, and future deadlines starting today at 4:30 PM.
+
+---
+
+## 2026-09-21: v0.3.0 - Zero-Fake-Data Enforcement, Cloudflare Workers AI Dining Advisor & Density View Architecture
+
+### 1. Zero Fake Data & Stale Fallback Elimination
+- Eliminated placeholder/mock data when source fetches fail. If a feed (Portal schedule, LEARN deadlines, Food services) fails and has no recent valid fetch in cache, cards transition explicitly to `failed` or `degraded` contract states instead of rendering misleading "nothing scheduled" or placeholder text.
+- Contract schemas (`card-data.mjs`, `contract.ts`) updated with explicit error payloads and verified against strict contract rules.
+
+### 2. Cloudflare Workers AI Dining Advisor
+- Integrated Cloudflare Workers AI via REST proxy in `apps/relay/src/ai.mjs`, supporting multiple models (`@cf/google/gemma-4-26b-a4b-it`, `llama-3.3-70b`, `qwen`, `glm-4.7`, `deepseek-r1`).
+- Enforced a strict 5-word maximum on dish recommendation reasons (`rankDailyMenu` clamps word count to 5 words max).
+- Implemented robust multi-layer caching:
+  - Backend persistent cache (`.ai-cache.json`) keyed by date, model, and normalized user taste profile.
+  - Client-side `localStorage` cache with instant TTL checks to eliminate redundant LLM invocations on page refresh.
+- Comprehensive test suite added in `test/ai-ranking.test.mjs`, expanding test coverage from 66 to 79 passing tests.
+
+### 3. Food Customization Sheet UX Polish
+- Reorganized taste tags in `customization-sheet.tsx`: removed category splitters and placed simple, actionable pills directly below the taste prompt textarea for frictionless selection (`[High Protein]`, `[Mild Spice]`, `[Quick Meal]`, `[Low Carb]`).
+
+### 4. Information Density Architecture: Detailed vs. Compact View
+- Added segmented view switcher (`[Detailed | Compact]`) in the header.
+- Designed **Compact View** specifically around **reduced information density** (lowering cognitive load and visual noise rather than squishing elements into cramped grids):
+  - **Next Commitment**: Omitted secondary lecture subtitles and weather advisory pill; displays solely Title, Countdown, Time, and Location.
+  - **Upcoming Deadlines**: Collapsed multi-course grouped boxes into a single flat list of the top 3 imminent deadlines across all courses (`[CS 444] A2 Checkpoint · In 18h`) with a subtle count indicator for remaining items.
+  - **Daily Food**: Replaced large 100px+ AI card with a 1-line top-pick summary banner; hid exploratory controls (dish search bar, Location Guide directory button); suppressed per-outlet AI verdict paragraphs; removed dish-level AI highlight pills to keep rows minimal; clamped dishes to top 3 per dining hall; hid secondary campus locations and verbose footer.
+  - **Detailed View**: Preserved full exploratory depth with weather breakdowns, course-grouped deadlines, full AI advice and reasoning tips, global dish search, campus location guide, and complete menus.
+
+### 5. Reactive State Synchronization Fix (`useSyncExternalStore`)
+- **Bug**: `usePreferences()` previously used component-local `useState`, causing each card (`NextCommitmentCard`, `DueSoonCard`, `FoodCard`, `CardShell`) to hold an isolated state instance. Toggling density in the header only updated `App.tsx` (adjusting container margins/spacing) while the cards remained locked in whichever state was initialized from `localStorage`.
+- **Fix**: Rebuilt `preferences-store.ts` with React 19's `useSyncExternalStore` and a module-level singleton store, ensuring instantaneous cross-component and cross-tab synchronization whenever view density or preferences change.
+
+### 6. Verification & Test Metrics
+- **Unit & Integration Tests**: 79/79 passing tests (`npm test` in ~280ms).
+- **Web Build**: `npm run web:build` succeeds cleanly in ~3.0s.
+- **Relay Runtime**: Running smoothly with real live Waterloo feeds (`uw-portal-ics`, `uw-learn-ics`, `uw-status`, `uw-food-daily-menu`).
+

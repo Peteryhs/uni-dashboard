@@ -1,7 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 export type LayoutDensity = 'detailed' | 'compact';
 export type DietaryPreference = 'all' | 'halal' | 'vegan' | 'vegetarian' | 'dairy' | 'gluten';
+export type SpiceLevel = 'none' | 'mild' | 'medium' | 'hot' | 'extra-hot';
+
+export interface TasteProfile {
+  bio: string;
+  spiceLevel: SpiceLevel;
+  dietaryGoals: string[];
+  selectedAiModel: string;
+  sortByAiRank: boolean;
+}
+
+export const DEFAULT_TASTE_PROFILE: TasteProfile = {
+  bio: '',
+  spiceLevel: 'medium',
+  dietaryGoals: ['high-protein'],
+  selectedAiModel: '@cf/google/gemma-4-26b-a4b-it',
+  sortByAiRank: true,
+};
 
 export interface UserPreferences {
   density: LayoutDensity;
@@ -10,9 +27,10 @@ export interface UserPreferences {
   favoriteOutlets: string[];
   dishSearchQuery: string;
   onlyFavorites: boolean;
+  tasteProfile: TasteProfile;
 }
 
-const STORAGE_KEY = 'uni-dashboard:preferences:v1';
+const STORAGE_KEY = 'uni-dashboard:preferences:v2';
 
 const DEFAULT_PREFERENCES: UserPreferences = {
   density: 'detailed',
@@ -21,48 +39,93 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   favoriteOutlets: ['REVelation - Residence Dining Hall', "Mudie's - Residence Dining Hall"],
   dishSearchQuery: '',
   onlyFavorites: false,
+  tasteProfile: DEFAULT_TASTE_PROFILE,
 };
 
 function readPreferences(): UserPreferences {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('uni-dashboard:preferences:v1');
     if (!raw) return DEFAULT_PREFERENCES;
     const parsed = JSON.parse(raw);
-    return { ...DEFAULT_PREFERENCES, ...parsed };
+    return {
+      ...DEFAULT_PREFERENCES,
+      ...parsed,
+      tasteProfile: {
+        ...DEFAULT_TASTE_PROFILE,
+        ...(parsed.tasteProfile || {}),
+      },
+    };
   } catch {
     return DEFAULT_PREFERENCES;
   }
 }
 
-export function usePreferences() {
-  const [preferences, setPreferencesState] = useState<UserPreferences>(() => readPreferences());
+// Module-level singleton store for instant cross-component synchronization
+let currentPreferences: UserPreferences = readPreferences();
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
-    } catch {
-      // ignore storage quota errors
+function emitChange() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getSnapshot(): UserPreferences {
+  return currentPreferences;
+}
+
+function getServerSnapshot(): UserPreferences {
+  return DEFAULT_PREFERENCES;
+}
+
+// Cross-tab synchronization
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === STORAGE_KEY || event.key === 'uni-dashboard:preferences:v1') {
+      currentPreferences = readPreferences();
+      emitChange();
     }
-  }, [preferences]);
+  });
+}
+
+function setPreferences(updater: (prev: UserPreferences) => UserPreferences) {
+  currentPreferences = updater(currentPreferences);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(currentPreferences));
+  } catch {
+    // ignore storage quota errors
+  }
+  emitChange();
+}
+
+export function usePreferences() {
+  const preferences = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const setDensity = useCallback((density: LayoutDensity) => {
-    setPreferencesState((prev) => ({ ...prev, density }));
+    setPreferences((prev) => ({ ...prev, density }));
   }, []);
 
   const setDietaryFilter = useCallback((dietaryFilter: DietaryPreference) => {
-    setPreferencesState((prev) => ({ ...prev, dietaryFilter }));
+    setPreferences((prev) => ({ ...prev, dietaryFilter }));
   }, []);
 
   const setDishSearchQuery = useCallback((dishSearchQuery: string) => {
-    setPreferencesState((prev) => ({ ...prev, dishSearchQuery }));
+    setPreferences((prev) => ({ ...prev, dishSearchQuery }));
   }, []);
 
   const setOnlyFavorites = useCallback((onlyFavorites: boolean) => {
-    setPreferencesState((prev) => ({ ...prev, onlyFavorites }));
+    setPreferences((prev) => ({ ...prev, onlyFavorites }));
   }, []);
 
   const toggleFavoriteDish = useCallback((dishName: string) => {
-    setPreferencesState((prev) => {
+    setPreferences((prev) => {
       const normalized = dishName.trim().toLowerCase();
       const exists = prev.favoriteDishes.some((d) => d.toLowerCase() === normalized);
       return {
@@ -83,7 +146,7 @@ export function usePreferences() {
   );
 
   const toggleFavoriteOutlet = useCallback((outletName: string) => {
-    setPreferencesState((prev) => {
+    setPreferences((prev) => {
       const exists = prev.favoriteOutlets.includes(outletName);
       return {
         ...prev,
@@ -99,8 +162,18 @@ export function usePreferences() {
     [preferences.favoriteOutlets],
   );
 
+  const updateTasteProfile = useCallback((patch: Partial<TasteProfile>) => {
+    setPreferences((prev) => ({
+      ...prev,
+      tasteProfile: {
+        ...prev.tasteProfile,
+        ...patch,
+      },
+    }));
+  }, []);
+
   const resetPreferences = useCallback(() => {
-    setPreferencesState(DEFAULT_PREFERENCES);
+    setPreferences(() => DEFAULT_PREFERENCES);
   }, []);
 
   return {
@@ -113,6 +186,7 @@ export function usePreferences() {
     isFavoriteDish,
     toggleFavoriteOutlet,
     isFavoriteOutlet,
+    updateTasteProfile,
     resetPreferences,
   };
 }

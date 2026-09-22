@@ -8,12 +8,14 @@ import {
   KeyRound,
   Check,
   AlertCircle,
-  ExternalLink,
   RefreshCw,
   Lock,
   Calendar,
   Clock,
   ShieldCheck,
+  Sparkles,
+  Cpu,
+  Bot,
 } from 'lucide-react';
 import {
   Sheet,
@@ -30,13 +32,20 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   fetchCredentialsStatus,
   updateCredentials,
   triggerPoll,
   type CredentialsStatus,
 } from '@/lib/api';
-import type { DietaryPreference, LayoutDensity, UserPreferences } from '@/lib/preferences-store';
+import type {
+  DietaryPreference,
+  LayoutDensity,
+  SpiceLevel,
+  TasteProfile,
+  UserPreferences,
+} from '@/lib/preferences-store';
 import { cn } from '@/lib/utils';
 
 const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
@@ -48,12 +57,63 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'gluten', label: 'Gluten-Free' },
 ];
 
+interface TasteChip {
+  id: string;
+  label: string;
+  type: 'goal' | 'spice';
+  value: string;
+}
+
+const DEFAULT_TASTE_CHIPS: TasteChip[] = [
+  { id: 'high-protein', label: 'High Protein', type: 'goal', value: 'high-protein' },
+  { id: 'mild-spice', label: 'Mild Spice', type: 'spice', value: 'mild' },
+  { id: 'medium-spice', label: 'Medium Spice', type: 'spice', value: 'medium' },
+  { id: 'hot-spice', label: 'Hot Spice', type: 'spice', value: 'hot' },
+  { id: 'extra-hot-spice', label: 'Extra Hot Spice', type: 'spice', value: 'extra-hot' },
+  { id: 'comfort', label: 'Comfort Food', type: 'goal', value: 'comfort' },
+  { id: 'low-carb', label: 'Low Carb', type: 'goal', value: 'low-carb' },
+  { id: 'plant-forward', label: 'Plant-Forward', type: 'goal', value: 'plant-forward' },
+  { id: 'budget', label: 'Budget Friendly', type: 'goal', value: 'budget' },
+  { id: 'halal', label: 'Halal', type: 'goal', value: 'halal' },
+  { id: 'vegetarian', label: 'Vegetarian', type: 'goal', value: 'vegetarian' },
+  { id: 'vegan', label: 'Vegan', type: 'goal', value: 'vegan' },
+];
+
+const AI_MODEL_OPTIONS = [
+  {
+    id: '@cf/google/gemma-4-26b-a4b-it',
+    name: 'Google Gemma 4 (26B-A4B)',
+    badge: 'Recommended · 4B Active MoE',
+  },
+  {
+    id: '@cf/zhipu/glm-4.7-flash',
+    name: 'GLM-4.7 Flash',
+    badge: 'Ultra-Fast Flash',
+  },
+  {
+    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
+    name: 'Meta Llama 4 Scout (17B)',
+    badge: '16-Expert MoE',
+  },
+  {
+    id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
+    name: 'DeepSeek-R1 Distill (32B)',
+    badge: 'Reasoning Specialist',
+  },
+  {
+    id: '@cf/qwen/qwen3-30b-a3b-fp8',
+    name: 'Qwen3 (30B-A3B)',
+    badge: 'Dense & MoE',
+  },
+];
+
 export function CustomizationSheet({
   preferences,
   setDensity,
   setDietaryFilter,
   setOnlyFavorites,
   toggleFavoriteDish,
+  updateTasteProfile,
   resetPreferences,
 }: {
   preferences: UserPreferences;
@@ -61,9 +121,10 @@ export function CustomizationSheet({
   setDietaryFilter: (f: DietaryPreference) => void;
   setOnlyFavorites: (fav: boolean) => void;
   toggleFavoriteDish: (dish: string) => void;
+  updateTasteProfile: (patch: Partial<TasteProfile>) => void;
   resetPreferences: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<'preferences' | 'credentials'>('preferences');
+  const [activeTab, setActiveTab] = useState<'preferences' | 'taste' | 'credentials'>('taste');
 
   return (
     <Sheet>
@@ -86,7 +147,7 @@ export function CustomizationSheet({
             <div>
               <SheetTitle className="text-base font-semibold">Dashboard Settings</SheetTitle>
               <SheetDescription className="text-xs text-zinc-400">
-                Customize preferences, taste history, and student feed credentials.
+                Taste profile, AI dining advisor, layout, and feeds.
               </SheetDescription>
             </div>
           </div>
@@ -94,25 +155,158 @@ export function CustomizationSheet({
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as 'preferences' | 'credentials')}
+          onValueChange={(v) => setActiveTab(v as 'preferences' | 'taste' | 'credentials')}
           className="mt-5"
         >
-          <TabsList className="grid w-full grid-cols-2 bg-secondary/40 p-1 border border-border/60 rounded-lg">
+          <TabsList className="grid w-full grid-cols-3 bg-secondary/40 p-1 border border-border/60 rounded-lg">
+            <TabsTrigger
+              value="taste"
+              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+            >
+              <Sparkles className="size-3.5 mr-1 text-amber" /> Taste AI
+            </TabsTrigger>
             <TabsTrigger
               value="preferences"
               className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
-              <Sliders className="size-3.5 mr-1.5" /> Preferences
+              <Sliders className="size-3.5 mr-1" /> General
             </TabsTrigger>
             <TabsTrigger
               value="credentials"
               className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
-              <KeyRound className="size-3.5 mr-1.5" /> Credentials & Feeds
+              <KeyRound className="size-3.5 mr-1" /> Feeds
             </TabsTrigger>
           </TabsList>
 
-          {/* Tab 1: General Preferences */}
+          {/* Tab 1: AI Taste Profile */}
+          <TabsContent value="taste" className="mt-5 space-y-5">
+            {/* Intro banner */}
+            <div className="rounded-lg border border-border/80 bg-secondary/30 p-3.5 text-xs">
+              <div className="flex items-center gap-2 font-semibold text-foreground">
+                <Bot className="size-4 text-live" />
+                <span>Cloudflare Workers AI Dining Advisor</span>
+              </div>
+              <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
+                Describe your cravings and dietary goals. Powered by Google Gemma 4 on Workers AI free compute (10,000 neurons per day). It evaluates daily menus and ranks today best hall for you.
+              </p>
+            </div>
+
+            {/* Bio / Freeform prompt with default labels directly below */}
+            <div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="taste-bio" className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  <Sparkles className="size-3.5 text-amber" /> Taste Profile & Cravings
+                </Label>
+                <span className="text-[11px] text-zinc-400">Natural language</span>
+              </div>
+              <Textarea
+                id="taste-bio"
+                value={preferences.tasteProfile.bio}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateTasteProfile({ bio: e.target.value })}
+                placeholder="e.g. I love spicy food, high protein chicken dishes, and noodle bowls. Dislike celery and pork."
+                className="mt-2 min-h-20 text-xs bg-secondary/30 border-border/80 text-foreground placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none resize-none"
+              />
+
+              {/* Default labels right below the box - unified, no separate sections */}
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {DEFAULT_TASTE_CHIPS.map((chip) => {
+                  const active =
+                    chip.type === 'spice'
+                      ? preferences.tasteProfile.spiceLevel === chip.value
+                      : preferences.tasteProfile.dietaryGoals.includes(chip.value);
+
+                  return (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => {
+                        if (chip.type === 'spice') {
+                          const nextSpice =
+                            preferences.tasteProfile.spiceLevel === chip.value
+                              ? 'none'
+                              : (chip.value as SpiceLevel);
+                          updateTasteProfile({ spiceLevel: nextSpice });
+                        } else {
+                          const current = preferences.tasteProfile.dietaryGoals;
+                          const next = current.includes(chip.value)
+                            ? current.filter((g) => g !== chip.value)
+                            : [...current, chip.value];
+                          updateTasteProfile({ dietaryGoals: next });
+                        }
+                      }}
+                      className={cn(
+                        'rounded-md px-2.5 py-1 text-xs font-medium transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                        active
+                          ? 'border-live/60 bg-live/15 text-live shadow-xs font-semibold'
+                          : 'border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground',
+                      )}
+                    >
+                      {active ? '✓ ' : '+ '}
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Separator className="bg-border/60" />
+
+            {/* Workers AI Engine Selection */}
+            <div>
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  <Cpu className="size-3.5 text-cyan-400" /> Workers AI Model
+                </Label>
+                <span className="text-[10px] text-zinc-400 font-mono">10k neurons/day free</span>
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {AI_MODEL_OPTIONS.map((m) => {
+                  const isSelected = preferences.tasteProfile.selectedAiModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => updateTasteProfile({ selectedAiModel: m.id })}
+                      className={cn(
+                        'w-full flex items-center justify-between rounded-lg border p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                        isSelected
+                          ? 'border-live/60 bg-live/10 text-foreground'
+                          : 'border-border/60 bg-secondary/25 text-zinc-400 hover:border-white/20 hover:text-foreground',
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={cn('size-2 rounded-full', isSelected ? 'bg-live' : 'bg-zinc-600')} />
+                        <span className="text-xs font-medium text-foreground">{m.name}</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-zinc-400">{m.badge}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Separator className="bg-border/60" />
+
+            {/* Sort Outlets by AI Rank Toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="sort-ai-toggle" className="text-xs font-semibold text-foreground cursor-pointer">
+                  Sort Outlets by AI Rank
+                </Label>
+                <p className="text-[11px] text-zinc-400">
+                  Floats today top-matching dining hall to the top of the food card.
+                </p>
+              </div>
+              <Switch
+                id="sort-ai-toggle"
+                checked={preferences.tasteProfile.sortByAiRank}
+                onCheckedChange={(val) => updateTasteProfile({ sortByAiRank: val })}
+              />
+            </div>
+          </TabsContent>
+
+          {/* Tab 2: General Preferences */}
           <TabsContent value="preferences" className="mt-5 space-y-6">
             {/* Layout density */}
             <div>
@@ -250,7 +444,7 @@ export function CustomizationSheet({
             </div>
           </TabsContent>
 
-          {/* Tab 2: Feeds & Credentials */}
+          {/* Tab 3: Feeds & Credentials */}
           <TabsContent value="credentials" className="mt-5 space-y-5">
             <CredentialsManager />
           </TabsContent>
@@ -266,6 +460,8 @@ function CredentialsManager() {
   const [saving, setSaving] = useState(false);
   const [portalUrl, setPortalUrl] = useState('');
   const [learnUrl, setLearnUrl] = useState('');
+  const [cfAccountId, setCfAccountId] = useState('');
+  const [cfApiToken, setCfApiToken] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null,
   );
@@ -300,7 +496,6 @@ function CredentialsManager() {
     setSaving(true);
     setFeedback(null);
 
-    // Clean up webcal:// -> https:// automatically
     let cleanPortal = portalUrl.trim();
     if (cleanPortal.startsWith('webcal://')) {
       cleanPortal = 'https://' + cleanPortal.slice('webcal://'.length);
@@ -312,12 +507,19 @@ function CredentialsManager() {
     }
 
     try {
-      const payload: { PORTAL_ICS_URL?: string; LEARN_ICS_URL?: string } = {};
+      const payload: {
+        PORTAL_ICS_URL?: string;
+        LEARN_ICS_URL?: string;
+        CLOUDFLARE_ACCOUNT_ID?: string;
+        CLOUDFLARE_API_TOKEN?: string;
+      } = {};
       if (cleanPortal) payload.PORTAL_ICS_URL = cleanPortal;
       if (cleanLearn) payload.LEARN_ICS_URL = cleanLearn;
+      if (cfAccountId.trim()) payload.CLOUDFLARE_ACCOUNT_ID = cfAccountId.trim();
+      if (cfApiToken.trim()) payload.CLOUDFLARE_API_TOKEN = cfApiToken.trim();
 
       if (Object.keys(payload).length === 0) {
-        setFeedback({ type: 'error', message: 'Enter at least one calendar URL to save.' });
+        setFeedback({ type: 'error', message: 'Enter at least one setting or credential to save.' });
         setSaving(false);
         return;
       }
@@ -327,10 +529,12 @@ function CredentialsManager() {
 
       setFeedback({
         type: 'success',
-        message: 'Credentials saved! Feeds are synchronizing in the background.',
+        message: 'Credentials saved! Feeds and AI configuration synchronized.',
       });
       setPortalUrl('');
       setLearnUrl('');
+      setCfAccountId('');
+      setCfApiToken('');
       await loadStatus();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save credentials';
@@ -346,10 +550,10 @@ function CredentialsManager() {
       <div className="rounded-lg border border-border/80 bg-secondary/30 p-3.5 text-xs">
         <div className="flex items-center gap-2 font-semibold text-foreground">
           <ShieldCheck className="size-4 text-live" />
-          <span>Locked Personal Feeds</span>
+          <span>Local Credential Vault</span>
         </div>
         <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
-          The dashboard uses your two official private calendar subscription URLs. They never touch external cloud servers; they are stored locally on your machine and polled by your relay.
+          Your credentials are saved strictly in your local .env file. They never touch third-party servers.
         </p>
       </div>
 
@@ -378,7 +582,7 @@ function CredentialsManager() {
             <div className="flex items-center gap-2">
               <Calendar className="size-4 text-live" />
               <span className="text-xs font-semibold text-foreground">
-                1. Schedule Feed: Google Calendar (or UW Portal)
+                1. Schedule Feed (Google Calendar or Portal)
               </span>
             </div>
             {status?.portal.configured ? (
@@ -398,38 +602,6 @@ function CredentialsManager() {
             )}
           </div>
 
-          <div className="text-xs text-zinc-400 space-y-1.5">
-            <p>
-              <strong className="text-foreground">Powers:</strong> Next Commitment card (next class/event, room destination, walk time from REV & leave-by alert).
-            </p>
-
-            <div className="rounded-lg bg-secondary/35 p-2.5 border border-border/60 space-y-1">
-              <span className="font-semibold text-foreground flex items-center gap-1 text-xs">
-                📅 How to get your Google Calendar secret iCal URL:
-              </span>
-              <ol className="list-decimal list-inside pl-0.5 space-y-0.5 text-xs text-zinc-300">
-                <li>
-                  Open{' '}
-                  <a
-                    href="https://calendar.google.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-live hover:underline inline-flex items-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live rounded"
-                  >
-                    calendar.google.com <ExternalLink className="size-2.5" />
-                  </a>
-                </li>
-                <li>Under <em>My calendars</em> on the left, hover over your calendar, click <strong>⋮</strong> (Options) → <strong>Settings and sharing</strong>.</li>
-                <li>Scroll down to the <strong>Integrate calendar</strong> section.</li>
-                <li>Copy the <strong>"Secret address in iCal format"</strong> (ends with <code className="font-mono text-[10px]">.../basic.ics</code>).</li>
-              </ol>
-            </div>
-
-            <p className="text-xs text-zinc-300 leading-relaxed bg-secondary/50 p-2.5 rounded-md border border-border/60">
-              💡 <strong>Pro tip:</strong> Import your Waterloo schedule into Google Calendar alongside your personal events (gym, work, meetings). Any event with a campus room (e.g. <code className="font-mono text-zinc-200">E7 2317</code>, <code className="font-mono text-zinc-200">MC 4021</code>, <code className="font-mono text-zinc-200">PAC</code>) will automatically calculate your walk from REV!
-            </p>
-          </div>
-
           <div>
             <Label htmlFor="portal-url" className="text-xs font-mono text-zinc-400">
               GOOGLE_CALENDAR_ICS_URL / PORTAL_ICS_URL
@@ -441,7 +613,7 @@ function CredentialsManager() {
               onChange={(e) => setPortalUrl(e.target.value)}
               placeholder={
                 status?.portal.configured
-                  ? 'Configured (paste new Google Calendar or Portal URL to update)...'
+                  ? 'Configured (paste new URL to update)...'
                   : 'https://calendar.google.com/calendar/ical/.../basic.ics'
               }
               className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
@@ -473,30 +645,6 @@ function CredentialsManager() {
             )}
           </div>
 
-          <div className="text-xs text-zinc-400 space-y-1.5">
-            <p>
-              <strong className="text-foreground">Powers:</strong> Due Soon card (assignments, quizzes, and project deadlines grouped by course).
-            </p>
-            <p>
-              <strong className="text-foreground">How to get it:</strong>
-            </p>
-            <ol className="list-decimal list-inside pl-1 space-y-0.5 text-xs text-zinc-300">
-              <li>
-                Log into{' '}
-                <a
-                  href="https://learn.uwaterloo.ca"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-cyan-400 hover:underline inline-flex items-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live rounded"
-                >
-                  learn.uwaterloo.ca <ExternalLink className="size-2.5" />
-                </a>
-              </li>
-              <li>Open <strong>Calendar</strong>, click <strong>Settings</strong>, check <strong>Enable Calendar Feeds</strong>, and click <strong>Save</strong>.</li>
-              <li>Click <strong>Subscribe</strong>, choose <strong>All Calendars and Tasks</strong>, and copy the URL.</li>
-            </ol>
-          </div>
-
           <div>
             <Label htmlFor="learn-url" className="text-xs font-mono text-zinc-400">
               LEARN_ICS_URL
@@ -516,10 +664,70 @@ function CredentialsManager() {
           </div>
         </div>
 
+        {/* Cloudflare Workers AI credentials (optional for local dev) */}
+        <div className="rounded-lg border border-border/80 bg-card p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bot className="size-4 text-live" />
+              <span className="text-xs font-semibold text-foreground">
+                3. Cloudflare Workers AI (Optional Local Relay)
+              </span>
+            </div>
+            {status?.cloudflare?.configured ? (
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]"
+              >
+                Connected
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="border-white/10 bg-secondary/40 text-zinc-400 text-[10px]"
+              >
+                Offline Fallback Active
+              </Badge>
+            )}
+          </div>
+
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Optional for local development. When deployed as a Cloudflare Worker, credentials are provided automatically.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <Label htmlFor="cf-account" className="text-[11px] font-mono text-zinc-400">
+                CLOUDFLARE_ACCOUNT_ID
+              </Label>
+              <Input
+                id="cf-account"
+                type="text"
+                value={cfAccountId}
+                onChange={(e) => setCfAccountId(e.target.value)}
+                placeholder={status?.cloudflare?.account_id || 'Account ID...'}
+                className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              />
+            </div>
+            <div>
+              <Label htmlFor="cf-token" className="text-[11px] font-mono text-zinc-400">
+                CLOUDFLARE_API_TOKEN
+              </Label>
+              <Input
+                id="cf-token"
+                type="password"
+                value={cfApiToken}
+                onChange={(e) => setCfApiToken(e.target.value)}
+                placeholder={status?.cloudflare?.configured ? '••••••••••••••••' : 'API Token...'}
+                className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Submit button */}
         <Button
           type="submit"
-          disabled={saving || (!portalUrl.trim() && !learnUrl.trim())}
+          disabled={saving || (!portalUrl.trim() && !learnUrl.trim() && !cfAccountId.trim() && !cfApiToken.trim())}
           className="w-full h-9 gap-2 text-xs font-medium bg-live hover:bg-live/90 text-live-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
         >
           {saving ? (
@@ -536,4 +744,3 @@ function CredentialsManager() {
     </div>
   );
 }
-

@@ -15,10 +15,11 @@ import { FoodCard } from '@/components/cards/food';
 import { NextCommitmentCard } from '@/components/cards/next-commitment';
 import { CardShell } from '@/components/card-shell';
 import type { Card as CardT } from '@/lib/contract';
+import { cn } from '@/lib/utils';
 
 export function CardRenderer({ card, now, className }: { card: CardT; now: number; className?: string }) {
   return (
-    <div className={className}>
+    <div className={cn('h-full flex flex-col', className)}>
       <CardErrorBoundary card={card} now={now}>
         {renderCard(card, now)}
       </CardErrorBoundary>

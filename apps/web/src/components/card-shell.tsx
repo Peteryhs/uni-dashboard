@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { FreshnessLine } from '@/components/freshness';
+import { usePreferences } from '@/lib/preferences-store';
 import type { CardState } from '@/lib/contract';
 import { cn } from '@/lib/utils';
 
@@ -31,16 +32,29 @@ export function CardShell({
   className?: string;
   showFreshness?: boolean;
 }) {
+  const { preferences } = usePreferences();
+  const isCompact = preferences.density === 'compact';
+
   return (
     <Card
       className={cn(
-        'group relative gap-0 overflow-hidden rounded-lg border border-border/80 bg-card shadow-xs transition-colors hover:border-border h-full flex flex-col justify-between',
+        'group relative p-0 py-0 gap-0 overflow-hidden rounded-lg border border-border/80 bg-card shadow-xs transition-colors hover:border-border h-full flex flex-col justify-between',
         className,
       )}
     >
-      <div>
-        <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2 sm:px-5">
-          <h2 className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] text-zinc-400 uppercase">
+      <div className="flex-1 flex flex-col min-h-0">
+        <div
+          className={cn(
+            'flex items-center justify-between gap-3',
+            isCompact ? 'px-3.5 pt-2.5 pb-1.5 sm:px-4' : 'px-4 pt-3 pb-2 sm:px-5',
+          )}
+        >
+          <h2
+            className={cn(
+              'flex items-center gap-2 font-semibold text-zinc-400 uppercase',
+              isCompact ? 'text-[10px] tracking-wider' : 'text-[11px] tracking-[0.14em]',
+            )}
+          >
             <span className="text-zinc-400 transition-colors group-hover:text-foreground">
               {icon}
             </span>
@@ -48,10 +62,22 @@ export function CardShell({
           </h2>
           {action}
         </div>
-        <CardContent className="px-4 pb-4 sm:px-5">{children}</CardContent>
+        <CardContent
+          className={cn(
+            'p-0 pt-0 flex-1 flex flex-col min-h-0',
+            isCompact ? 'px-3.5 pb-2.5 sm:px-4' : 'px-4 pb-3.5 sm:px-5',
+          )}
+        >
+          {children}
+        </CardContent>
       </div>
       {showFreshness && (
-        <div className="border-t border-border/60 bg-secondary/20 px-4 py-2 sm:px-5 mt-auto">
+        <div
+          className={cn(
+            'border-t border-border/60 bg-secondary/20 mt-auto shrink-0',
+            isCompact ? 'px-3.5 py-1 sm:px-4' : 'px-4 py-1.5 sm:px-5',
+          )}
+        >
           <FreshnessLine state={state} observedAt={observedAt} now={now} sourceId={sourceId} />
         </div>
       )}

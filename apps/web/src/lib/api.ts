@@ -13,7 +13,12 @@
  * Auth is a bearer token in a header, never a query parameter, so it cannot land in a log or a
  * Referer. The token is optional: the relay only demands one when RELAY_TOKEN is set.
  */
-import { validateBundle, type Bundle, type HealthResponse } from './contract';
+import {
+  validateBundle,
+  type Bundle,
+  type HealthResponse,
+  type FoodAiRecommendation,
+} from './contract';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
 const TOKEN_KEY = 'uni-dashboard:relay-token';
@@ -134,6 +139,12 @@ export interface CredentialFeedInfo {
 export interface CredentialsStatus {
   portal: CredentialFeedInfo;
   learn: CredentialFeedInfo;
+  cloudflare?: {
+    configured: boolean;
+    account_id: string;
+    name: string;
+    role: string;
+  };
 }
 
 export async function fetchCredentialsStatus(signal?: AbortSignal): Promise<CredentialsStatus> {
@@ -141,9 +152,15 @@ export async function fetchCredentialsStatus(signal?: AbortSignal): Promise<Cred
 }
 
 export async function updateCredentials(
-  creds: { PORTAL_ICS_URL?: string; LEARN_ICS_URL?: string },
+  creds: {
+    PORTAL_ICS_URL?: string;
+    GOOGLE_CALENDAR_ICS_URL?: string;
+    LEARN_ICS_URL?: string;
+    CLOUDFLARE_ACCOUNT_ID?: string;
+    CLOUDFLARE_API_TOKEN?: string;
+  },
   signal?: AbortSignal,
-): Promise<{ ok: boolean; portal_configured: boolean; learn_configured: boolean }> {
+): Promise<{ ok: boolean; portal_configured: boolean; learn_configured: boolean; cloudflare_configured?: boolean }> {
   const res = await fetch('/v1/credentials', {
     method: 'POST',
     signal,
@@ -156,4 +173,25 @@ export async function updateCredentials(
   });
   if (!res.ok) throw new RelayError(`failed to update credentials: ${res.status}`, res.status);
   return res.json();
+}
+
+export async function rankFoodWithAi(
+  params: { tasteProfile: unknown; model?: string; date?: string; force?: boolean },
+  signal?: AbortSignal,
+): Promise<FoodAiRecommendation> {
+  const res = await fetch('/v1/ai/rank-food', {
+    method: 'POST',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}));
+    throw new RelayError(errJson.error || `AI ranking failed with ${res.status}`, res.status);
+  }
+  return res.json() as Promise<FoodAiRecommendation>;
 }

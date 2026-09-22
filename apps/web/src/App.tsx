@@ -1,4 +1,4 @@
-import { RefreshCw, WifiOff, LayoutGrid, Utensils, CalendarClock, ClipboardList, ShieldAlert } from 'lucide-react';
+import { RefreshCw, WifiOff, LayoutGrid, LayoutList, Utensils, CalendarClock, ClipboardList, ShieldAlert } from 'lucide-react';
 import { CardRenderer } from '@/components/cards';
 import { SourcesPanel } from '@/components/sources-panel';
 import { CustomizationSheet } from '@/components/customization-sheet';
@@ -27,12 +27,15 @@ export default function App() {
     setDietaryFilter,
     setOnlyFavorites,
     toggleFavoriteDish,
+    updateTasteProfile,
     resetPreferences,
   } = usePreferences();
 
+  const isCompact = preferences.density === 'compact';
+
   return (
     <div className="relative min-h-dvh bg-background text-foreground antialiased selection:bg-live/30 selection:text-live">
-      <div className="relative z-10 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 pt-6 pb-20">
+      <div className={cn('relative z-10 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8', isCompact ? 'pt-4 pb-12' : 'pt-6 pb-20')}>
         {/* Top Header & Navigation HUD */}
         <Header
           now={now}
@@ -44,19 +47,20 @@ export default function App() {
           setDietaryFilter={setDietaryFilter}
           setOnlyFavorites={setOnlyFavorites}
           toggleFavoriteDish={toggleFavoriteDish}
+          updateTasteProfile={updateTasteProfile}
           resetPreferences={resetPreferences}
         />
 
         {/* Quick Glance Summary Pills */}
         {!isInitialLoading && bundle && (
-          <QuickGlanceHUD cards={cards} now={now} />
+          <QuickGlanceHUD cards={cards} now={now} isCompact={isCompact} />
         )}
 
         {/* Outage Notice (Compact Box) */}
         {!isInitialLoading && (() => {
           const alertCard = cards.find((c) => c.type === 'alert');
           return alertCard ? (
-            <div className="mt-4">
+            <div className={isCompact ? 'mt-2.5' : 'mt-4'}>
               <CardRenderer card={alertCard} now={now} />
             </div>
           ) : null;
@@ -68,14 +72,14 @@ export default function App() {
         ) : error && !bundle ? (
           <ConnectionError message={error.message} onRetry={refetch} />
         ) : (
-          <main className="mt-4 space-y-4 lg:space-y-5" id="dashboard-cards">
+          <main className={cn(isCompact ? 'mt-3 space-y-3' : 'mt-4 space-y-4 lg:space-y-5')} id="dashboard-cards">
             {/* Primary Row: Next Class & Due Dates combined onto one line on desktop */}
             {(() => {
               const nextCard = cards.find((c) => c.type === 'next_commitment');
               const dueCard = cards.find((c) => c.type === 'due_soon');
               if (!nextCard && !dueCard) return null;
               return (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5 items-stretch">
+                <div className={cn('grid grid-cols-1 items-stretch', isCompact ? 'lg:grid-cols-2 gap-3' : 'lg:grid-cols-2 gap-4 lg:gap-5')}>
                   {nextCard && (
                     <CardRenderer key={nextCard.id} card={nextCard} now={now} className="h-full" />
                   )}
@@ -101,7 +105,7 @@ export default function App() {
         )}
 
         {/* Admin Telemetry & Relay Sources Drawer */}
-        <div className="mt-6">
+        <div className={isCompact ? 'mt-4' : 'mt-6'}>
           <SourcesPanel onRefresh={refetch} isFetching={isFetching} />
         </div>
 
@@ -122,6 +126,7 @@ function Header({
   setDietaryFilter,
   setOnlyFavorites,
   toggleFavoriteDish,
+  updateTasteProfile,
   resetPreferences,
 }: {
   now: number;
@@ -133,6 +138,7 @@ function Header({
   setDietaryFilter: ReturnType<typeof usePreferences>['setDietaryFilter'];
   setOnlyFavorites: ReturnType<typeof usePreferences>['setOnlyFavorites'];
   toggleFavoriteDish: ReturnType<typeof usePreferences>['toggleFavoriteDish'];
+  updateTasteProfile: ReturnType<typeof usePreferences>['updateTasteProfile'];
   resetPreferences: ReturnType<typeof usePreferences>['resetPreferences'];
 }) {
   return (
@@ -161,22 +167,37 @@ function Header({
             </span>
           )}
 
-          {/* Quick layout density toggle */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setDensity(preferences.density === 'detailed' ? 'compact' : 'detailed')}
-            className={cn(
-              'h-8 px-2.5 rounded-lg border-white/10 bg-card text-xs transition-colors hover:border-white/25 hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none',
-              preferences.density === 'compact'
-                ? 'border-live/60 bg-live/15 text-live'
-                : 'text-zinc-300 hover:text-foreground',
-            )}
-            title={`Switch to ${preferences.density === 'detailed' ? 'compact' : 'detailed'} mode`}
-          >
-            <LayoutGrid className="size-3.5" />
-            <span className="hidden sm:inline capitalize">{preferences.density}</span>
-          </Button>
+          {/* Quick layout density segmented control */}
+          <div className="flex items-center rounded-lg border border-white/10 bg-secondary/30 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setDensity('detailed')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none',
+                preferences.density === 'detailed'
+                  ? 'bg-card text-foreground shadow-xs'
+                  : 'text-zinc-400 hover:text-foreground',
+              )}
+              title="Detailed view: Full summaries, weather details, and spacious layout"
+            >
+              <LayoutList className="size-3.5" />
+              <span className="hidden sm:inline">Detailed</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDensity('compact')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none',
+                preferences.density === 'compact'
+                  ? 'bg-card text-live font-semibold shadow-xs'
+                  : 'text-zinc-400 hover:text-foreground',
+              )}
+              title="Compact view: Reduced information density with glanceable essentials"
+            >
+              <LayoutGrid className="size-3.5" />
+              <span className="hidden sm:inline">Compact</span>
+            </button>
+          </div>
 
           {/* Customization preferences sheet */}
           <CustomizationSheet
@@ -185,6 +206,7 @@ function Header({
             setDietaryFilter={setDietaryFilter}
             setOnlyFavorites={setOnlyFavorites}
             toggleFavoriteDish={toggleFavoriteDish}
+            updateTasteProfile={updateTasteProfile}
             resetPreferences={resetPreferences}
           />
 
@@ -208,7 +230,7 @@ function Header({
 /**
  * Quick Glance HUD: Instant glanceable pills summarizing the state of the world in 1 line
  */
-function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
+function QuickGlanceHUD({ cards, now, isCompact }: { cards: Card[]; now: number; isCompact?: boolean }) {
   const nextCard = cards.find((c) => c.type === 'next_commitment') as Card<NextCommitmentData> | undefined;
   const alertCard = cards.find((c) => c.type === 'alert') as Card<AlertData> | undefined;
   const dueCard = cards.find((c) => c.type === 'due_soon') as Card<DueSoonData> | undefined;
@@ -225,11 +247,17 @@ function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
   const dishCount = foodCard?.data?.total_dishes ?? 0;
 
   return (
-    <div className="mt-3.5 flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
+    <div className={cn(
+      'flex items-center overflow-x-auto no-scrollbar',
+      isCompact ? 'mt-2 gap-1.5 pb-0.5 text-[11px]' : 'mt-3.5 gap-2 pb-1 text-xs'
+    )}>
       {/* Alert pill if active */}
       {alertCount > 0 && (
-        <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-rose-500/40 bg-rose-500/15 px-2.5 py-1 text-rose-300 font-medium shadow-xs">
-          <ShieldAlert className="size-3" />
+        <div className={cn(
+          'flex shrink-0 items-center gap-1.5 rounded-md border border-rose-500/40 bg-rose-500/15 text-rose-300 font-medium shadow-xs',
+          isCompact ? 'px-2 py-0.5' : 'px-2.5 py-1'
+        )}>
+          <ShieldAlert className={isCompact ? 'size-2.5' : 'size-3'} />
           <span>{alertCount} Incident{alertCount === 1 ? '' : 's'}</span>
         </div>
       )}
@@ -238,13 +266,14 @@ function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
       {nextTitle && (
         <div
           className={cn(
-            'flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors',
+            'flex shrink-0 items-center gap-1.5 rounded-md border font-medium transition-colors',
+            isCompact ? 'px-2 py-0.5' : 'px-2.5 py-1',
             nextSoon
               ? 'border-amber/50 bg-amber/15 text-amber-foreground'
               : 'border-white/10 bg-card text-foreground',
           )}
         >
-          <CalendarClock className="size-3.5 text-cyan-400" />
+          <CalendarClock className={cn(isCompact ? 'size-3' : 'size-3.5', 'text-cyan-400')} />
           <span className="truncate max-w-[160px]">{nextTitle}</span>
           {nextStartsAt != null && (
             <span className="text-zinc-400 font-normal">· {formatTime(nextStartsAt)}</span>
@@ -253,14 +282,20 @@ function QuickGlanceHUD({ cards, now }: { cards: Card[]; now: number }) {
       )}
 
       {/* Due soon pill */}
-      <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 bg-card px-2.5 py-1 font-medium text-zinc-300">
-        <ClipboardList className="size-3.5 text-amber-400" />
+      <div className={cn(
+        'flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 bg-card font-medium text-zinc-300',
+        isCompact ? 'px-2 py-0.5' : 'px-2.5 py-1'
+      )}>
+        <ClipboardList className={cn(isCompact ? 'size-3' : 'size-3.5', 'text-amber-400')} />
         <span>{dueCount} Due Soon</span>
       </div>
 
       {/* Food pill */}
-      <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 bg-card px-2.5 py-1 font-medium text-zinc-300">
-        <Utensils className="size-3.5 text-emerald-400" />
+      <div className={cn(
+        'flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 bg-card font-medium text-zinc-300',
+        isCompact ? 'px-2 py-0.5' : 'px-2.5 py-1'
+      )}>
+        <Utensils className={cn(isCompact ? 'size-3' : 'size-3.5', 'text-emerald-400')} />
         <span>{dishCount} Dishes Today</span>
       </div>
     </div>

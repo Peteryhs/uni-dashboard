@@ -21,6 +21,45 @@ function envelope(rows, { now, cadenceMs, fallback }) {
   return { observed_at: observed, valid_until: valid || null, state };
 }
 
+/**
+ * Checks whether a source has had a successful fetch in the reasonable past (within 6x cadence).
+ * If the latest attempt failed or was skipped, and no successful fetch exists in the reasonable past,
+ * returns { ok: false, state: 'failed' | 'degraded', error: string }.
+ */
+function sourceHealth(store, sourceId, cadenceMs, now) {
+  if (!store || typeof store.lastRunPerSource !== 'function') {
+    return { ok: true, state: 'empty' };
+  }
+  const runs = store.lastRunPerSource();
+  const lastRun = runs.find((r) => r.source_id === sourceId);
+  if (!lastRun) {
+    return { ok: true, state: 'empty' };
+  }
+
+  if (lastRun.outcome === 'skipped') {
+    return {
+      ok: false,
+      state: 'degraded',
+      error: lastRun.error || 'Feed URL not configured in Settings',
+    };
+  }
+
+  if (lastRun.outcome === 'failed' || lastRun.outcome === 'implausible') {
+    const lastSuccess = store.lastSuccessfulRun?.(sourceId);
+    const reasonablePastMs = cadenceMs * 6;
+    const hadRecentSuccess = lastSuccess && (now - lastSuccess.finished_at <= reasonablePastMs);
+    if (!hadRecentSuccess) {
+      return {
+        ok: false,
+        state: 'failed',
+        error: lastRun.error || 'Failed to sync with upstream feed',
+      };
+    }
+  }
+
+  return { ok: true, state: 'live' };
+}
+
 /** Card 1: next class or deadline, whichever is sooner. What, where and when, nothing else. */
 export async function nextCommitmentCard(store, { now = Date.now(), useWeather = true } = {}) {
   const upcoming = store
@@ -35,6 +74,22 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
   const next = candidates[0];
 
   if (!next) {
+    const health = sourceHealth(store, 'uw-portal-ics', 15 * MIN, now);
+    if (!health.ok) {
+      return {
+        id: 'next_commitment',
+        type: 'next_commitment',
+        priority: 100,
+        state: health.state,
+        observed_at: null,
+        valid_until: null,
+        source_id: 'uw-portal-ics',
+        data: {
+          title: health.state === 'failed' ? 'Unable to fetch schedule' : 'Schedule feed not configured',
+          subtitle: health.error,
+        },
+      };
+    }
     // An empty timetable is a fact, not an error: no server-side failure, nothing due today.
     return {
       id: 'next_commitment',
@@ -94,6 +149,26 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
     byCourse.get(course).push({ title: d.title, starts_at: d.starts_at, kind: d.kind, url: d.url });
   }
 
+  const health = sourceHealth(store, 'uw-learn-ics', 15 * MIN, now);
+  if (!due.length && !health.ok) {
+    return {
+      id: 'due_soon',
+      type: 'due_soon',
+      priority: 90,
+      state: health.state,
+      observed_at: null,
+      valid_until: null,
+      source_id: 'uw-learn-ics',
+      data: {
+        count: 0,
+        nearest_at: null,
+        window_days: 7,
+        courses: [],
+        error: health.error,
+      },
+    };
+  }
+
   const env = envelope(due, { now, cadenceMs: 15 * MIN });
   return {
     id: 'due_soon',
@@ -131,6 +206,34 @@ export function foodCard(store, { now = Date.now(), date = null } = {}) {
     const key = r.outlet;
     if (!byOutlet.has(key)) byOutlet.set(key, []);
     byOutlet.get(key).push(r);
+  }
+
+  const health = sourceHealth(store, 'uw-food-daily-menu', 12 * HOUR, now);
+  if (!rows.length && !health.ok) {
+    return {
+      id: 'food',
+      type: 'food',
+      priority: 80,
+      state: health.state,
+      observed_at: null,
+      valid_until: null,
+      source_id: 'uw-food-daily-menu',
+      data: {
+        service_date: date ?? todayLocal(now),
+        pinned: config.pinnedOutlets.map((name) => ({
+          outlet: name,
+          pinned: true,
+          serving: false,
+          dish_count: 0,
+          dishes: [],
+          hidden_dishes: 0,
+        })),
+        others: [],
+        others_count: 0,
+        total_dishes: 0,
+        error: health.error,
+      },
+    };
   }
 
   const pinned = config.pinnedOutlets.map((name) => {
@@ -185,12 +288,15 @@ export function alertCard(store, { now = Date.now() } = {}) {
   const checkedAt = run?.finished_at ?? null;
 
   if (!notices.length) {
+    const health = sourceHealth(store, STATUS_SOURCE, STATUS_CADENCE_MS, now);
+    const state = !health.ok && health.state === 'failed'
+      ? 'failed'
+      : checkedAt == null ? 'empty' : ageState(checkedAt, STATUS_CADENCE_MS, now);
     return {
       id: 'alert',
       type: 'alert',
       priority: 95,
-      // no run at all means we have never looked, which is 'empty', not a clean bill of health
-      state: checkedAt == null ? 'empty' : ageState(checkedAt, STATUS_CADENCE_MS, now),
+      state,
       observed_at: checkedAt,
       valid_until: checkedAt == null ? null : checkedAt + STATUS_CADENCE_MS,
       source_id: STATUS_SOURCE,

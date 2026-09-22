@@ -13,8 +13,10 @@ import http from 'node:http';
 import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
+import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
+import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 
 export function createServer({ store, sources = SOURCES, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true }) {
   const started = Date.now();
@@ -130,12 +132,74 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         }
         return send(200, { receipts });
       }
+
+      if (url.pathname === '/v1/ai/models' && req.method === 'GET') {
+        return send(200, {
+          default_model: DEFAULT_AI_MODEL,
+          models: POPULAR_MODELS,
+        });
+      }
+
+      if (url.pathname === '/v1/ai/rank-food' && req.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body = {};
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          return send(400, { error: 'invalid json' });
+        }
+        const tasteProfile = body.tasteProfile || {};
+        const model = body.model || DEFAULT_AI_MODEL;
+        const force = Boolean(body.force);
+        const now = Date.now();
+        const serviceDate = body.date || todayInToronto(now);
+
+        let menuRows = store.rows('menu_item', {
+          where: 'service_date = ?',
+          params: [serviceDate],
+          limit: 500,
+        });
+
+        // If today has no rows yet in DB, check latest available service_date in store
+        if (!menuRows.length) {
+          const recent = store.rows('menu_item', { limit: 100 });
+          if (recent.length > 0) {
+            const latestDate = recent[0].service_date;
+            menuRows = store.rows('menu_item', {
+              where: 'service_date = ?',
+              params: [latestDate],
+              limit: 500,
+            });
+          }
+        }
+
+        if (!menuRows.length) {
+          return send(404, { error: 'No dining menu items available to evaluate for this date.' });
+        }
+
+        try {
+          const recommendation = await rankDailyMenu({
+            menuItems: menuRows,
+            serviceDate: menuRows[0]?.service_date || serviceDate,
+            tasteProfile,
+            model,
+            force,
+            now,
+          });
+          return send(200, recommendation);
+        } catch (err) {
+          return send(502, { error: err.message });
+        }
+      }
+
       /**
        * Credential input validation. The value is written into .env line by line, so anything with
        * whitespace in it can inject extra lines (a newline plus `RELAY_TOKEN=` is a whole other
        * secret), and anything that is not an https URL is not a feed.
        */
       const looksLikeIcsUrl = (v) => typeof v === 'string' && /^https:\/\/\S+$/.test(v.trim());
+      const looksLikeToken = (v) => typeof v === 'string' && /^[a-zA-Z0-9_-]+$/.test(v.trim());
 
       if (url.pathname === '/v1/credentials') {
         if (req.method === 'GET') {
@@ -153,6 +217,14 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
               name: 'Waterloo LEARN Deadlines Feed',
               role: 'Upcoming assignments, quizzes, homework & project due dates',
             },
+            cloudflare: {
+              configured: Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN),
+              account_id: process.env.CLOUDFLARE_ACCOUNT_ID
+                ? `${process.env.CLOUDFLARE_ACCOUNT_ID.slice(0, 4)}...${process.env.CLOUDFLARE_ACCOUNT_ID.slice(-4)}`
+                : '',
+              name: 'Cloudflare Workers AI (Gemma 4)',
+              role: 'Powers daily menu ranking and dish highlights (optional for local dev, automatic on Workers)',
+            },
           });
         }
         if (req.method === 'POST') {
@@ -165,11 +237,17 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           } catch {
             return send(400, { error: 'invalid json' });
           }
-          const { PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL } = body;
+          const { PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN } = body;
           for (const [name, value] of Object.entries({ PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL })) {
             if (value === undefined || value === '') continue;
             if (!looksLikeIcsUrl(value)) {
               return send(400, { error: `${name} must be an https URL with no whitespace` });
+            }
+          }
+          for (const [name, value] of Object.entries({ CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN })) {
+            if (value === undefined || value === '') continue;
+            if (!looksLikeToken(value)) {
+              return send(400, { error: `${name} must contain only letters, numbers, underscores and hyphens` });
             }
           }
           let changed = false;
@@ -193,6 +271,26 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
               changed = true;
             } else if (LEARN_ICS_URL === '') {
               delete process.env.LEARN_ICS_URL;
+              changed = true;
+            }
+          }
+          if (typeof CLOUDFLARE_ACCOUNT_ID === 'string') {
+            const trimmed = CLOUDFLARE_ACCOUNT_ID.trim();
+            if (trimmed) {
+              process.env.CLOUDFLARE_ACCOUNT_ID = trimmed;
+              changed = true;
+            } else if (CLOUDFLARE_ACCOUNT_ID === '') {
+              delete process.env.CLOUDFLARE_ACCOUNT_ID;
+              changed = true;
+            }
+          }
+          if (typeof CLOUDFLARE_API_TOKEN === 'string') {
+            const trimmed = CLOUDFLARE_API_TOKEN.trim();
+            if (trimmed) {
+              process.env.CLOUDFLARE_API_TOKEN = trimmed;
+              changed = true;
+            } else if (CLOUDFLARE_API_TOKEN === '') {
+              delete process.env.CLOUDFLARE_API_TOKEN;
               changed = true;
             }
           }
@@ -222,12 +320,26 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
                 content += `\nLEARN_ICS_URL=${process.env.LEARN_ICS_URL}`;
               }
             }
+            if (process.env.CLOUDFLARE_ACCOUNT_ID) {
+              if (/^CLOUDFLARE_ACCOUNT_ID=/m.test(content)) {
+                content = content.replace(/^CLOUDFLARE_ACCOUNT_ID=.*$/m, `CLOUDFLARE_ACCOUNT_ID=${process.env.CLOUDFLARE_ACCOUNT_ID}`);
+              } else {
+                content += `\nCLOUDFLARE_ACCOUNT_ID=${process.env.CLOUDFLARE_ACCOUNT_ID}`;
+              }
+            }
+            if (process.env.CLOUDFLARE_API_TOKEN) {
+              if (/^CLOUDFLARE_API_TOKEN=/m.test(content)) {
+                content = content.replace(/^CLOUDFLARE_API_TOKEN=.*$/m, `CLOUDFLARE_API_TOKEN=${process.env.CLOUDFLARE_API_TOKEN}`);
+              } else {
+                content += `\nCLOUDFLARE_API_TOKEN=${process.env.CLOUDFLARE_API_TOKEN}`;
+              }
+            }
             writeFileSync(envPath, content.trim() + '\n', 'utf8');
           } catch (e) {
             log(`[credentials] warning: could not write .env: ${e.message}`);
           }
 
-          // Schedule and trigger immediate poll if changed
+          // Schedule and trigger immediate poll if calendar URLs changed
           if (changed) {
             setTimeout(() => {
               pollDue(Date.now()).catch((e) => log(`[poll] post-credential poll error: ${e.message}`));
@@ -238,6 +350,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
             ok: true,
             portal_configured: Boolean(process.env.PORTAL_ICS_URL || process.env.GOOGLE_CALENDAR_ICS_URL),
             learn_configured: Boolean(process.env.LEARN_ICS_URL),
+            cloudflare_configured: Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN),
           });
         }
       }

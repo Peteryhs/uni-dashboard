@@ -248,6 +248,15 @@ export class SqliteStore {
       .map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
+  lastSuccessfulRun(sourceId) {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM source_run WHERE source_id = ? AND outcome IN ('ok', 'empty') ORDER BY id DESC LIMIT 1`,
+      )
+      .get(sourceId);
+    return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
+  }
+
   saveSnapshot({ sourceId, fetchedAt, contentType, body }) {
     const hash = sha256(body);
     this.db

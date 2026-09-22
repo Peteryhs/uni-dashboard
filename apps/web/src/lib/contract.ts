@@ -110,6 +110,7 @@ export interface DueSoonData {
   nearest_at: number | null;
   window_days: number;
   courses: { course: string; count: number; items: DueSoonItem[] }[];
+  error?: string;
 }
 
 export interface FoodDish {
@@ -140,6 +141,30 @@ export interface FoodData {
   others: FoodOutletOther[];
   others_count: number;
   total_dishes: number;
+  error?: string;
+}
+
+export interface FoodAiHighlight {
+  dish: string;
+  why: string;
+}
+
+export interface FoodAiRankedOutlet {
+  outlet: string;
+  rank: number;
+  match_score: number;
+  verdict: string;
+  highlights: FoodAiHighlight[];
+}
+
+export interface FoodAiRecommendation {
+  service_date: string;
+  model: string;
+  headline: string;
+  top_outlet: string;
+  ranked_outlets: FoodAiRankedOutlet[];
+  tip: string;
+  generated_at: number;
 }
 
 export interface AlertData {

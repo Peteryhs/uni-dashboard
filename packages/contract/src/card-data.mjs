@@ -51,6 +51,7 @@ export const DueSoonData = z.object({
       ),
     }),
   ),
+  error: z.string().optional(),
 });
 
 export const FoodData = z.object({
@@ -81,6 +82,30 @@ export const FoodData = z.object({
   ),
   others_count: z.number().int().nonnegative(),
   total_dishes: z.number().int().nonnegative(),
+  error: z.string().optional(),
+});
+
+export const FoodAiHighlight = z.object({
+  dish: z.string(),
+  why: z.string(),
+});
+
+export const FoodAiRankedOutlet = z.object({
+  outlet: z.string(),
+  rank: z.number().int().positive(),
+  match_score: z.number().int().min(0).max(100),
+  verdict: z.string(),
+  highlights: z.array(FoodAiHighlight).default([]),
+});
+
+export const FoodAiRecommendation = z.object({
+  service_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  model: z.string().default('@cf/google/gemma-4-26b-a4b-it'),
+  headline: z.string(),
+  top_outlet: z.string(),
+  ranked_outlets: z.array(FoodAiRankedOutlet),
+  tip: z.string().default(''),
+  generated_at: EPOCH_MS,
 });
 
 export const AlertData = z.object({
@@ -101,6 +126,7 @@ export const CARD_DATA_SCHEMAS = {
   due_soon: DueSoonData,
   food: FoodData,
   alert: AlertData,
+  food_ai_recommendation: FoodAiRecommendation,
 };
 
 export function validateCardData(type, data) {
