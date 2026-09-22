@@ -195,6 +195,42 @@ stalled the whole poll loop. 61 tests to 66.
 
 ---
 
+## 2026-09-22 (later still): the task detail panel, and two cards corrected by live data
+
+**What the LEARN feed actually carries.** Read from the live feed: 179 events, 84 of them ahead of
+today. 65 put the course in `LOCATION` ("ECE 198 - Fall 2026"), 63 carry the task's links inside
+`DESCRIPTION` as text, and **zero** carry an iCalendar `URL` property. That last number is the whole
+reason clicking a deadline did nothing: the adapter read `event.url`, which is always empty.
+
+- `task-context.mjs` turns a description into course, links and body. Links are ranked, so the
+  dropbox or quiz button comes before the generic "View event" one, and the body is the prose with
+  the `Dropbox:` / `View event -` plumbing stripped out.
+- `TimelineEvent` now declares `description`. Zod strips undeclared keys, which is how the field was
+  disappearing at the write boundary while every parser test passed.
+- Clicking a deadline row opens a full-width panel below the commitments row: course and links at the
+  top, the feed's own instructions underneath. Only the key is stored, so a refetch that drops the
+  task closes the panel instead of showing a deadline that no longer exists.
+
+**Two corrections that only showed up in use**, both from the owner:
+
+1. **Deadlines are one chronological list.** Grouping by course answered "what does this course want"
+   when the question is "what is next". The server sends `items` in time order; the course chip stays
+   on every row; the grouping survives only for counts and for older clients.
+2. **The hero card belongs to the schedule feed.** It took the soonest of class or deadline, and
+   LEARN carries 84 upcoming events against a handful of classes, so a term date or a quiz opening
+   replaced the countdown to the next class. The schedule feed wins now, and a deadline takes the
+   hero slot only when nothing is scheduled ahead.
+
+**One bug found while wiring it:** the flat list was built from raw database rows while the grouped
+list used enriched items, so a `null` url reached the contract and the whole bundle was rejected.
+Both lists come from a single enrichment pass now.
+
+116 tests. Verification limit, stated because it matters: the browser tool refuses localhost and
+hermes-dedicated has no Chromium, so the panel was verified by payload, typecheck and build, and then
+by the owner clicking it. Nobody has screenshotted it from this side.
+
+---
+
 ## 2026-09-21: v0.3.0 - Zero-Fake-Data Enforcement, Cloudflare Workers AI Dining Advisor & Density View Architecture
 
 ### 1. Zero Fake Data & Stale Fallback Elimination
