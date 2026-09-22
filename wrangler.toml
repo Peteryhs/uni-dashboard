@@ -27,7 +27,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "uni-dashboard"
-database_id = "PASTE_THE_ID_FROM_wrangler_d1_create"
+database_id = "f20601f5-fcb6-43ab-9bb6-aa636b418df5"
 
 # Workers AI: the dining advisor calls env.AI.run(), so no CLOUDFLARE_API_TOKEN is needed on the
 # Worker and there is no REST round trip.
