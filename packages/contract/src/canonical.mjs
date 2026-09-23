@@ -21,6 +21,7 @@ export const RowBase = {
 
 export const TimelineEvent = z.object({
   ...RowBase,
+  uid: z.string().optional(),
   kind: z.enum(['class', 'exam', 'deadline', 'event', 'office_hours']),
   title: z.string(),
   subtitle: z.string().default(''),
@@ -65,6 +66,8 @@ export const Notice = z.object({
   scope: z.string().default('campus'),
   title: z.string(),
   body: z.string().default(''),
+  components: z.array(z.string()).default([]),
+  incident_status: z.string().default(''),
   url: z.string().default(''),
 });
 

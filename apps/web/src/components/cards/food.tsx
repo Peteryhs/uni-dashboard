@@ -27,9 +27,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { mutedIfStale } from '@/components/freshness';
-import { usePreferences, type DietaryPreference } from '@/lib/preferences-store';
+import { usePreferences, type DietaryPreference, type TasteProfile } from '@/lib/preferences-store';
 import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned, FoodAiRecommendation } from '@/lib/contract';
-import { rankFoodWithAi } from '@/lib/api';
+import { fetchFoodRecommendation, getFoodTasteProfile, rankFoodWithAi, saveFoodTasteProfile } from '@/lib/api';
 import { dayOffset, dietLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
@@ -236,6 +236,7 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
   const {
     preferences,
     setDietaryFilter,
+    updateTasteProfile,
     toggleFavoriteDish,
     isFavoriteDish,
     setOnlyFavorites,
@@ -298,18 +299,73 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
 
   useEffect(() => {
     const key = computeAiRecCacheKey(d.service_date, preferences.tasteProfile, currentModel);
-    if (lastKeyRef.current === key) return;
-
-    // Fast check: if local cache matches, populate immediately without fetching
+    if (nothingAtAll) return;
     const cached = loadCachedAiRec(d.service_date, preferences.tasteProfile, currentModel);
-    if (cached) {
-      setAiRec(cached);
-      lastKeyRef.current = key;
-      return;
-    }
-
-    fetchAiRanking(false);
-  }, [fetchAiRanking, d.service_date, preferences.tasteProfile, currentModel]);
+    setAiRec(cached);
+    setAiError(null);
+    let active = true;
+    const profile = {
+      bio: preferences.tasteProfile.bio,
+      spiceLevel: preferences.tasteProfile.spiceLevel,
+      dietaryGoals: preferences.tasteProfile.dietaryGoals,
+      selectedAiModel: currentModel,
+      dietaryFilter: preferences.dietaryFilter,
+    };
+    const refresh = async () => {
+      try {
+        const result = await fetchFoodRecommendation(d.service_date);
+        if (!active) return;
+        if (result.recommendation) {
+          setAiRec(result.recommendation);
+          saveCachedAiRec(d.service_date, preferences.tasteProfile, currentModel, result.recommendation);
+          lastKeyRef.current = key;
+          setAiError(null);
+          setAiLoading(false);
+        } else if (result.status === 'failed') {
+          setAiError(result.error || 'Background ranking failed');
+          setAiLoading(false);
+        } else setAiLoading(true);
+      } catch (error: unknown) {
+        if (active) { setAiError(error instanceof Error ? error.message : 'AI ranking unavailable'); setAiLoading(false); }
+      }
+    };
+    const prepare = async () => {
+      const syncKey = 'uni-dashboard:food-profile-synced:v1';
+      const local = JSON.stringify(profile);
+      let lastSynced: string | null = null;
+      try { lastSynced = localStorage.getItem(syncKey); } catch {}
+      const saved = (await getFoodTasteProfile()).profile;
+      if (!active) return;
+      // Local edits since the last successful sync win; otherwise another device's saved profile wins.
+      if (!lastSynced || lastSynced === local) {
+        if (saved) {
+          const serverProfile = {
+            bio: saved.bio, spiceLevel: saved.spiceLevel, dietaryGoals: saved.dietaryGoals,
+            selectedAiModel: saved.selectedAiModel, dietaryFilter: saved.dietaryFilter,
+          };
+          const serverKey = JSON.stringify(serverProfile);
+          if (serverKey !== local) {
+            try { localStorage.setItem(syncKey, serverKey); } catch {}
+            const { dietaryFilter, ...taste } = serverProfile;
+            updateTasteProfile(taste as Partial<TasteProfile>);
+            if (typeof dietaryFilter === 'string') setDietaryFilter(dietaryFilter as DietaryPreference);
+            return;
+          }
+          try { localStorage.setItem(syncKey, local); } catch {}
+          await refresh();
+          return;
+        }
+      }
+      await saveFoodTasteProfile(profile);
+      try { localStorage.setItem(syncKey, local); } catch {}
+      await refresh();
+    };
+    prepare().catch((error: unknown) => {
+      if (active) { setAiError(error instanceof Error ? error.message : 'Could not save taste profile'); setAiLoading(false); }
+    });
+    const timer = window.setInterval(refresh, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [d.service_date, preferences.tasteProfile, preferences.dietaryFilter, currentModel, nothingAtAll, updateTasteProfile, setDietaryFilter]);
 
   // Map of outlet -> AI rank details
   const aiRankMap = useMemo(() => {

@@ -20,9 +20,13 @@ import {
   type FoodAiRecommendation,
   type OfficeHoursConfig,
   type ParseOfficeHoursResponse,
+  validateCalendar,
+  type CalendarData,
+  type CourseResource,
 } from './contract';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
+const CALENDAR_CACHE_KEY = 'uni-dashboard:last-calendar:v1';
 const TOKEN_KEY = 'uni-dashboard:relay-token';
 
 /** Build-time default, overridable at runtime so a device can be paired without a rebuild. */
@@ -116,6 +120,31 @@ export async function fetchBundle(signal?: AbortSignal): Promise<Bundle> {
   return bundle;
 }
 
+export async function fetchCalendar(start: string, days = 7, section: number | null = null, group: number | null = null, signal?: AbortSignal): Promise<CalendarData> {
+  const params = new URLSearchParams({ start, days: String(days) });
+  if (section !== null) params.set('section', String(section));
+  if (group !== null) params.set('group', String(group));
+  const calendar = validateCalendar(await getJson<unknown>(`/v1/calendar?${params}`, signal));
+  try {
+    localStorage.setItem(CALENDAR_CACHE_KEY, JSON.stringify({ calendar, section, group }));
+  } catch {
+    // Calendar remains usable when storage is unavailable.
+  }
+  return calendar;
+}
+
+export function readCachedCalendar(start: string, section: number | null, group: number | null): CalendarData | null {
+  try {
+    const raw = localStorage.getItem(CALENDAR_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as { calendar: unknown; section: number | null; group: number | null };
+    const calendar = validateCalendar(cached.calendar);
+    return calendar.start === start && cached.section === section && cached.group === group ? calendar : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return getJson<HealthResponse>('/v1/health/sources', signal);
 }
@@ -196,6 +225,44 @@ export async function rankFoodWithAi(
     throw new RelayError(errJson.error || `AI ranking failed with ${res.status}`, res.status);
   }
   return res.json() as Promise<FoodAiRecommendation>;
+}
+
+export async function saveFoodTasteProfile(profile: unknown): Promise<void> {
+  const res = await fetch('/v1/food/profile', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new RelayError(`failed to save taste profile: ${res.status}`, res.status);
+}
+
+export async function getFoodTasteProfile(): Promise<{ profile: (Record<string, unknown> & { dietaryFilter?: string }) | null }> {
+  const res = await fetch('/v1/food/profile', { headers: authHeaders() });
+  if (!res.ok) throw new RelayError(`failed to load taste profile: ${res.status}`, res.status);
+  return res.json();
+}
+
+export async function fetchFoodRecommendation(date: string): Promise<{ status: string; recommendation: FoodAiRecommendation | null; error?: string }> {
+  const res = await fetch(`/v1/food/recommendation?date=${encodeURIComponent(date)}`, { headers: authHeaders() });
+  if (!res.ok) throw new RelayError(`failed to load AI ranking: ${res.status}`, res.status);
+  return res.json();
+}
+
+export async function dismissAlert(key: string): Promise<void> {
+  const res = await fetch('/v1/alerts/dismiss', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ key }) });
+  if (!res.ok) throw new RelayError(`could not dismiss alert: ${res.status}`, res.status);
+}
+
+export async function previewCourseImport(text: string): Promise<CourseResource[]> {
+  const res = await fetch('/v1/courses/import', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text }) });
+  if (!res.ok) throw new RelayError(`could not read course links: ${res.status}`, res.status);
+  return (await res.json()).resources;
+}
+
+export async function saveCourseResources(course: string, resources: CourseResource[]): Promise<CourseResource[]> {
+  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/resources`, { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ resources }) });
+  if (!res.ok) throw new RelayError(`could not save course links: ${res.status}`, res.status);
+  return (await res.json()).resources;
 }
 
 export interface AiModelInfo {

@@ -100,7 +100,10 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
   if (rows.length === 0) {
     // Valid-empty: an empty future menu day, or a status page saying everything is fine.
     let tombstones = 0;
-    if (source.tombstoneOnEmpty && !dryRun) {
+    const tombstoneOnEmpty = typeof source.tombstoneOnEmpty === 'function'
+      ? source.tombstoneOnEmpty(parsed)
+      : source.tombstoneOnEmpty;
+    if (tombstoneOnEmpty && !dryRun) {
       tombstones = await store.tombstoneMissing(source.shape, source.id, []);
     }
     receipt.outcome = 'empty';

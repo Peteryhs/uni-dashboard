@@ -7,6 +7,7 @@
  */
 
 const CHUNK = 25; // rows per statement, keeps bound params well under any dialect's limit
+const INDEXES = ['idx_timeline_starts', 'idx_menu_date', 'idx_source_run_source_id', 'idx_source_run_finished', 'idx_source_run_body_sha', 'idx_raw_snapshot_fetched'];
 
 const SHAPES = {
   timeline_event: {
@@ -98,8 +99,17 @@ function ddlStatements() {
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );`);
+  parts.push(`CREATE TABLE IF NOT EXISTS ai_usage (
+    day TEXT PRIMARY KEY,
+    reserved_neurons INTEGER NOT NULL DEFAULT 0,
+    calls INTEGER NOT NULL DEFAULT 0
+  );`);
   parts.push('CREATE INDEX IF NOT EXISTS idx_timeline_starts ON timeline_event (starts_at, deleted);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_menu_date ON menu_item (service_date, deleted);');
+  parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_source_id ON source_run (source_id, id DESC);');
+  parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_finished ON source_run (finished_at);');
+  parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_body_sha ON source_run (body_sha256);');
+  parts.push('CREATE INDEX IF NOT EXISTS idx_raw_snapshot_fetched ON raw_snapshot (fetched_at);');
   return parts;
 }
 
@@ -209,6 +219,6 @@ const SHAPE_COLUMNS = SHAPES;
  * table would have missed exactly that case: the table exists, the new one does not, and the DDL
  * never runs again.
  */
-const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting'];
+const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage'];
 
-export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, TABLES, CHUNK };
+export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, TABLES, INDEXES, CHUNK };

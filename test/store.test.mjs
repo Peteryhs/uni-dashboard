@@ -29,6 +29,17 @@ test('numeric columns stay numbers through a round trip', () => {
   assert.equal(typeof r.all_day, 'boolean');
 });
 
+test('timeline rows are ordered before the limit is applied', () => {
+  const store = new SqliteStore(':memory:');
+  store.upsertRows('timeline_event', [
+    { source_id: 's', external_id: 'a-later', observed_at: now, valid_until: now + 1000, kind: 'class', title: 'Later', starts_at: now + 3600_000, ends_at: now + 7200_000 },
+    { source_id: 's', external_id: 'z-sooner', observed_at: now, valid_until: now + 1000, kind: 'class', title: 'Sooner', starts_at: now + 60_000, ends_at: now + 120_000 },
+  ]);
+  assert.equal(store.rows('timeline_event', { orderBy: 'starts_at', limit: 1 })[0].title, 'Sooner');
+  assert.throws(() => store.rows('timeline_event', { orderBy: 'starts_at DESC' }), /invalid order column/);
+  store.close();
+});
+
 test('a tombstoned row comes back to life when the source reports it again', () => {
   const store = new SqliteStore(':memory:');
   const row = { source_id: 's', external_id: 'e1', observed_at: 1, valid_until: 2, kind: 'class', title: 'x', starts_at: now, ends_at: now };
@@ -85,6 +96,14 @@ test('a success resets failures and closes the circuit', () => {
   assert.equal(job.circuit_state, 'closed');
   assert.equal(job.consecutive_failures, 0);
   assert.equal(job.next_due_at, now + 60_000, 'a healthy source returns to its own cadence');
+});
+
+test('HTTP 429 waits at least 30 minutes before retrying a feed', () => {
+  const store = new SqliteStore(':memory:');
+  store.scheduleJob('s', now);
+  store.recordJobResult('s', { startedAt: now, finishedAt: now, outcome: 'failed', httpStatus: 429, cadenceMs: 15 * 60_000, now });
+  assert.ok(store.jobs()[0].next_due_at >= now + 30 * 60_000);
+  store.close();
 });
 
 test('due jobs are returned in due order', () => {

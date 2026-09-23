@@ -9,6 +9,7 @@ import { validateCardData } from '#contract/card-data.mjs';
 import { config } from './config.mjs';
 import { taskContext, phaseOf, groupScope } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
+import { alertIdentity, alertSummaryFor, ALERT_SUMMARY_SETTING, ALERT_DISMISSED_SETTING } from './alert-summary.mjs';
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -84,6 +85,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       where: 'source_id = ? AND starts_at >= ?',
       params: [SCHEDULE_SOURCE, now - 5 * MIN],
       limit: 200,
+      orderBy: 'starts_at',
     })
   ).sort((a, b) => a.starts_at - b.starts_at);
 
@@ -92,6 +94,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       where: 'kind IN (?,?) AND starts_at >= ?',
       params: ['deadline', 'exam', now - 5 * MIN],
       limit: 200,
+      orderBy: 'starts_at',
     })
   ).sort((a, b) => a.starts_at - b.starts_at);
 
@@ -217,6 +220,7 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
       where: 'source_id = ? AND starts_at BETWEEN ? AND ?',
       params: ['uw-learn-ics', now - 5 * MIN, horizon],
       limit: 500,
+      orderBy: 'starts_at',
     }),
     (rawRows) => {
       const rows = (rawRows || []).slice().sort((a, b) => a.starts_at - b.starts_at);
@@ -442,20 +446,18 @@ export function foodCard(store, { now = Date.now(), date = null } = {}) {
  * Alert slot: usually invisible, because an empty slot renders zero height, not a green card.
  *
  * Silence has two meanings here: nothing is wrong, or nobody looked. The run record is the only
- * thing that separates them. On the first live run this card went quiet five minutes after the
- * last poll while status.json still said "major", because notice rows expire on their own
- * valid_until and an expired row read as "no news". A dashboard must never report all clear on
- * stale data, so an empty slot inherits the age ladder from the last status check.
+ * thing that separates them. Keep the last incident visible when polling stops, with its age
+ * state showing that it is stale. A successful all-clear run tombstones the incident immediately.
  */
 export function alertCard(store, { now = Date.now() } = {}) {
   return maybePromise(
-    store.rows('notice', { where: 'valid_until >= ?', params: [now], limit: 20 }),
+    store.rows('notice', { where: 'source_id = ?', params: [STATUS_SOURCE], limit: 20 }),
     (rawNotices) => {
       const notices = (rawNotices || [])
         .filter((n) => config.alertSeverities.includes(n.severity))
         .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
-      return maybePromise(
+      return maybePromise(store.getSetting(ALERT_SUMMARY_SETTING), (summaryRaw) => maybePromise(store.getSetting(ALERT_DISMISSED_SETTING), (dismissedKey) => maybePromise(
         store.lastRunPerSource(),
         (runs) => {
           const run = (runs || []).find((r) => r.source_id === STATUS_SOURCE) ?? null;
@@ -476,7 +478,7 @@ export function alertCard(store, { now = Date.now() } = {}) {
                   observed_at: checkedAt,
                   valid_until: checkedAt == null ? null : checkedAt + STATUS_CADENCE_MS,
                   source_id: STATUS_SOURCE,
-                  data: { count: 0, checked_at: checkedAt, notices: [] },
+                  data: { count: 0, checked_at: checkedAt, notices: [], summary: '', key: '', dismissed: false },
                 };
               },
             );
@@ -492,11 +494,14 @@ export function alertCard(store, { now = Date.now() } = {}) {
             data: {
               count: notices.length,
               checked_at: checkedAt ?? env.observed_at,
-              notices: notices.map((n) => ({ severity: n.severity, title: n.title, url: n.url ?? '' })),
+              summary: alertSummaryFor(notices, summaryRaw),
+              key: alertIdentity(notices),
+              dismissed: dismissedKey === alertIdentity(notices),
+              notices: notices.map((n) => ({ severity: n.severity, title: n.title, body: n.body ?? '', components: n.components ?? [], incident_status: n.incident_status ?? '', url: n.url ?? '' })),
             },
           };
         },
-      );
+      )));
     },
   );
 }

@@ -16,6 +16,7 @@ an account yet).
 | `open-meteo` | hourly weather for the next class hour | live, no auth, CORS `*` |
 | `uw-portal-ics` | class timetable and exams | needs the Portal iCal token URL |
 | `uw-learn-ics` | deadlines and due dates | needs the LEARN feed token URL |
+| `user-office-hours` | saved office hours occurrences | configured in the app |
 
 The two token feeds are written and tested against fixtures, and they stay blocked until the
 owner copies the URLs out of Portal and LEARN. Everything else is real data.
@@ -38,7 +39,7 @@ queries per invocation, measured 38 for the worst cron tick).
 
 ```bash
 npm install
-npm test                                          # 99 tests
+npm test                                          # backend and contract tests
 node apps/relay/src/cli.mjs sources               # readiness, and which env var is missing
 node apps/relay/src/cli.mjs poll                  # fetch, parse, validate, store
 node apps/relay/src/cli.mjs bundle                # the four-card payload a client renders
@@ -77,6 +78,14 @@ npm run web:dev         # terminal 2: http://127.0.0.1:5173, proxies /v1 to 8787
 One origin serves both the app shell and `/v1`, which is what Workers static assets gives for
 free, so there is no CORS path anywhere and no dev-only workaround to remove at deploy time.
 
+The web calendar and future Android client can read the same server-built agenda at
+`GET /v1/calendar`. See [Unified calendar API](docs/UNIFIED-CALENDAR.md) for date-range parameters,
+event fields, and the source window.
+
+The backend also serves an explainable, clock-aware daily feed at `GET /v1/recommendations`, with
+reviewed syllabus imports and cross-device completion/snooze state. See
+[Daily guidance backend](docs/DAILY-GUIDANCE.md) for the endpoints, priorities, limits and simulations.
+
 The client is Vite + React + Tailwind v4 + shadcn/ui. It imports the age ladder and the
 skip-unknown-card rule from `packages/contract` rather than restating them, so the web and Android
 clients cannot drift from the server.
@@ -103,7 +112,7 @@ apps/web/            Vite + React + Tailwind v4 + shadcn/ui client
   src/components/freshness.tsx   the age ladder, rendered
   src/components/cards/          one renderer per card type, plus the degrade chain
 fixtures/            captured real bytes plus labelled synthetic samples
-test/                66 tests
+test/                integration and regression tests
 tools/               fixture capture, db inspection, the parse benchmark
 ```
 

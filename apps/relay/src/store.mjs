@@ -91,10 +91,14 @@ export class SqliteStore {
     return stale.length;
   }
 
-  rows(shape, { where = '', params = [], limit = 1000 } = {}) {
+  rows(shape, { where = '', params = [], limit = 1000, orderBy = null } = {}) {
     const spec = SHAPES[shape];
     if (!spec) throw new Error(`unknown shape ${shape}`);
-    let sql = `SELECT * FROM ${shape} WHERE deleted=0 ${where ? `AND ${where}` : ''} LIMIT ${Number(limit)}`;
+    if (orderBy && !['source_id', 'external_id', 'observed_at', 'valid_until', ...spec.cols].includes(orderBy)) {
+      throw new Error(`invalid order column ${orderBy} for ${shape}`);
+    }
+    const ordering = orderBy ? ` ORDER BY ${orderBy} ASC, external_id ASC` : '';
+    const sql = `SELECT * FROM ${shape} WHERE deleted=0 ${where ? `AND ${where}` : ''}${ordering} LIMIT ${Number(limit)}`;
     return this.db.prepare(sql).all(...params).map((r) => paramsToRow(shape, r));
   }
 
@@ -171,6 +175,11 @@ export class SqliteStore {
     return this.db.prepare('DELETE FROM source_run WHERE finished_at < ?').run(beforeMs).changes;
   }
 
+  pruneSnapshots(beforeMs) {
+    return this.db.prepare(`DELETE FROM raw_snapshot WHERE fetched_at < ?
+      AND NOT EXISTS (SELECT 1 FROM source_run WHERE body_sha256 = raw_snapshot.sha256)`).run(beforeMs).changes;
+  }
+
   getSnapshot(sha) {
     const r = this.db.prepare('SELECT * FROM raw_snapshot WHERE sha256=?').get(sha);
     if (!r) return null;
@@ -195,14 +204,16 @@ export class SqliteStore {
       .run(sourceId, nextDueAt);
   }
 
-  recordJobResult(sourceId, { startedAt, finishedAt, outcome, cadenceMs, now }) {
+  recordJobResult(sourceId, { startedAt, finishedAt, outcome, httpStatus = null, cadenceMs, now }) {
     const prev = this.db.prepare('SELECT * FROM job WHERE source_id=?').get(sourceId);
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
     const circuit = failures >= 5 ? 'open' : 'closed';
-    // Exponential backoff with jitter, capped at 15 minutes, and a tripped circuit retries at the cap.
-    const backoff = Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
+    // Exponential backoff with jitter, capped at 15 minutes; circuit state flags repeated failures.
+    const backoff = httpStatus === 429
+      ? Math.max(cadenceMs, 30 * 60_000)
+      : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)
       : now + cadenceMs;
@@ -234,6 +245,18 @@ export class SqliteStore {
   getSetting(name) {
     const row = this.db.prepare('SELECT value FROM setting WHERE name=?').get(name);
     return row ? row.value : null;
+  }
+
+  reserveAiBudget(day, amount, limit) {
+    return this.db.prepare(`INSERT INTO ai_usage (day, reserved_neurons, calls)
+      SELECT ?, ?, 1 WHERE ? <= ?
+      ON CONFLICT(day) DO UPDATE SET reserved_neurons=ai_usage.reserved_neurons+excluded.reserved_neurons,
+        calls=ai_usage.calls+1 WHERE ai_usage.reserved_neurons+excluded.reserved_neurons <= ?
+      RETURNING reserved_neurons, calls`).get(day, amount, amount, limit, limit) ?? null;
+  }
+
+  aiUsage(day) {
+    return this.db.prepare('SELECT reserved_neurons, calls FROM ai_usage WHERE day=?').get(day) ?? null;
   }
 
   setSetting(name, value, now = Date.now()) {

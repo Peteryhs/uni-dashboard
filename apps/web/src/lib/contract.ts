@@ -16,6 +16,7 @@ import {
   CARD_STATES as CARD_STATES_JS,
   SCHEMA_VERSION as SCHEMA_VERSION_JS,
 } from '#contract/cards.mjs';
+import { validateCalendar as validateCalendarJs } from '#contract/calendar.mjs';
 
 export type CardState =
   | 'live'
@@ -70,6 +71,49 @@ export const renderableCards = renderableCardsJs as (
   bundle: Bundle,
   knownTypes: string[],
 ) => { rendered: Card[]; skipped: number };
+
+export interface CalendarEvent {
+  id: string;
+  occurrence_id: string;
+  uid: string | null;
+  source_id: string;
+  source_label: string;
+  kind: string;
+  category: 'class' | 'deadline' | 'opens' | 'exam' | 'office_hours' | 'event';
+  phase: 'due' | 'opens' | null;
+  title: string;
+  subtitle: string;
+  course: string | null;
+  location: string;
+  description: string;
+  url: string | null;
+  links: { label: string; url: string; kind: string }[];
+  starts_at: number;
+  ends_at: number;
+  all_day: boolean;
+  continues_from_previous: boolean;
+  continues_next_day: boolean;
+  group_scope: { section: number | null; groups: [number, number] | null };
+  observed_at: number;
+  state: 'live' | 'ageing' | 'stale' | 'dead';
+}
+
+export interface CalendarData {
+  schema_version: 1;
+  timezone: string;
+  generated_at: number;
+  start: string;
+  end: string;
+  days: { date: string; events: CalendarEvent[] }[];
+  courses: { course: string; learn_url: string | null; event_ids: string[]; class_count: number; deadline_count: number; office_hours_count: number; resources: CourseResource[] }[];
+  count: number;
+  truncated: boolean;
+  sources: { id: string; status: 'ok' | 'unconfigured' | 'pending' | 'failed'; last_run_at: number | null }[];
+}
+
+export interface CourseResource { title: string; url: string; kind: 'learn' | 'textbook' | 'resource' }
+
+export const validateCalendar = validateCalendarJs as (value: unknown) => CalendarData;
 
 // ---------------------------------------------------------------------------
 // Per-card payload types. These mirror packages/contract/src/card-data.mjs.
@@ -270,9 +314,12 @@ export interface FoodAiRecommendation {
 
 export interface AlertData {
   count: number;
+  summary: string;
+  key: string;
+  dismissed: boolean;
   /** when the status source last reported, so an old all clear can be rendered as old */
   checked_at?: number | null;
-  notices: { severity: string; title: string; url: string }[];
+  notices: { severity: string; title: string; body: string; components: string[]; incident_status: string; url: string }[];
 }
 
 // ---------------------------------------------------------------------------

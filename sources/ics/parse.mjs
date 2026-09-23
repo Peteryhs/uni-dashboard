@@ -126,6 +126,11 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
       return [k.toUpperCase(), (v ?? '').toUpperCase()];
     }),
   );
+  const supportedParts = new Set(['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'BYDAY']);
+  const unsupportedPart = Object.keys(parts).find((part) => !supportedParts.has(part));
+  if (unsupportedPart) {
+    throw new Error(`unsupported RRULE ${unsupportedPart} on ${event.uid}`);
+  }
   const freq = parts.FREQ;
   if (freq !== 'DAILY' && freq !== 'WEEKLY') {
     throw new Error(`unsupported RRULE FREQ=${freq} on ${event.uid}`);
@@ -133,12 +138,14 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
   const interval = Math.max(1, Number(parts.INTERVAL ?? 1) || 1);
   const count = parts.COUNT ? Number(parts.COUNT) : null;
   const until = parts.UNTIL ? parseDateValue(parts.UNTIL, tz).at : null;
+  const byDayValues = parts.BYDAY?.split(',') ?? [];
+  if (byDayValues.some((day) => !Object.hasOwn(WEEKDAYS, day))) {
+    throw new Error(`unsupported RRULE BYDAY=${parts.BYDAY} on ${event.uid}`);
+  }
   const byDay = parts.BYDAY
     ? new Set(
-        parts.BYDAY.split(',')
-          .map((d) => d.slice(-2))
+        byDayValues
           .map((k) => WEEKDAYS[k])
-          .filter((n) => n !== undefined),
       )
     : null;
 
@@ -168,7 +175,7 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
   const DAY = 86400000;
 
   const out = [];
-  let emitted = 0;
+  let matched = 0;
   for (let dayIndex = 0; dayIndex <= 4000; dayIndex++) {
     const cursor = startCursor + dayIndex * DAY;
     // startCursor is a UTC-naive date standing in for a local calendar date, so the day's
@@ -191,11 +198,12 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
     const at = zonedToEpoch(y, mo, d, hh, mm, ss, tz);
     if (at > windowEnd) break;
     if (until != null && at > until) break;
-    if (at < event.start || at < windowStart) continue;
-    if (count != null && emitted >= count) break;
+    if (at < event.start) continue;
+    matched += 1;
+    if (count != null && matched > count) break;
+    if (at < windowStart) continue;
 
     out.push({ start: at, end: at + duration });
-    emitted += 1;
     if (out.length >= maxPerEvent) break;
   }
   return out;
@@ -219,7 +227,7 @@ export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
   for (const line of lines) {
     if (line === 'BEGIN:VEVENT') {
       inEvent = true;
-      cur = { uid: '', summary: '', location: '', description: '', status: '', url: '', rrule: null, tz: tz };
+      cur = { uid: '', summary: '', location: '', description: '', status: '', url: '', rrule: null, recurrenceId: null, exdates: [], tz: tz };
       continue;
     }
     if (line === 'END:VEVENT') {
@@ -264,6 +272,25 @@ export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
       case 'RRULE':
         cur.rrule = prop.value;
         break;
+      case 'RDATE':
+      case 'EXRULE':
+        throw new Error(`unsupported ${prop.name} on ${cur.uid}`);
+      case 'EXDATE': {
+        const zone = prop.params.TZID || tz;
+        for (const value of prop.value.split(',')) {
+          const at = parseDateValue(value, zone).at;
+          if (!Number.isFinite(at)) throw new Error(`invalid EXDATE on ${cur.uid}`);
+          cur.exdates.push(at);
+        }
+        break;
+      }
+      case 'RECURRENCE-ID': {
+        if (prop.params.RANGE) throw new Error(`unsupported RECURRENCE-ID RANGE on ${cur.uid}`);
+        const zone = prop.params.TZID || tz;
+        cur.recurrenceId = parseDateValue(prop.value, zone).at;
+        if (!Number.isFinite(cur.recurrenceId)) throw new Error(`invalid RECURRENCE-ID on ${cur.uid}`);
+        break;
+      }
       case 'DTSTART': {
         const zone = prop.params.TZID || tz;
         const { at, allDay } = parseDateValue(prop.value, zone);

@@ -5,6 +5,7 @@ import { DueSoonDetail } from '@/components/cards/due-soon-detail';
 import { taskKey } from '@/components/cards/due-soon';
 import { SourcesPanel } from '@/components/sources-panel';
 import { CustomizationSheet } from '@/components/customization-sheet';
+import { UnifiedCalendar } from '@/components/unified-calendar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useDashboard, useNow } from '@/hooks/use-dashboard';
@@ -155,6 +156,8 @@ export default function App() {
                 </>
               );
             })()}
+
+            <UnifiedCalendar now={now} />
 
             {/* Remaining Cards (Dining / Food full width) */}
             {cards

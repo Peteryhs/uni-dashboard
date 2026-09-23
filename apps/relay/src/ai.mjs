@@ -4,9 +4,10 @@
  * Designed to dual-target:
  * 1. Cloudflare Workers environment: uses env.AI.run(model, payload)
  * 2. Node.js relay / CLI / VPS: calls Cloudflare Workers AI REST API if credentials are set
- * 3. Offline / dev fallback: deterministic rule-based ranking engine if no credentials are configured
+ * No offline ranking is fabricated when AI credentials are unavailable.
  */
 import { FoodAiRecommendation } from '#contract/card-data.mjs';
+import { z } from 'zod';
 import { OfficeHoursDraft, OFFICE_HOURS_JSON_SCHEMA } from '#contract/office-hours.mjs';
 import { config } from './config.mjs';
 
@@ -209,7 +210,10 @@ export async function runStructured({
   force = false,
   transform = null,
   fewShotMessages = [],
+  maxTokens = 1536,
+  beforeAiCall = null,
 }) {
+  if (!Number.isInteger(maxTokens) || maxTokens < 64 || maxTokens > 2048) throw new RangeError('AI output limit must be 64-2048 tokens');
   const effectiveEnv = cfEnv || env;
   const hasWorkerAi = effectiveEnv && effectiveEnv.AI && typeof effectiveEnv.AI.run === 'function';
   const hasRestCreds = Boolean(accountId && apiToken);
@@ -233,11 +237,13 @@ export async function runStructured({
     : { type: 'json_object' };
 
   async function callAi(messages) {
+    if (beforeAiCall) await beforeAiCall({ model, messages, maxTokens, jsonSchema });
     if (hasWorkerAi) {
       try {
         return await effectiveEnv.AI.run(model, {
           messages,
           response_format: responseFormat,
+          max_tokens: maxTokens,
         });
       } catch (err) {
         const msg = err?.message || String(err);
@@ -262,6 +268,7 @@ export async function runStructured({
         body: JSON.stringify({
           messages,
           response_format: responseFormat,
+          max_tokens: maxTokens,
         }),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
@@ -338,7 +345,7 @@ export async function runStructured({
     } catch (retryErr) {
       const err = new Error(`AI execution failed on retry: ${retryErr.message}`);
       err.raw = rawText;
-      err.status = 502;
+      err.status = retryErr.status || 502;
       throw err;
     }
 
@@ -473,6 +480,7 @@ export async function rankDailyMenu({
   apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
   force = false,
   now = Date.now(),
+  beforeAiCall = null,
 }) {
   const outlets = groupMenuByOutlet(menuItems);
 
@@ -502,10 +510,34 @@ export async function rankDailyMenu({
     apiToken,
     cacheKey: key,
     ttlMs: CACHE_TTL_MS,
+    beforeAiCall,
     now,
     force,
     transform: (parsed) => transformMenuAiResponse(parsed, serviceDate, model, now),
   });
+}
+
+/** Summarize active campus incidents for a compact, one-line alert banner. */
+export async function summarizeAlertsWithAi({ notices, cfEnv = null, now = Date.now(), beforeAiCall = null }) {
+  const payload = notices.slice(0, 8).map((notice) => ({
+    title: notice.title,
+    severity: notice.severity,
+    affected: notice.components || [],
+    update: String(notice.body || '').slice(0, 700),
+  }));
+  const result = await runStructured({
+    systemMessage: 'Summarize university service incidents for one student. Return exactly one plain sentence under 35 words. Name the main affected service and location when given. Do not invent facts, add advice, or include links.',
+    userMessage: JSON.stringify(payload),
+    schema: z.object({ summary: z.string().min(1).max(500) }),
+    model: DEFAULT_AI_MODEL,
+    maxTokens: 256,
+    beforeAiCall,
+    cfEnv,
+    now,
+    transform: (value) => ({ summary: String(value.summary || '').replace(/\s+/g, ' ').trim() }),
+  });
+  const firstSentence = /^(.+?[.!?])(?:\s|$)/.exec(result.summary)?.[1] || result.summary;
+  return firstSentence.slice(0, 240).trim();
 }
 
 /**
@@ -606,6 +638,7 @@ export async function parseOfficeHoursWithAi({
   force = false,
   now = Date.now(),
   timezone = config.timezone,
+  beforeAiCall = null,
 }) {
   if (!text || typeof text !== 'string' || !text.trim()) {
     throw new Error('Office hours text cannot be empty');
@@ -641,6 +674,7 @@ export async function parseOfficeHoursWithAi({
     now,
     force,
     fewShotMessages,
+    beforeAiCall,
     transform: (parsed) => {
       if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) return null;
       const rawRules = parsed.rules;

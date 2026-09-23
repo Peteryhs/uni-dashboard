@@ -164,12 +164,18 @@ export const FoodAiRecommendation = z.object({
 
 export const AlertData = z.object({
   count: z.number().int().nonnegative(),
+  summary: z.string().default(''),
+  key: z.string().default(''),
+  dismissed: z.boolean().default(false),
   /** when the status source last reported, so a client can render an old all clear as old */
   checked_at: EPOCH_MS.nullable().optional(),
   notices: z.array(
     z.object({
       severity: z.string(),
       title: z.string(),
+      body: z.string().default(''),
+      components: z.array(z.string()).default([]),
+      incident_status: z.string().default(''),
       url: z.string().default(''),
     }),
   ),

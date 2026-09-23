@@ -8,6 +8,19 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-23 — Unified calendar, course guidance, and recommendation preview
+
+The backend now serves one calendar for classes, LEARN deadlines and exams, office hours, custom events, and reviewed syllabus content. It deduplicates events, handles Toronto dates and recurring ICS changes, and keeps source freshness visible. The existing UI continues to work and has a unified calendar view.
+
+Course imports now filter navigation and library clutter from pasted LEARN home pages while retaining useful announcements, calendar events, and resource links. Syllabus text, copied tables, and HTML can be previewed and reviewed before saving; optional Workers AI extraction requires explicit opt-in and source evidence. Scanned PDFs still need OCR.
+
+The backend recommendation feed (`/v1/recommendations`) ranks current and upcoming classes, due work, quizzes, office hours, syllabus topics and readings, food, weather, focus windows, and conflicts. It distinguishes larger and smaller tasks, includes action links and evidence, and stores done/undo/snooze actions. A temporary development-only page at `/recommendations-preview.html` shows the feed with a Toronto date picker and 15-minute time slider. The local preview route recalculates priorities at the selected time while reporting actual source freshness; the production build excludes the preview page.
+
+Backend reliability work includes background dining AI after a new menu arrives, short asynchronous alert summaries with dismissal, clearer outage details, weather caching, source backoff, a shared daily Workers AI budget, and bounded scheduled polling. The simulated day exposed a remaining relevance gap: some broad university administrative dates can still appear as personal tasks. Missing course syllabi also limit topic and quiz coverage.
+
+Verification: 200/200 tests passed with `node --test --test-isolation=none`; the web production build and Worker bundle passed. The local preview and time slider were exercised against the running dev server. No Cloudflare deployment was made.
+
+---
 ## 2026-09-23 — Office hours AI extraction, schedule management & date-filtered daily menu
 
 133 tests, up from 116.

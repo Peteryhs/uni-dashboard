@@ -7,6 +7,7 @@
  * HTML, and the plausibility check catches the HTML case, which is the dangerous one.
  */
 import { parseIcs, expandRecurrence, DEFAULT_TZ } from './parse.mjs';
+import { classifyLearnEvent } from './learn-classification.mjs';
 
 export const shape = 'timeline_event';
 export const cadenceMs = 15 * 60 * 1000;
@@ -38,6 +39,9 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
     envVar,
     tz,
     windowDays,
+    // A nonempty feed that resolves to no upcoming rows may contain explicit cancellations.
+    // A suddenly empty feed is less trustworthy, so keep the last good rows in that case.
+    tombstoneOnEmpty: (parsed) => parsed.meta.events > 0,
     url() {
       const v = process.env[envVar] || fallbackEnvVars.map((k) => process.env[k]).find(Boolean);
       if (!v) return null;
@@ -81,8 +85,11 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
       return { ok: true, reason: '' };
     },
     classify(event) {
-      const text = `${event.summary} ${event.description ?? ''}`;
-      if (this.role === 'learn') return EXAM_RE.test(text) ? 'exam' : 'deadline';
+      const title = String(event.summary ?? '');
+      if (this.role === 'learn') return classifyLearnEvent(title);
+      // The Portal description often contains unrelated links (such as a university "due dates"
+      // page). Classify the calendar title only, or those words turn administrative dates into tasks.
+      const text = title;
       if (EXAM_RE.test(text)) return 'exam';
       if (DEADLINE_RE.test(text)) return 'deadline';
       return 'class';
@@ -92,52 +99,63 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
       const { events } = parseIcs(raw.body, { tz: this.tz });
       const windowStart = now - 12 * 60 * 60 * 1000;
       const windowEnd = now + this.windowDays * 86400000;
-      const rows = [];
-      let expanded = 0;
-      for (const event of events) {
-        let occurrences;
-        try {
-          occurrences = expandRecurrence(event, {
-            windowStart,
-            windowEnd,
-            tz: this.tz,
-          });
-        } catch {
-          // If a calendar event (e.g. from Google Calendar) uses a recurrence rule not strictly DAILY/WEEKLY,
-          // emit the single occurrence if in window so other events are not blocked.
-          occurrences = [{ start: event.start, end: event.end }];
+      const rowsById = new Map();
+      const masters = events.filter((event) => event.recurrenceId == null);
+      const overrides = events.filter((event) => event.recurrenceId != null);
+      const cancelledSeries = new Set(masters.filter((event) => event.status.toUpperCase() === 'CANCELLED').map((event) => event.uid));
+      const overridden = new Set(overrides.map((event) => `${event.uid}#${event.recurrenceId}`));
+
+      const addOccurrence = (event, occ, originalStart) => {
+        if (!Number.isFinite(occ.start) || !Number.isFinite(occ.end)) {
+          throw new Error(`invalid occurrence date on ${event.uid}`);
         }
+        if (occ.end < windowStart || occ.start > windowEnd) return;
+        const externalId = `${event.uid}#${new Date(originalStart).toISOString()}`;
+        rowsById.set(externalId, {
+          source_id: this.id,
+          external_id: externalId,
+          uid: event.uid,
+          observed_at: now,
+          valid_until: now + 24 * 60 * 60 * 1000,
+          kind: this.classify(event),
+          title: event.summary || '(untitled)',
+          // Portal puts the course name in DESCRIPTION ("Fundamentals of Programming") and the room
+          // in LOCATION. LEARN is the other way round: LOCATION holds the course and DESCRIPTION
+          // holds instructions plus the links, which the card builder parses out of `description`.
+          subtitle: this.role === 'portal' ? (event.description ?? '').trim().slice(0, 120) : '',
+          location: event.location ?? '',
+          all_day: Boolean(event.allDay),
+          starts_at: occ.start,
+          ends_at: occ.end,
+          url: event.url ?? '',
+          description: event.description ?? '',
+        });
+      };
+
+      for (const event of masters) {
+        if (cancelledSeries.has(event.uid)) continue;
+        const excluded = new Set(event.exdates);
+        const occurrences = expandRecurrence(event, {
+          windowStart,
+          windowEnd,
+          tz: this.tz,
+        });
         for (const occ of occurrences) {
-          expanded += 1;
-          const startsAt = occ.start;
-          const iso = new Date(startsAt).toISOString();
-          rows.push({
-            source_id: this.id,
-            external_id: `${event.uid}#${iso}`,
-            uid: event.uid,
-            observed_at: now,
-            valid_until: now + 24 * 60 * 60 * 1000,
-            kind: this.classify(event),
-            title: event.summary || '(untitled)',
-            // Portal puts the course name in DESCRIPTION ("Fundamentals of Programming") and the room
-            // in LOCATION. LEARN is the other way round: LOCATION holds the course and DESCRIPTION
-            // holds instructions plus the links, which the card builder parses out of `description`.
-            subtitle: this.role === 'portal' ? (event.description ?? '').trim().slice(0, 120) : '',
-            location: event.location ?? '',
-            all_day: Boolean(event.allDay),
-            starts_at: startsAt,
-            ends_at: occ.end,
-            url: event.url ?? '',
-            description: event.description ?? '',
-          });
+          if (excluded.has(occ.start) || overridden.has(`${event.uid}#${occ.start}`)) continue;
+          addOccurrence(event, occ, occ.start);
         }
       }
+      for (const event of overrides) {
+        if (cancelledSeries.has(event.uid) || event.status.toUpperCase() === 'CANCELLED') continue;
+        addOccurrence(event, { start: event.start, end: event.end }, event.recurrenceId);
+      }
+      const rows = [...rowsById.values()];
       return {
         rows,
         meta: {
           calendar: raw.body.match(/X-WR-CALNAME:(.*)/)?.[1]?.trim() ?? '',
           events: events.length,
-          expanded,
+          expanded: rows.length,
         },
       };
     },

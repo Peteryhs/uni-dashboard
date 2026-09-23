@@ -34,10 +34,10 @@ database_id = "f20601f5-fcb6-43ab-9bb6-aa636b418df5"
 [ai]
 binding = "AI"
 
-# The cron only asks the job table what is due. Per-source cadence and the failure backoff live in
-# that table, so this interval just sets how often the table is consulted.
+# The status source is due every minute. The cron must wake at least that often; jobs for slower
+# sources retain their own cadence and only run when due.
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["* * * * *"]
 
 [observability]
 enabled = true

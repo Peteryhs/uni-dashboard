@@ -9,8 +9,9 @@
 export const id = 'uw-status';
 export const shape = 'notice';
 export const cadenceMs = 60 * 1000;
-export const url = 'https://status.uwaterloo.ca/api/v2/status.json';
+export const url = 'https://status.uwaterloo.ca/api/v2/summary.json';
 export const needsSecret = false;
+export const tombstoneOnEmpty = true;
 
 const SEVERITY = { none: 'info', minor: 'minor', major: 'major', critical: 'critical' };
 
@@ -47,22 +48,48 @@ export function parse(raw, ctx) {
     // No row is the normal state. Silence is a feature: an empty alert slot renders zero height.
     return { rows: [], meta: { indicator, page: j.page?.name ?? '' } };
   }
-  return {
-    rows: [
-      {
-        source_id: id,
-        external_id: `indicator:${indicator}:${j.page?.updated_at ?? ''}`,
-        observed_at: now,
-        valid_until: now + 5 * 60 * 1000,
-        severity: SEVERITY[indicator] ?? 'minor',
-        scope: 'campus',
-        title: j.status?.description ?? `Campus status: ${indicator}`,
-        body: '',
-        url: 'https://status.uwaterloo.ca',
-      },
-    ],
-    meta: { indicator, page: j.page?.name ?? '' },
-  };
+  const base = { source_id: id, observed_at: now, valid_until: now + 5 * 60 * 1000, scope: 'campus' };
+  const incidents = (j.incidents ?? []).filter((item) => item.status !== 'resolved' && item.status !== 'postmortem');
+  const rows = incidents.map((item) => {
+    const update = item.incident_updates?.[0];
+    const components = (item.components ?? []).map((component) => component.name).filter(Boolean);
+    return {
+      ...base,
+      external_id: `incident:${item.id}`,
+      severity: SEVERITY[item.impact] ?? SEVERITY[indicator] ?? 'minor',
+      title: item.name || j.status?.description || 'Campus incident',
+      body: update?.body || item.body || '',
+      components,
+      incident_status: item.status || '',
+      url: item.shortlink || `https://status.uwaterloo.ca/incidents/${item.id}`,
+    };
+  });
+  const covered = new Set(incidents.flatMap((item) => (item.components ?? []).map((component) => component.id)));
+  const extraComponents = (j.components ?? []).filter((component) =>
+    !covered.has(component.id) && ['degraded_performance', 'partial_outage', 'major_outage'].includes(component.status));
+  if (extraComponents.length) {
+    rows.push({
+      ...base,
+      external_id: 'components:affected',
+      severity: extraComponents.some((component) => component.status === 'major_outage') ? 'major' : 'minor',
+      title: extraComponents.length === 1 ? `${extraComponents[0].name}: ${extraComponents[0].status.replaceAll('_', ' ')}` : 'Other affected services',
+      body: 'The campus status page reports these services as affected. Open it for current details.',
+      components: extraComponents.map((component) => component.name),
+      incident_status: '',
+      url: 'https://status.uwaterloo.ca',
+    });
+  }
+  if (!rows.length) rows.push({
+    ...base,
+    external_id: `indicator:${indicator}`,
+    severity: SEVERITY[indicator] ?? 'minor',
+    title: j.status?.description ?? `Campus status: ${indicator}`,
+    body: '',
+    components: [],
+    incident_status: '',
+    url: 'https://status.uwaterloo.ca',
+  });
+  return { rows, meta: { indicator, page: j.page?.name ?? '', incidents: incidents.length } };
 }
 
-export default { id, shape, cadenceMs, url, needsSecret, fetchRaw, plausible, parse };
+export default { id, shape, cadenceMs, url, needsSecret, tombstoneOnEmpty, fetchRaw, plausible, parse };

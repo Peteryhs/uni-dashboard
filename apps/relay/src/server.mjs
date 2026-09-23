@@ -15,11 +15,19 @@ import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
+import { buildCalendar, calendarOptions } from './calendar.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
+import { claimFoodAiRun, getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { previewCourseImport, saveCourseResources } from './course-library.mjs';
+import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
+import { aiBudgetGuard } from './ai-budget.mjs';
+import { getCachedWeather, syncWeather } from './weather-cache.mjs';
+import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
+import { buildRecommendations } from './recommendations.mjs';
 
 export function createServer({ store, sources = SOURCES, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true }) {
   const started = Date.now();
@@ -30,8 +38,8 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
     polling = true;
     const receipts = [];
     try {
-      const jobs = store.dueJobs(now);
-      const due = jobs
+      const jobs = store.jobs();
+      const due = jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
         .map((j) => sourceById(j.source_id, sources))
         .filter(Boolean)
         .filter((s) => !s.needsSecret || (typeof s.url === 'function' ? s.url() : s.url));
@@ -43,6 +51,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           startedAt,
           finishedAt: receipt.finished_at,
           outcome: receipt.outcome,
+          httpStatus: receipt.http_status,
           cadenceMs: source.cadenceMs,
           now: Date.now(),
         });
@@ -62,6 +71,17 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
       // Same retention sweep as the Worker cron: receipts are an audit trail, not a history.
       const pruned = await store.pruneRuns(now - RUN_RETENTION_MS);
       if (pruned) log(`[poll] pruned ${pruned} run receipts older than ${Math.round(RUN_RETENTION_MS / 86_400_000)}d`);
+      const prunedSnapshots = await store.pruneSnapshots(now - RUN_RETENTION_MS);
+      if (prunedSnapshots) log(`[poll] pruned ${prunedSnapshots} unreferenced snapshots`);
+      void syncFoodRecommendation(store)
+        .then((food) => { if (food.status === 'failed' && !food.cached) log(`[food-ai] ${food.error}`); })
+        .catch((error) => log(`[food-ai] ${error.message}`));
+      void syncAlertSummary(store)
+        .then((alert) => { if (alert.status === 'failed' && !alert.cached) log(`[alert-ai] ${alert.error}`); })
+        .catch((error) => log(`[alert-ai] ${error.message}`));
+      void syncWeather(store)
+        .then((weather) => { if (weather.status === 'failed') log(`[weather] ${weather.error}`); })
+        .catch((error) => log(`[weather] ${error.message}`));
     } finally {
       polling = false;
     }
@@ -98,9 +118,78 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
     }
 
     try {
+      // Local relay only: the temporary Vite diagnostics page can move the clock without
+      // changing production Worker routes or fetching new data for a hypothetical date.
+      if (url.pathname === '/v1/recommendations/preview') {
+        if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+        const values = url.searchParams.getAll('at');
+        if (values.length !== 1 || !/^\d{13}$/.test(values[0])) return send(400, { error: 'at must be one epoch-millisecond timestamp' });
+        const selectedAt = Number(values[0]);
+        const evaluatedAt = Date.now();
+        const dayMs = 86_400_000;
+        if (!Number.isSafeInteger(selectedAt) || selectedAt < evaluatedAt - 8 * dayMs || selectedAt > evaluatedAt + 15 * dayMs) {
+          return send(400, { error: 'preview time must be within about one week before or two weeks after today' });
+        }
+        let filters;
+        try { filters = calendarOptions(url.searchParams, selectedAt); }
+        catch (error) { if (error instanceof RangeError) return send(400, { error: error.message }); throw error; }
+        const weather = await getCachedWeather(store, { now: evaluatedAt });
+        const feed = await buildRecommendations(store, { now: selectedAt, freshnessNow: evaluatedAt, section: filters.section, group: filters.group, weather });
+        return send(200, { ...feed, preview: { selected_at: selectedAt, evaluated_at: evaluatedAt, uses_current_saved_data: true } });
+      }
+      if (isGuidanceRoute(url.pathname)) {
+        const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store });
+        return send(result.status, result.body);
+      }
       if (url.pathname === '/v1/dashboard') {
         const bundle = await buildDashboard(store, { now: Date.now() });
         return send(200, bundle);
+      }
+      if (url.pathname === '/v1/alerts/dismiss' && req.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'invalid json' }); }
+        return (await dismissAlert(store, body?.key)) ? send(200, { ok: true }) : send(409, { error: 'alert has changed; refresh the dashboard' });
+      }
+      if (url.pathname === '/v1/calendar' && req.method === 'GET') {
+        const now = Date.now();
+        let options;
+        try {
+          options = calendarOptions(url.searchParams, now);
+        } catch (error) {
+          if (error instanceof RangeError) return send(400, { error: error.message });
+          throw error;
+        }
+        return send(200, await buildCalendar(store, { ...options, now }));
+      }
+      if (url.pathname === '/v1/food/recommendation' && req.method === 'GET') {
+        return send(200, await getFoodRecommendation(store, url.searchParams.get('date') || ''));
+      }
+      if (url.pathname === '/v1/food/profile' && req.method === 'GET') return send(200, { profile: await getFoodProfile(store) });
+      if (url.pathname === '/v1/food/profile' && req.method === 'PUT') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'invalid json' }); }
+        return send(200, { profile: await saveFoodProfile(store, body) });
+      }
+      if (url.pathname === '/v1/courses/import' && req.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'invalid json' }); }
+        if (typeof body?.text !== 'string' || body.text.length > 100_000) return send(400, { error: 'text must be at most 100 KB' });
+        return send(200, { resources: previewCourseImport(body.text) });
+      }
+      const courseResourceMatch = /^\/v1\/courses\/([^/]+)\/resources$/.exec(url.pathname);
+      if (courseResourceMatch && req.method === 'PUT') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, { error: 'invalid json' }); }
+        try { return send(200, { resources: await saveCourseResources(store, decodeURIComponent(courseResourceMatch[1]), body.resources) }); }
+        catch (error) { if (error instanceof RangeError || error instanceof URIError) return send(400, { error: error.message }); throw error; }
       }
       if (url.pathname === '/v1/health/sources') {
         const last = store.lastRunPerSource();
@@ -123,9 +212,16 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
       }
       if (url.pathname.startsWith('/v1/snapshot/')) {
         const sha = url.pathname.split('/').pop();
+        if (!/^[a-f0-9]{64}$/.test(sha || '')) return send(400, { error: 'invalid snapshot id' });
         const snap = store.getSnapshot(sha);
         if (!snap) return send(404, { error: 'no such snapshot' });
-        return send(200, snap.body, snap.content_type || 'text/plain');
+        res.writeHead(200, {
+          'content-type': 'text/plain; charset=utf-8',
+          'content-disposition': `attachment; filename="snapshot-${sha}.txt"`,
+          'x-content-type-options': 'nosniff',
+          'cache-control': 'no-store',
+        });
+        return res.end(snap.body);
       }
       if (url.pathname === '/v1/poll' && req.method === 'POST') {
         const id = url.searchParams.get('source');
@@ -133,7 +229,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         const receipts = [];
         for (const s of targets) {
           const r = await runSource(s, store, { now: Date.now() });
-          store.recordJobResult(s.id, { startedAt: r.started_at, finishedAt: r.finished_at, outcome: r.outcome, cadenceMs: s.cadenceMs, now: Date.now() });
+          store.recordJobResult(s.id, { startedAt: r.started_at, finishedAt: r.finished_at, outcome: r.outcome, httpStatus: r.http_status, cadenceMs: s.cadenceMs, now: Date.now() });
           receipts.push(r);
         }
         return send(200, { receipts });
@@ -183,6 +279,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         if (!menuRows.length) {
           return send(404, { error: 'No dining menu items available to evaluate for this date.' });
         }
+        if (!await claimFoodAiRun(store, now)) return send(429, { error: 'Daily dining AI limit reached; try again tomorrow.' });
 
         try {
           const recommendation = await rankDailyMenu({
@@ -192,10 +289,11 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
             model,
             force,
             now,
+            beforeAiCall: aiBudgetGuard(store),
           });
           return send(200, recommendation);
         } catch (err) {
-          return send(502, { error: err.message });
+          return send(err.status || 502, { error: err.message });
         }
       }
 
@@ -224,6 +322,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
             model,
             force,
             now,
+            beforeAiCall: aiBudgetGuard(store),
           });
           const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
           return send(200, { draft, preview, model });
@@ -446,7 +545,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
       }
       return send(404, {
         error: 'not found',
-        routes: ['/healthz', '/v1/dashboard', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
+        routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
         web: serveStatic ? 'GET / serves apps/web/dist when it has been built' : 'web client disabled',
       });
     } catch (e) {

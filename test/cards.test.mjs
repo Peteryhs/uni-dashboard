@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { dueSoonCard, foodCard, alertCard, nextCommitmentCard, courseOf, significant } from '../apps/relay/src/cards.mjs';
 import { config } from '../apps/relay/src/config.mjs';
+import statusSource from '../sources/status/source.mjs';
+import { runSource } from '../apps/relay/src/runner.mjs';
 
 const now = Date.UTC(2026, 8, 21, 12); // 2026-09-21 08:00 in Toronto
 const MIN = 60_000;
@@ -70,12 +72,37 @@ test('the alert card surfaces a real incident and sorts by severity', () => {
   assert.equal(card.data.notices[0].severity, 'major');
 });
 
-test('an expired notice stops alerting', () => {
+test('an expired notice remains visible as the last known incident, marked dead', () => {
   const store = seed(new SqliteStore(':memory:'));
   store.upsertRows('notice', [
-    { source_id: 'uw-status', external_id: 'n1', observed_at: now, valid_until: now - 1000, severity: 'critical', scope: 'campus', title: 'Old outage', url: '' },
+    { source_id: 'uw-status', external_id: 'n1', observed_at: now - 10 * MIN, valid_until: now - 5 * MIN, severity: 'critical', scope: 'campus', title: 'Old outage', url: '' },
   ]);
-  assert.equal(alertCard(store, { now }).data.count, 0);
+  const card = alertCard(store, { now });
+  assert.equal(card.data.count, 1);
+  assert.equal(card.state, 'dead');
+});
+
+test('a successful all clear removes a previously active incident immediately', async () => {
+  const store = new SqliteStore(':memory:');
+  const source = {
+    ...statusSource,
+    async fetchRaw() {
+      const body = JSON.stringify({ status: { indicator: 'major', description: 'Partial outage' }, page: { updated_at: '2026-09-21T12:00:00Z' } });
+      return { status: 200, contentType: 'application/json', body, bytes: body.length };
+    },
+  };
+  await runSource(source, store, { now });
+  assert.equal(alertCard(store, { now }).data.count, 1);
+
+  source.fetchRaw = async () => {
+    const body = JSON.stringify({ status: { indicator: 'none' } });
+    return { status: 200, contentType: 'application/json', body, bytes: body.length };
+  };
+  const receipt = await runSource(source, store, { now: now + MIN });
+  assert.equal(receipt.outcome, 'empty');
+  assert.equal(receipt.tombstones, 1);
+  assert.equal(alertCard(store, { now: now + MIN }).data.count, 0);
+  store.close();
 });
 
 test('an all clear is only an all clear when it is recent', () => {

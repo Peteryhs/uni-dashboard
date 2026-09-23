@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { D1Store } from '../apps/relay/src/d1-store.mjs';
 import worker, { pollDue } from '../apps/relay/src/worker.mjs';
+import { syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
+import { syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
+import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
 
 /**
  * The D1 binding, mocked over node:sqlite, counting prepared statements so a test can assert the
@@ -128,6 +131,70 @@ test('the dashboard route answers with four cards and stays inside the query bud
   assert.equal(body.cards.length, 4);
   // measured 21: the schema probe, four card queries, the run receipts and the job table
   assert.ok(counter.prepares < 50, `a dashboard load used ${counter.prepares} queries, free tier allows 50`);
+});
+
+test('a poll preserves future due times instead of rescheduling healthy feeds every minute', async () => {
+  const { api } = createMockD1();
+  const store = new D1Store(api);
+  await store.init();
+  const sources = [fakeSource('slow', 1, 12 * 3600_000), fakeSource('fast', 1, 60_000)];
+  const slowDue = now + 12 * 3600_000;
+  await store.scheduleJob('slow', slowDue);
+  await store.scheduleJob('fast', now - 1);
+  const result = await pollDue(store, now, 2, sources);
+  assert.deepEqual(result.receipts.map((receipt) => receipt.source_id), ['fast']);
+  assert.equal((await store.jobs()).find((job) => job.source_id === 'slow').next_due_at, slowDue);
+});
+
+test('one large source poll plus new AI and weather work fits the 50-query Worker limit', async () => {
+  const { api, counter } = createMockD1();
+  const store = new D1Store(api);
+  await store.init();
+  await store.scheduleJob('large', now - 1);
+  await store.upsertRows('notice', [{ source_id: 'uw-status', external_id: 'incident-1', observed_at: now, valid_until: now + 60_000,
+    severity: 'major', title: 'Network outage', body: 'Campus wired network is affected.' }]);
+  await store.upsertRows('menu_item', [{ source_id: 'uw-food-daily-menu', external_id: 'dish-1', observed_at: now, valid_until: now + 43_200_000,
+    service_date: '2026-09-22', outlet: 'Cafe', dish: 'Noodles' }]);
+  const env = { AI: { run: async (_model, payload) => {
+    if (payload.messages[0].content.includes('Summarize university service incidents')) return { response: '{"summary":"The campus wired network is affected."}' };
+    return { response: '{"headline":"Try noodles.","top_outlet":"Cafe","ranked_outlets":[{"outlet":"Cafe","rank":1,"match_score":80,"verdict":"A good option.","highlights":[]}],"tip":""}' };
+  } } };
+  const before = counter.prepares;
+  await pollDue(store, now, 2, [fakeSource('large', 80)]);
+  await syncAlertSummary(store, { cfEnv: env, now });
+  await syncFoodRecommendation(store, { cfEnv: env, now });
+  await syncWeather(store, { now, fetchForecast: async () => new Map([[now, { temp_c: 18, precip_prob: 10 }]]) });
+  assert.ok(counter.prepares - before + 2 <= 50, `a light cron with AI/weather used ${counter.prepares - before} queries plus schema/settings probes`);
+});
+
+test('scheduled Worker completes a light tick and checks background food AI', async () => {
+  const { api } = createMockD1();
+  const store = new D1Store(api);
+  await store.init();
+  await store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: Date.now(), forecast: [{ at: Date.now(), temp_c: 18 }] }));
+  const env = { DB: api, AI: { run: async () => { throw new Error('no menu should call AI'); } } };
+  await assert.doesNotReject(worker.scheduled({ cron: '* * * * *' }, env, {}));
+});
+
+test('the calendar route serves validated days and rejects invalid ranges', async () => {
+  const { api, counter } = createMockD1();
+  const env = { DB: api };
+  const seeded = new D1Store(api);
+  await seeded.init();
+  await seeded.upsertRows('timeline_event', [{
+    source_id: 'uw-portal-ics', external_id: 'class-1', observed_at: now,
+    valid_until: now + 900_000, kind: 'class', title: 'ECE 150 LEC 001',
+    starts_at: Date.parse('2026-09-22T14:00:00Z'), ends_at: Date.parse('2026-09-22T15:00:00Z'),
+  }]);
+  const before = counter.prepares;
+  const response = await worker.fetch(new Request('https://dash.test/v1/calendar?start=2026-09-22&days=2'), env, {});
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.days.map((day) => day.events.length), [1, 0]);
+  assert.equal(data.days[0].events[0].category, 'class');
+  assert.ok(counter.prepares - before < 50);
+  const invalid = await worker.fetch(new Request('https://dash.test/v1/calendar?days=90'), env, {});
+  assert.equal(invalid.status, 400);
 });
 
 test('the health route is open and the shell falls back when there are no assets', async () => {
@@ -314,4 +381,64 @@ test('the AI route fails loudly when there is no binding and no REST credentials
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /credentials not configured/i);
+});
+
+test('raw HTML snapshots download as text rather than execute on the dashboard origin', async () => {
+  const { api } = createMockD1();
+  const store = new D1Store(api);
+  await store.init();
+  const sha = await store.saveSnapshot({ sourceId: 's', fetchedAt: now, contentType: 'text/html', body: '<script>alert(1)</script>' });
+  const response = await worker.fetch(new Request(`https://dash.test/v1/snapshot/${sha}`), { DB: api }, {});
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /^text\/plain/);
+  assert.match(response.headers.get('content-disposition'), /^attachment/);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+});
+
+test('Worker previews and saves a syllabus, serves guidance within query budget, and persists done and undo', async (t) => {
+  t.after(clearEnvSettings);
+  const { api, counter } = createMockD1();
+  const env = { DB: api };
+  const store = new D1Store(api);
+  await store.init();
+  const due = Date.now() + 4 * 3600_000;
+  await store.upsertRows('timeline_event', [{ source_id: 'uw-learn-ics', external_id: 'quiz-two',
+    observed_at: Date.now(), valid_until: Date.now() + 900_000, kind: 'deadline',
+    title: 'ECE 150 - Quiz 2 - Due', location: 'ECE 150 - Fall 2026', starts_at: due, ends_at: due }]);
+  const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(due);
+  const preview = await worker.fetch(new Request('https://dash.test/v1/courses/ECE%20150/syllabus/preview', {
+    method: 'POST', body: JSON.stringify({ text: `${localDate} | Topic: Recursion`, use_ai: false }) }), env, {});
+  assert.equal(preview.status, 200);
+  const parsed = await preview.json();
+  assert.equal(parsed.syllabus.entries.length, 1);
+  const saved = await worker.fetch(new Request('https://dash.test/v1/courses/ECE%20150/syllabus', {
+    method: 'PUT', body: JSON.stringify(parsed.syllabus) }), env, {});
+  assert.equal(saved.status, 200);
+  const before = counter.prepares;
+  const response = await worker.fetch(new Request('https://dash.test/v1/recommendations'), env, {});
+  assert.equal(response.status, 200);
+  assert.ok(counter.prepares - before < 50, `guidance used ${counter.prepares - before} D1 queries`);
+  const feed = await response.json();
+  assert.equal(feed.schema_version, 1);
+  const task = feed.tasks.small.find((item) => item.title.includes('Quiz 2'));
+  assert.ok(task);
+  assert.equal(task.course, 'ECE 150');
+  const actionUrl = 'https://dash.test/v1/recommendations/actions';
+  const done = await worker.fetch(new Request(actionUrl, { method: 'POST', body: JSON.stringify({ id: task.id, action: 'done' }) }), env, {});
+  assert.equal(done.status, 200);
+  assert.equal((await (await worker.fetch(new Request('https://dash.test/v1/recommendations'), env, {})).json()).tasks.small.some((item) => item.id === task.id), false);
+  const undo = await worker.fetch(new Request(actionUrl, { method: 'POST', body: JSON.stringify({ id: task.id, action: 'undo' }) }), env, {});
+  assert.equal(undo.status, 200);
+  assert.equal((await (await worker.fetch(new Request('https://dash.test/v1/recommendations'), env, {})).json()).tasks.small.some((item) => item.id === task.id), true);
+});
+
+test('syllabus import bounds request size before parsing or calling AI', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  let aiCalls = 0;
+  const env = { DB: api, AI: { run: async () => { aiCalls++; throw new Error('should not run'); } } };
+  const huge = await worker.fetch(new Request('https://dash.test/v1/courses/ECE%20150/syllabus/preview', {
+    method: 'POST', body: JSON.stringify({ text: 'x'.repeat(300_001), use_ai: true }) }), env, {});
+  assert.equal(huge.status, 413);
+  assert.equal(aiCalls, 0);
 });

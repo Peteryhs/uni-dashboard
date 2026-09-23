@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { unfold, parseDateValue, zonedToEpoch, parseIcs, expandRecurrence } from '../sources/ics/parse.mjs';
 import { portalIcs, learnIcs } from '../sources/ics/source.mjs';
 import { validateRows } from '#contract/canonical.mjs';
+import { SqliteStore } from '../apps/relay/src/store.mjs';
+import { runSource } from '../apps/relay/src/runner.mjs';
 
 const portal = readFileSync('fixtures/portal-sample.ics', 'utf8');
 const learn = readFileSync('fixtures/learn-sample.ics', 'utf8');
@@ -81,6 +83,82 @@ test('unsupported recurrence fails loudly instead of silently dropping classes',
   );
 });
 
+test('COUNT applies to the whole series, including occurrences before the window', () => {
+  const start = zonedToEpoch(2026, 9, 7, 14, 0, 0, 'America/Toronto');
+  const occurrences = expandRecurrence(
+    { uid: 'limited', start, end: start + 3600_000, rrule: 'FREQ=WEEKLY;COUNT=2' },
+    { windowStart: Date.UTC(2026, 8, 21), windowEnd: Date.UTC(2026, 9, 1) },
+  );
+  assert.deepEqual(occurrences, []);
+});
+
+test('calendar exclusions, moved instances and cancellations produce the actual schedule', () => {
+  const body = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:ece150-weekly',
+    'SUMMARY:ECE 150 lecture',
+    'LOCATION:E7 2317',
+    'DTSTART;TZID=America/Toronto:20260921T140000',
+    'DTEND;TZID=America/Toronto:20260921T150000',
+    'RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4',
+    'EXDATE;TZID=America/Toronto:20260928T140000',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:ece150-weekly',
+    'RECURRENCE-ID;TZID=America/Toronto:20261005T140000',
+    'SUMMARY:ECE 150 lecture (moved)',
+    'LOCATION:E7 3416',
+    'DTSTART;TZID=America/Toronto:20261005T160000',
+    'DTEND;TZID=America/Toronto:20261005T170000',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:ece150-weekly',
+    'RECURRENCE-ID;TZID=America/Toronto:20261012T140000',
+    'STATUS:CANCELLED',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const rows = portalIcs.parse({ body }, { now: Date.UTC(2026, 8, 21, 12) }).rows;
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.title), ['ECE 150 lecture', 'ECE 150 lecture (moved)']);
+  assert.equal(rows[1].location, 'E7 3416');
+  assert.equal(rows[1].starts_at, zonedToEpoch(2026, 10, 5, 16, 0, 0, 'America/Toronto'));
+  assert.equal(rows[1].external_id, `ece150-weekly#${new Date(zonedToEpoch(2026, 10, 5, 14, 0, 0, 'America/Toronto')).toISOString()}`);
+  validateRows('timeline_event', rows);
+});
+
+test('unsupported calendar recurrence fails the source parse instead of saving an incomplete schedule', () => {
+  const body = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:monthly\nSUMMARY:Meeting\nDTSTART:20260921T140000Z\nDTEND:20260921T150000Z\nRRULE:FREQ=MONTHLY;BYDAY=1MO\nEND:VEVENT\nEND:VCALENDAR';
+  assert.throws(() => portalIcs.parse({ body }, { now: Date.UTC(2026, 8, 21) }), /unsupported RRULE/);
+});
+
+test('an explicit cancellation removes a saved event while an empty feed preserves it', async () => {
+  const now = Date.UTC(2026, 8, 21, 12);
+  const store = new SqliteStore(':memory:');
+  store.upsertRows('timeline_event', [{
+    source_id: portalIcs.id, external_id: 'cancelled#2026-09-22T14:00:00.000Z',
+    observed_at: now, valid_until: now + 86400_000, kind: 'class',
+    title: 'Cancelled lecture', starts_at: now + 86400_000, ends_at: now + 90000_000,
+  }]);
+  const emptyBody = 'BEGIN:VCALENDAR\nEND:VCALENDAR';
+  const cancelledBody = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:cancelled\nSTATUS:CANCELLED\nDTSTART:20260922T140000Z\nDTEND:20260922T150000Z\nEND:VEVENT\nEND:VCALENDAR';
+  const source = {
+    ...portalIcs,
+    async fetchRaw() {
+      return { status: 200, contentType: 'text/calendar', body: emptyBody, bytes: emptyBody.length };
+    },
+  };
+  const emptyReceipt = await runSource(source, store, { now });
+  assert.equal(emptyReceipt.tombstones, 0);
+  assert.equal(store.rows('timeline_event').length, 1);
+  source.fetchRaw = async () => ({ status: 200, contentType: 'text/calendar', body: cancelledBody, bytes: cancelledBody.length });
+  const cancelledReceipt = await runSource(source, store, { now });
+  assert.equal(cancelledReceipt.tombstones, 1);
+  assert.equal(store.rows('timeline_event').length, 0);
+  store.close();
+});
+
 test('an expired token that returns the login page is caught before parsing', () => {
   const verdict = portalIcs.plausible({ status: 200, contentType: 'text/html; charset=UTF-8', body: login, bytes: login.length });
   assert.equal(verdict.ok, false);
@@ -98,6 +176,10 @@ test('classification separates classes, deadlines and exams', () => {
   const dl = learnIcs.classify({ summary: 'ECE 150 - Assignment 3 due', description: '' });
   assert.equal(dl, 'deadline');
   assert.equal(learnIcs.classify({ summary: 'ECE 105 Midterm Exam (in class)', description: '' }), 'exam');
+  assert.equal(learnIcs.classify({ summary: '8 Stream CIVE, SYDE - Mandatory Résumé Review Event', description: 'You are required to attend the session for your stream.' }), 'event');
+  assert.equal(learnIcs.classify({ summary: 'Not Fees Arranged (NFA) holds applied', description: 'A date on the university calendar.' }), 'event');
+  assert.equal(learnIcs.classify({ summary: 'Résumé Quiz - 15 minutes - Due', description: 'Review the content in Part 2.' }), 'deadline');
+  assert.equal(portalIcs.classify({ summary: 'Not Fees Arranged (NFA) holds applied', description: 'Learn more about due dates.' }), 'class', 'unrelated description links do not create a due classification');
   assert.equal(portalIcs.classify({ summary: 'ECE 150 LEC 001', description: '' }), 'class');
 });
 

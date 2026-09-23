@@ -11,7 +11,7 @@
  *
  * The pure parts (shapes, DDL, row converters, batch size) come from `schema.mjs`.
  */
-import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, CHUNK } from './schema.mjs';
+import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, INDEXES, CHUNK } from './schema.mjs';
 
 /** Web Crypto sha256, hex encoded. Same value the Node adapter produces for the same bytes. */
 async function sha256Hex(text) {
@@ -50,12 +50,13 @@ export class D1Store {
   async init() {
     if (!this._initPromise) {
       this._initPromise = (async () => {
-        const placeholders = TABLES.map(() => '?').join(',');
+        const expected = [...TABLES, ...INDEXES];
+        const placeholders = expected.map(() => '?').join(',');
         const row = await this.db
-          .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN (${placeholders})`)
-          .bind(...TABLES)
+          .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN (${placeholders})`)
+          .bind(...expected)
           .first();
-        if (Number(row?.n ?? 0) === TABLES.length) return;
+        if (Number(row?.n ?? 0) === expected.length) return;
         // Prepared one statement at a time and batched: D1's exec() runs a statement per line, so a
         // CREATE TABLE wrapped across lines arrives truncated.
         await this.db.batch(ddlStatements().map((sql) => this.db.prepare(sql)));
@@ -104,18 +105,31 @@ export class D1Store {
     const stale = existing.filter((e) => !seen.has(e));
     if (!stale.length) return 0;
 
-    const stmts = stale.map((e) =>
-      this.db.prepare(`UPDATE ${shape} SET deleted=1 WHERE source_id=? AND external_id=?`).bind(sourceId, e),
-    );
+    // One statement per vanished event can exhaust the Free plan's query budget when a
+    // calendar series is cancelled. Keep each statement under D1's 100 bound parameters.
+    const stmts = [];
+    for (let i = 0; i < stale.length; i += 90) {
+      const ids = stale.slice(i, i + 90);
+      const placeholders = ids.map(() => '?').join(',');
+      stmts.push(
+        this.db.prepare(`UPDATE ${shape} SET deleted=1 WHERE source_id=? AND external_id IN (${placeholders})`)
+          .bind(sourceId, ...ids),
+      );
+    }
     for (let i = 0; i < stmts.length; i += CHUNK) {
       await this.db.batch(stmts.slice(i, i + CHUNK));
     }
     return stale.length;
   }
 
-  async rows(shape, { where = '', params = [], limit = 1000 } = {}) {
-    if (!SHAPES[shape]) throw new Error(`unknown shape ${shape}`);
-    const sql = `SELECT * FROM ${shape} WHERE deleted=0 ${where ? `AND ${where}` : ''} LIMIT ${Number(limit)}`;
+  async rows(shape, { where = '', params = [], limit = 1000, orderBy = null } = {}) {
+    const spec = SHAPES[shape];
+    if (!spec) throw new Error(`unknown shape ${shape}`);
+    if (orderBy && !['source_id', 'external_id', 'observed_at', 'valid_until', ...spec.cols].includes(orderBy)) {
+      throw new Error(`invalid order column ${orderBy} for ${shape}`);
+    }
+    const ordering = orderBy ? ` ORDER BY ${orderBy} ASC, external_id ASC` : '';
+    const sql = `SELECT * FROM ${shape} WHERE deleted=0 ${where ? `AND ${where}` : ''}${ordering} LIMIT ${Number(limit)}`;
     const res = await this.db.prepare(sql).bind(...params).all();
     return (res.results || []).map((r) => paramsToRow(shape, r));
   }
@@ -150,8 +164,8 @@ export class D1Store {
   async lastRunPerSource() {
     const res = await this.db
       .prepare(
-        `SELECT r.* FROM source_run r
-         JOIN (SELECT source_id, MAX(id) AS id FROM source_run GROUP BY source_id) m ON m.id = r.id`,
+        `SELECT r.* FROM job j JOIN source_run r ON r.id =
+          (SELECT id FROM source_run WHERE source_id=j.source_id ORDER BY id DESC LIMIT 1)`,
       )
       .all();
     return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
@@ -195,6 +209,12 @@ export class D1Store {
     return res?.meta?.changes ?? 0;
   }
 
+  async pruneSnapshots(beforeMs) {
+    const res = await this.db.prepare(`DELETE FROM raw_snapshot WHERE fetched_at < ?
+      AND NOT EXISTS (SELECT 1 FROM source_run WHERE body_sha256 = raw_snapshot.sha256)`).bind(beforeMs).run();
+    return res?.meta?.changes ?? 0;
+  }
+
   async getSnapshot(sha) {
     const r = await this.db.prepare('SELECT * FROM raw_snapshot WHERE sha256=?').bind(sha).first();
     if (!r) return null;
@@ -221,13 +241,15 @@ export class D1Store {
       .run();
   }
 
-  async recordJobResult(sourceId, { startedAt, finishedAt, outcome, cadenceMs, now }) {
+  async recordJobResult(sourceId, { startedAt, finishedAt, outcome, httpStatus = null, cadenceMs, now }) {
     const prev = await this.db.prepare('SELECT * FROM job WHERE source_id=?').bind(sourceId).first();
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
     const circuit = failures >= 5 ? 'open' : 'closed';
-    const backoff = Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
+    const backoff = httpStatus === 429
+      ? Math.max(cadenceMs, 30 * 60_000)
+      : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)
       : now + cadenceMs;
@@ -262,6 +284,18 @@ export class D1Store {
   async getSetting(name) {
     const row = await this.db.prepare('SELECT value FROM setting WHERE name=?').bind(name).first();
     return row ? row.value : null;
+  }
+
+  async reserveAiBudget(day, amount, limit) {
+    return this.db.prepare(`INSERT INTO ai_usage (day, reserved_neurons, calls)
+      SELECT ?, ?, 1 WHERE ? <= ?
+      ON CONFLICT(day) DO UPDATE SET reserved_neurons=ai_usage.reserved_neurons+excluded.reserved_neurons,
+        calls=ai_usage.calls+1 WHERE ai_usage.reserved_neurons+excluded.reserved_neurons <= ?
+      RETURNING reserved_neurons, calls`).bind(day, amount, amount, limit, limit).first();
+  }
+
+  async aiUsage(day) {
+    return this.db.prepare('SELECT reserved_neurons, calls FROM ai_usage WHERE day=?').bind(day).first();
   }
 
   async setSetting(name, value, now = Date.now()) {

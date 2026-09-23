@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#10131a" />
+    <title>Recommendation preview · Uni Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #10131a;
+        color: #e8edf6;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        --muted: #9ba7b9;
+        --line: #2b3442;
+        --panel: #171c25;
+        --panel-soft: #1d2430;
+        --accent: #83d7c2;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; }
+      a { color: #a9e9d8; }
+      a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 56px; }
+      header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 24px; }
+      h1 { font-size: clamp(1.65rem, 5vw, 2.35rem); line-height: 1.12; margin: 0; letter-spacing: -0.04em; }
+      h2 { font-size: 1.1rem; margin: 0; letter-spacing: -0.015em; }
+      h3 { font-size: 1rem; margin: 0; line-height: 1.35; }
+      p { line-height: 1.55; }
+      .eyebrow { color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 8px; }
+      .intro { color: var(--muted); margin: 8px 0 0; max-width: 680px; }
+      .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+      button, .button-link { border: 1px solid #3c4959; border-radius: 9px; background: #222b37; color: #f0f4fa; padding: 10px 14px; font: inherit; font-size: .88rem; font-weight: 650; text-decoration: none; cursor: pointer; }
+      button:hover, .button-link:hover { background: #2a3543; }
+      button:disabled { cursor: wait; opacity: .7; }
+      .status { color: var(--muted); font-size: .78rem; min-width: 100px; text-align: right; }
+      .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 18px; }
+      .headline { margin-bottom: 18px; border-color: #466d67; background: linear-gradient(120deg, #1a292a, #171c25 68%); }
+      .headline h2 { font-size: 1.05rem; color: #b4f0df; }
+      .headline p { font-size: 1.22rem; font-weight: 650; margin: 8px 0 0; line-height: 1.38; }
+      .meta-row { color: var(--muted); font-size: .8rem; margin-top: 12px; display: flex; gap: 8px 18px; flex-wrap: wrap; }
+      .warning-panel { border-color: #78613b; background: #29241a; margin-bottom: 18px; }
+      .warning-panel h2 { color: #ffd591; }
+      .warning-list { margin: 10px 0 0; padding-left: 20px; color: #f0d6a7; }
+      .warning-list li + li { margin-top: 6px; }
+      .time-controls { margin-bottom: 18px; }
+      .time-controls-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+      .time-controls p { color: var(--muted); margin: 7px 0 0; font-size: .86rem; }
+      .time-controls-grid { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(240px, 1.5fr); gap: 16px 22px; align-items: end; margin-top: 16px; }
+      .field-label { display: block; margin-bottom: 7px; color: #d6e0ed; font-size: .8rem; font-weight: 650; }
+      input[type="date"] { width: 100%; min-height: 42px; border: 1px solid #3c4959; border-radius: 9px; padding: 8px 10px; background: #111720; color: #f0f4fa; font: inherit; }
+      input[type="range"] { display: block; width: 100%; accent-color: var(--accent); cursor: pointer; }
+      .time-value { color: #b4f0df !important; font-size: 1.05rem !important; font-weight: 700; margin: 0 !important; }
+      .range-ends { display: flex; justify-content: space-between; color: var(--muted); font-size: .72rem; margin-top: 5px; }
+      .simulation-note { margin: 16px 0 0; padding: 11px 13px; border: 1px solid #806941; border-radius: 10px; background: #302718; color: #ffe0a1; font-size: .82rem; line-height: 1.5; }
+      .mode-pill { display: inline-flex; margin-top: 10px; border: 1px solid #3b655d; border-radius: 999px; padding: 4px 9px; color: #afe5d8; font-size: .73rem; font-weight: 700; }
+      .section { margin-top: 28px; }
+      .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      .count { color: var(--muted); font-size: .8rem; }
+      .items { display: grid; gap: 12px; }
+      .item { padding: 16px; }
+      .item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .item-title-wrap { min-width: 0; }
+      .title-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+      .kind, .state, .priority { display: inline-flex; align-items: center; border: 1px solid #465365; border-radius: 999px; padding: 3px 8px; color: #c5cedc; background: var(--panel-soft); font-size: .7rem; font-weight: 650; letter-spacing: .025em; white-space: nowrap; }
+      .kind { text-transform: capitalize; color: #afe5d8; border-color: #3b655d; }
+      .priority { color: #ffe0a1; border-color: #685632; }
+      .state-live { color: #a3e9c5; border-color: #37624a; }
+      .state-ageing, .state-stale { color: #ffd591; border-color: #78613b; }
+      .state-dead { color: #ffb5b5; border-color: #764747; }
+      .item-body { margin: 10px 0 0; color: #d0d8e4; white-space: pre-wrap; }
+      .item-meta { display: flex; flex-wrap: wrap; gap: 7px 16px; margin-top: 12px; color: var(--muted); font-size: .78rem; }
+      .item-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 13px; font-size: .82rem; }
+      .reason { margin: 12px 0 0; color: #c0cddd; font-size: .87rem; }
+      details { border-top: 1px solid var(--line); margin-top: 13px; padding-top: 10px; }
+      summary { color: #aec0d2; cursor: pointer; font-size: .8rem; }
+      .evidence { margin: 9px 0 0; color: var(--muted); font-size: .82rem; white-space: pre-wrap; }
+      .empty, .message { color: var(--muted); padding: 20px; border: 1px dashed #3c4859; border-radius: 12px; text-align: center; }
+      .message.error { color: #ffc1b7; border-color: #8c5148; background: #2b1f20; }
+      .task-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .task-column h3 { margin-bottom: 12px; color: #d8e3f0; }
+      .task-column .items { gap: 10px; }
+      .task-column .item { padding: 13px; }
+      .task-column .item-body { font-size: .85rem; }
+      .task-column .item-meta { font-size: .75rem; }
+      footer { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); font-size: .77rem; line-height: 1.5; }
+      @media (max-width: 680px) {
+        main { width: min(100% - 22px, 1120px); padding-top: 22px; }
+        header { flex-direction: column; }
+        .header-actions { width: 100%; justify-content: flex-start; }
+        .status { margin-left: auto; text-align: left; }
+        .task-grid { grid-template-columns: 1fr; }
+        .panel { padding: 14px; }
+        .item-top { flex-direction: column; }
+        .time-controls-grid { grid-template-columns: 1fr; gap: 13px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Temporary · read only</p>
+          <h1>Recommendation engine</h1>
+          <p class="intro">A live view of what the engine ranks and why. Check the source JSON beside the cards while you look for missing or surprising recommendations.</p>
+        </div>
+        <div class="header-actions">
+          <a class="button-link" href="/v1/recommendations" target="_blank" rel="noopener noreferrer">View raw JSON</a>
+          <button id="refresh" type="button">Refresh</button>
+          <span id="status" class="status" role="status" aria-live="polite">Loading…</span>
+        </div>
+      </header>
+
+      <section class="panel time-controls" aria-labelledby="time-controls-heading">
+        <div class="time-controls-head">
+          <div>
+            <h2 id="time-controls-heading">Explore recommendations at another time</h2>
+            <p>Choose a Toronto date and move the slider in 15-minute steps.</p>
+            <span id="mode-pill" class="mode-pill">Live · now</span>
+          </div>
+          <button id="now" type="button">Now</button>
+        </div>
+        <div class="time-controls-grid">
+          <div>
+            <label class="field-label" for="selected-date">Date · Toronto</label>
+            <input id="selected-date" type="date" />
+          </div>
+          <div>
+            <label class="field-label" for="selected-time">Time · Toronto</label>
+            <p id="selected-time-label" class="time-value" aria-live="polite"></p>
+            <input id="selected-time" type="range" min="0" max="1425" step="15" value="0" aria-label="Time of day in Toronto, in 15-minute steps" />
+            <div class="range-ends" aria-hidden="true"><span>12:00 AM</span><span>11:45 PM</span></div>
+          </div>
+        </div>
+        <p id="simulation-note" class="simulation-note" hidden>Preview uses data currently stored in the dashboard. It changes how recommendations are ranked for this time, but does not forecast future menu, weather, calendar, or other data updates.</p>
+      </section>
+
+      <div id="load-message" class="message" role="status">Loading recommendations…</div>
+      <section id="content" hidden aria-live="polite">
+        <div id="headline" class="panel headline"></div>
+        <div id="warnings"></div>
+        <section class="section" aria-labelledby="ranked-heading">
+          <div class="section-heading"><h2 id="ranked-heading">Ranked recommendations</h2><span id="ranked-count" class="count"></span></div>
+          <div id="ranked-items" class="items"></div>
+        </section>
+        <section class="section" aria-labelledby="tasks-heading">
+          <div class="section-heading"><h2 id="tasks-heading">Tasks from syllabus and calendar</h2><span class="count">Shown separately from the main ranking</span></div>
+          <div class="task-grid">
+            <section class="panel task-column" aria-labelledby="large-heading"><h3 id="large-heading">Larger tasks</h3><div id="large-items" class="items"></div></section>
+            <section class="panel task-column" aria-labelledby="small-heading"><h3 id="small-heading">Smaller or unknown size</h3><div id="small-items" class="items"></div></section>
+          </div>
+        </section>
+        <footer id="footer"></footer>
+      </section>
+    </main>
+    <noscript><p class="message">This preview needs JavaScript enabled to load recommendation data.</p></noscript>
+
+    <script>
+      const liveEndpoint = '/v1/recommendations';
+      const previewEndpoint = '/v1/recommendations/preview';
+      const refreshInterval = 60_000;
+      const refreshButton = document.getElementById('refresh');
+      const nowButton = document.getElementById('now');
+      const dateInput = document.getElementById('selected-date');
+      const timeInput = document.getElementById('selected-time');
+      const selectedTimeLabel = document.getElementById('selected-time-label');
+      const modePill = document.getElementById('mode-pill');
+      const simulationNote = document.getElementById('simulation-note');
+      const statusNode = document.getElementById('status');
+      const loadMessage = document.getElementById('load-message');
+      const content = document.getElementById('content');
+      let lastFetchedAt = 0;
+      let timezone = 'UTC';
+      const torontoTimezone = 'America/Toronto';
+      let mode = 'live';
+      let requestSequence = 0;
+      let activeController = null;
+      let previewTimer = 0;
+
+      function torontoParts(value = new Date()) {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: torontoTimezone,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+        }).formatToParts(value);
+        return Object.fromEntries(parts.filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+      }
+
+      function torontoDate(value = new Date()) {
+        const parts = torontoParts(value);
+        return `${parts.year}-${parts.month}-${parts.day}`;
+      }
+
+      function formatTorontoTime(minutes) {
+        const hour = Math.floor(minutes / 60);
+        const minute = minutes % 60;
+        const suffix = hour < 12 ? 'AM' : 'PM';
+        const displayHour = hour % 12 || 12;
+        return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+      }
+
+      // Convert a Toronto wall-clock choice into an epoch. Searching in 15-minute
+      // steps naturally accounts for EST/EDT and detects nonexistent spring times.
+      function torontoWallTimeToEpoch(dateValue, minutes) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+        if (!match) return null;
+        const wanted = { year: match[1], month: match[2], day: match[3], hour: String(Math.floor(minutes / 60)).padStart(2, '0'), minute: String(minutes % 60).padStart(2, '0') };
+        const naive = Date.UTC(Number(wanted.year), Number(wanted.month) - 1, Number(wanted.day), Number(wanted.hour), Number(wanted.minute));
+        const verified = new Date(naive);
+        if (verified.getUTCFullYear() !== Number(wanted.year) || verified.getUTCMonth() + 1 !== Number(wanted.month) || verified.getUTCDate() !== Number(wanted.day)) return null;
+        for (let offset = -16 * 60; offset <= 16 * 60; offset += 15) {
+          const candidate = naive + offset * 60_000;
+          const parts = torontoParts(new Date(candidate));
+          if (parts.year === wanted.year && parts.month === wanted.month && parts.day === wanted.day && parts.hour === wanted.hour && parts.minute === wanted.minute) return candidate;
+        }
+        return null;
+      }
+
+      function updateDateBounds() {
+        const now = Date.now();
+        const earliest = torontoDate(new Date(now - 7 * 24 * 60 * 60 * 1000));
+        const latest = torontoDate(new Date(now + 14 * 24 * 60 * 60 * 1000));
+        dateInput.min = earliest;
+        dateInput.max = latest;
+      }
+
+      function setControlsToNow() {
+        const parts = torontoParts();
+        dateInput.value = `${parts.year}-${parts.month}-${parts.day}`;
+        const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
+        timeInput.value = String(Math.floor(currentMinutes / 15) * 15);
+        updateSelectedTime();
+      }
+
+      function updateSelectedTime() {
+        const minutes = Number(timeInput.value);
+        const date = dateInput.value ? new Date(`${dateInput.value}T12:00:00Z`) : null;
+        const dateLabel = date && !Number.isNaN(date.getTime())
+          ? new Intl.DateTimeFormat('en-CA', { timeZone: torontoTimezone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(date)
+          : 'Choose a date';
+        selectedTimeLabel.textContent = `${dateLabel} · ${formatTorontoTime(minutes)} Toronto`;
+      }
+
+      function cancelPendingLoad() {
+        window.clearTimeout(previewTimer);
+        requestSequence += 1;
+        if (activeController) activeController.abort();
+        activeController = null;
+        refreshButton.disabled = false;
+      }
+
+      function selectPreviewTime() {
+        mode = 'preview';
+        modePill.textContent = 'Time preview';
+        modePill.style.color = '#ffe0a1';
+        modePill.style.borderColor = '#685632';
+        simulationNote.hidden = false;
+        updateSelectedTime();
+        updateDateBounds();
+        cancelPendingLoad();
+        const at = torontoWallTimeToEpoch(dateInput.value, Number(timeInput.value));
+        const now = Date.now();
+        if (at === null) {
+          statusNode.textContent = 'Time does not exist';
+          loadMessage.hidden = false;
+          loadMessage.className = 'message error';
+          loadMessage.textContent = 'That Toronto time does not exist because the clocks move forward for daylight saving time. Choose another time.';
+          return;
+        }
+        // The picker is bounded by Toronto dates; allow the full first and last day.
+        if (at < now - 8 * 24 * 60 * 60 * 1000 || at > now + 15 * 24 * 60 * 60 * 1000) {
+          statusNode.textContent = 'Outside preview range';
+          loadMessage.hidden = false;
+          loadMessage.className = 'message error';
+          loadMessage.textContent = 'Choose a time from 7 days ago through 14 days from now.';
+          return;
+        }
+        loadMessage.hidden = true;
+        statusNode.textContent = 'Waiting for selection…';
+        previewTimer = window.setTimeout(() => loadRecommendations({ at }), 450);
+      }
+
+      function node(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined && text !== null) element.textContent = String(text);
+        return element;
+      }
+
+      function valueOrDash(value) {
+        return value === null || value === undefined || value === '' ? '—' : String(value);
+      }
+
+      function formatDate(value, options = {}) {
+        if (value === null || value === undefined || value === '') return null;
+        const date = typeof value === 'number' ? new Date(value) : new Date(`${value}T12:00:00`);
+        if (Number.isNaN(date.getTime())) return String(value);
+        try { return new Intl.DateTimeFormat(undefined, { timeZone: timezone, ...options }).format(date); }
+        catch { return new Intl.DateTimeFormat(undefined, options).format(date); }
+      }
+
+      function itemTime(item) {
+        if (item.due_at !== null && item.due_at !== undefined) return `${valueOrDash(item.time_label || 'Due')}: ${formatDate(item.due_at, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+        if (item.starts_at !== null && item.starts_at !== undefined) {
+          const start = formatDate(item.starts_at, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          const end = item.ends_at === null || item.ends_at === undefined ? null : formatDate(item.ends_at, { hour: 'numeric', minute: '2-digit' });
+          return `${valueOrDash(item.time_label || 'Starts')}: ${start}${end ? ` – ${end}` : ''}`;
+        }
+        if (item.scheduled_date) return `${valueOrDash(item.time_label || 'Scheduled')}: ${formatDate(item.scheduled_date, { weekday: 'short', month: 'short', day: 'numeric' })}`;
+        return null;
+      }
+
+      function safeActionUrl(value) {
+        try {
+          const url = new URL(value, window.location.origin);
+          if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) return null;
+          return url.href;
+        } catch { return null; }
+      }
+
+      function validatedItem(item) {
+        return item && typeof item === 'object' && typeof item.title === 'string' && typeof item.kind === 'string';
+      }
+
+      function renderItem(item) {
+        const card = node('article', 'panel item');
+        const top = node('div', 'item-top');
+        const titleWrap = node('div', 'item-title-wrap');
+        const titleLine = node('div', 'title-line');
+        titleLine.append(node('span', 'kind', item.kind.replaceAll('_', ' ')));
+        titleLine.append(node('h3', '', item.title));
+        titleWrap.append(titleLine);
+        top.append(titleWrap);
+
+        const right = node('div', 'title-line');
+        right.append(node('span', 'priority', `Priority ${valueOrDash(item.priority)}`));
+        const state = node('span', `state state-${['live', 'ageing', 'stale', 'dead'].includes(item.state) ? item.state : ''}`, `State: ${valueOrDash(item.state)}`);
+        right.append(state);
+        top.append(right);
+        card.append(top);
+
+        if (item.body) card.append(node('p', 'item-body', item.body));
+        const meta = node('div', 'item-meta');
+        const time = itemTime(item);
+        if (time) meta.append(node('span', '', time));
+        if (item.course) meta.append(node('span', '', `Course: ${item.course}`));
+        if (item.effort && item.effort !== 'unknown') meta.append(node('span', '', `Size: ${item.effort}`));
+        if (item.estimated_minutes) meta.append(node('span', '', `Estimated: ${item.estimated_minutes} min`));
+        if (item.available_minutes) meta.append(node('span', '', `Open window: ${item.available_minutes} min`));
+        if (item.source_label) meta.append(node('span', '', `Source: ${item.source_label}`));
+        card.append(meta);
+
+        if (item.reason || item.action) {
+          const actions = node('div', 'item-actions');
+          if (item.reason) actions.append(node('span', '', `Why: ${item.reason}`));
+          const href = item.action && safeActionUrl(item.action.url);
+          if (href) {
+            const link = node('a', '', valueOrDash(item.action.label || 'Open source'));
+            link.href = href;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            actions.append(link);
+          }
+          card.append(actions);
+        }
+
+        if (item.evidence) {
+          const details = node('details');
+          details.append(node('summary', '', 'Evidence and ranking inputs'));
+          details.append(node('p', 'evidence', item.evidence));
+          card.append(details);
+        }
+        return card;
+      }
+
+      function renderList(containerId, items, emptyText) {
+        const container = document.getElementById(containerId);
+        container.replaceChildren();
+        const safeItems = Array.isArray(items) ? items.filter(validatedItem) : [];
+        if (!safeItems.length) container.append(node('p', 'empty', emptyText));
+        else for (const item of safeItems) container.append(renderItem(item));
+        return safeItems.length;
+      }
+
+      function render(data, fetchedAt) {
+        timezone = typeof data.timezone === 'string' ? data.timezone : 'UTC';
+        const headline = document.getElementById('headline');
+        headline.replaceChildren(node('h2', '', 'Top recommendation'), node('p', '', valueOrDash(data.headline)));
+        const generated = formatDate(data.generated_at, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }) || 'Unknown';
+        headline.append(node('div', 'meta-row', `Generated: ${generated} (${timezone}) · Refreshed here: ${formatDate(fetchedAt, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`));
+
+        const warningHost = document.getElementById('warnings');
+        warningHost.replaceChildren();
+        if (Array.isArray(data.warnings) && data.warnings.length) {
+          const panel = node('section', 'panel warning-panel');
+          panel.append(node('h2', '', 'Data warnings'));
+          const list = node('ul', 'warning-list');
+          for (const warning of data.warnings) list.append(node('li', '', warning));
+          panel.append(list);
+          warningHost.append(panel);
+        }
+
+        const rankedCount = renderList('ranked-items', data.items, 'No ranked recommendations right now.');
+        document.getElementById('ranked-count').textContent = `${rankedCount} shown`;
+        const taskData = data.tasks && typeof data.tasks === 'object' ? data.tasks : {};
+        const largeCount = renderList('large-items', taskData.large, 'No larger tasks found.');
+        const smallCount = renderList('small-items', taskData.small, 'No smaller or unknown size tasks found.');
+        document.getElementById('footer').textContent = `${mode === 'live' ? 'Auto refresh checks at most once per minute while this page is visible.' : 'Time preview uses stored data and does not refresh automatically.'} Last successful fetch: ${formatDate(fetchedAt, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })}. Task lists: ${largeCount} larger · ${smallCount} smaller or unknown size.`;
+        content.hidden = false;
+        loadMessage.hidden = true;
+      }
+
+      async function loadRecommendations({ automatic = false, at = null } = {}) {
+        if (automatic && (mode !== 'live' || document.visibilityState !== 'visible' || Date.now() - lastFetchedAt < refreshInterval)) return;
+        if (automatic && activeController) return;
+        if (activeController) activeController.abort();
+        const sequence = ++requestSequence;
+        const controller = new AbortController();
+        activeController = controller;
+        const isPreview = at !== null;
+        refreshButton.disabled = true;
+        statusNode.textContent = isPreview ? 'Loading selected time…' : 'Refreshing…';
+        if (!content.hidden) loadMessage.hidden = true;
+        try {
+          const endpoint = isPreview ? `${previewEndpoint}?at=${encodeURIComponent(at)}` : liveEndpoint;
+          const response = await fetch(endpoint, { headers: { accept: 'application/json' }, cache: 'no-store', signal: controller.signal });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload && typeof payload.error === 'string' ? payload.error : `Request failed (${response.status})`);
+          if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) throw new Error('The endpoint returned an unexpected recommendation response.');
+          if (sequence !== requestSequence || controller.signal.aborted) return;
+          const fetchedAt = Date.now();
+          lastFetchedAt = fetchedAt;
+          render(payload, fetchedAt);
+          statusNode.textContent = isPreview ? 'Preview loaded' : 'Live';
+          loadMessage.className = 'message';
+          loadMessage.textContent = '';
+        } catch (error) {
+          if (controller.signal.aborted || sequence !== requestSequence) return;
+          statusNode.textContent = 'Could not refresh';
+          loadMessage.hidden = false;
+          loadMessage.className = 'message error';
+          loadMessage.textContent = `Could not load recommendations: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        } finally {
+          if (sequence === requestSequence) {
+            activeController = null;
+            refreshButton.disabled = false;
+          }
+        }
+      }
+
+      refreshButton.addEventListener('click', () => {
+        window.clearTimeout(previewTimer);
+        if (mode === 'live') loadRecommendations();
+        else {
+          const at = torontoWallTimeToEpoch(dateInput.value, Number(timeInput.value));
+          if (at !== null) loadRecommendations({ at });
+        }
+      });
+      dateInput.addEventListener('change', selectPreviewTime);
+      timeInput.addEventListener('input', selectPreviewTime);
+      nowButton.addEventListener('click', () => {
+        cancelPendingLoad();
+        mode = 'live';
+        modePill.textContent = 'Live · now';
+        modePill.style.color = '';
+        modePill.style.borderColor = '';
+        simulationNote.hidden = true;
+        setControlsToNow();
+        loadRecommendations();
+      });
+      window.setInterval(() => loadRecommendations({ automatic: true }), refreshInterval);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') loadRecommendations({ automatic: true });
+      });
+      updateDateBounds();
+      setControlsToNow();
+      loadRecommendations();
+    </script>
+  </body>
+</html>

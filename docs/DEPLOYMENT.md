@@ -1,6 +1,6 @@
 # Deployment: what runs where
 
-Measured against Cloudflare's own docs on 2026-09-20. Re-check before designing around
+Measured against Cloudflare's own docs on 2026-09-23. Re-check before designing around
 any number here, platform limits move.
 
 ## Short answer to "do we need a server"
@@ -38,7 +38,7 @@ The Worker port exists and was run locally against a real D1 and the live campus
 
 | File | Role |
 |---|---|
-| `wrangler.toml` | Worker name, `[assets]`, D1 binding `DB`, AI binding `AI`, cron `*/15 * * * *` |
+| `wrangler.toml` | Worker name, `[assets]`, D1 binding `DB`, AI binding `AI`, cron `* * * * *` |
 | `apps/relay/src/worker.mjs` | `fetch` + `scheduled` handlers; the same routes as the Node relay |
 | `apps/relay/src/d1-store.mjs` | D1 adapter, same storage contract as `SqliteStore` |
 | `apps/relay/src/schema.mjs` | table shapes, DDL, row converters, imported by both adapters |
@@ -78,27 +78,27 @@ piece that requires the `AI` binding to exist in the real account.
 
 ### The free tier, and what it constrains in code
 
-Checked against Cloudflare's own pricing pages on 2026-09-22. Nothing here can produce a charge: on
+Checked against Cloudflare's own pricing pages on 2026-09-23. Nothing here can produce a charge: on
 Workers Free the account has no payment method and over-limit usage fails instead of billing.
 
 | Resource | Free allowance | What this build uses |
 |---|---|---|
-| Worker requests | 100,000/day | a handful a day, one per dashboard load |
+| Worker requests | 100,000/day | 1,440 cron invocations/day plus dashboard and API requests |
 | Static asset requests | free and unlimited | the whole client, so the SPA does not count |
 | CPU per invocation | 10 ms | the food parse measured 0.47 ms; nothing else is heavy |
-| Cron triggers | 5 per account | 1, every 15 minutes |
-| D1 rows read | 5 million/day | about 10 per dashboard load |
-| D1 rows written | 100,000/day | about 11,000/day with both ICS feeds live |
-| D1 storage | 5 GB total | megabytes; snapshots dedupe on body hash |
-| D1 queries per invocation | **50** | 38 measured for the worst tick, see below |
-| Workers AI | 10,000 neurons/day | about 16 per dining recommendation, cached 12 hours |
+| Cron triggers | 5 per account | 1 trigger, every minute |
+| D1 rows read | 5 million/day | latest source runs use an index; no full receipt scan on dashboard loads |
+| D1 rows written | 100,000/day | roughly 15,000-20,000/day with the current minute status and 15-minute ICS cadences |
+| D1 storage | 5 GB total, 500 MB per database | snapshots dedupe and unreferenced bodies expire after 7 days |
+| D1 queries per invocation | **50** | two sources per tick, with AI work deferred to lighter ticks |
+| Workers AI | 10,000 neurons/day | changed-data cache; at most 12 dining ranking attempts and 8 alert summaries per UTC day |
 | Workers Builds | 3,000 minutes/month | about 2 minutes per push |
 
 The 50-query ceiling is the one that shaped the code, and three decisions exist only because of it:
 
 - **The cron polls two sources per invocation**, not all four. All four measured **54 queries**, over
   the ceiling; the two most expensive (both ICS feeds, ~80 rows each) measure **38**. The rest stay
-  due for the next tick, 15 minutes later, and `pollDue` returns their ids as `deferred` so the
+  due for the next tick, one minute later, and `pollDue` returns their ids as `deferred` so the
   deferral is visible instead of silent.
 - **The schema is created behind a probe.** A cron tick gets a fresh isolate, so running ten
   `CREATE TABLE` statements every time would spend a fifth of the budget before any work. One
@@ -106,9 +106,12 @@ The 50-query ceiling is the one that shaped the code, and three decisions exist 
 - **Rows are written in multi-row `VALUES` statements.** A statement per row cost 21 queries for one
   day of menus; eight rows per statement costs 3.
 
-Two more, from the rows-read side: the run receipt log is pruned to 7 days (unbounded growth turns
-the latest-run-per-source query into a full table scan on every dashboard load), and a body already
-in `raw_snapshot` is never gzipped again (compression is CPU, and the menu page is 290 KB).
+Two more, from the storage side: the run receipt log is pruned to 7 days and indexed for latest-run
+lookups, and unreferenced snapshots older than 7 days are deleted. A body already in `raw_snapshot`
+is never gzipped again (compression is CPU, and the menu page is 290 KB).
+
+An upstream HTTP 429 delays the next poll by at least 30 minutes. Raw HTML snapshots are downloaded
+as plain text so archived third-party markup cannot run on the dashboard origin.
 
 Measurements come from `test/worker.test.mjs`, which counts prepared statements against a mocked D1
 binding and fails if a tick or a dashboard load crosses 50.

@@ -17,9 +17,16 @@ import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
+import { buildCalendar, calendarOptions } from './calendar.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
+import { claimFoodAiRun, getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { previewCourseImport, saveCourseResources } from './course-library.mjs';
+import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
+import { aiBudgetGuard } from './ai-budget.mjs';
+import { syncWeather } from './weather-cache.mjs';
+import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -108,7 +115,7 @@ function scheduleFor(source) {
 /**
  * Sources polled per invocation. Workers Free allows 50 D1 queries per invocation, and a full poll
  * of all four sources measures 41 on its own, so a tick takes two and leaves the rest due. The cron
- * runs every 15 minutes, which is far more often than the slowest cadence (food, 12 hours), so
+  * runs every minute, which is far more often than the slowest cadence (food, 12 hours), so
  * nothing waits long.
  */
 const MAX_SOURCES_PER_TICK = 2;
@@ -122,8 +129,8 @@ const MAX_SOURCES_PER_TICK = 2;
  */
 export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TICK, sources = SOURCES) {
   const receipts = [];
-  const jobs = await store.dueJobs(now);
-  const ready = jobs
+  const jobs = await store.jobs();
+  const ready = jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
     .map((j) => sourceById(j.source_id, sources))
     .filter(Boolean)
     .filter(scheduleFor);
@@ -138,13 +145,14 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
       startedAt,
       finishedAt: receipt.finished_at,
       outcome: receipt.outcome,
+      httpStatus: receipt.http_status,
       cadenceMs: source.cadenceMs,
       now: Date.now(),
     });
   }
 
   // Sources that have never run get scheduled on the first pass, so a fresh D1 fills itself.
-  for (const source of enabledSources(SOURCES)) {
+  for (const source of enabledSources(sources)) {
     if (!jobs.find((j) => j.source_id === source.id)) {
       await store.scheduleJob(source.id, scheduleFor(source) ? Date.now() : Date.now() + 6 * 60 * 60 * 1000);
     }
@@ -153,8 +161,9 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
   // The receipt log is an audit trail, not a history: prune it every cycle so the
   // latest-run-per-source query cannot become a full scan of a table that only grows.
   const pruned = await store.pruneRuns(now - RUN_RETENTION_MS);
+  const prunedSnapshots = await store.pruneSnapshots(now - RUN_RETENTION_MS);
 
-  return { receipts, deferred, pruned };
+  return { receipts, deferred, pruned, prunedSnapshots };
 }
 
 async function handleFetch(request, env) {
@@ -169,7 +178,7 @@ async function handleFetch(request, env) {
    */
   if (!path.startsWith('/v1/')) {
     if (env.ASSETS) return env.ASSETS.fetch(request);
-    return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
+    return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
   }
 
   const store = storeFor(env);
@@ -187,8 +196,52 @@ async function handleFetch(request, env) {
     return json({ error: 'unauthorized' }, 401);
   }
 
+  if (isGuidanceRoute(path)) {
+    const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env });
+    return json(result.body, result.status);
+  }
+
   if (path === '/v1/dashboard') {
     return json(await buildDashboard(store, { now: Date.now() }));
+  }
+
+  if (path === '/v1/alerts/dismiss' && request.method === 'POST') {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
+    return (await dismissAlert(store, body?.key)) ? json({ ok: true }) : json({ error: 'alert has changed; refresh the dashboard' }, 409);
+  }
+
+  if (path === '/v1/calendar' && request.method === 'GET') {
+    const now = Date.now();
+    try {
+      return json(await buildCalendar(store, { ...calendarOptions(url.searchParams, now), now }));
+    } catch (error) {
+      if (error instanceof RangeError) return json({ error: error.message }, 400);
+      throw error;
+    }
+  }
+
+  if (path === '/v1/food/recommendation' && request.method === 'GET') {
+    return json(await getFoodRecommendation(store, url.searchParams.get('date') || ''));
+  }
+  if (path === '/v1/food/profile' && request.method === 'GET') return json({ profile: await getFoodProfile(store) });
+  if (path === '/v1/food/profile' && request.method === 'PUT') {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
+    return json({ profile: await saveFoodProfile(store, body) });
+  }
+  if (path === '/v1/courses/import' && request.method === 'POST') {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
+    if (typeof body?.text !== 'string' || body.text.length > 100_000) return json({ error: 'text must be at most 100 KB' }, 400);
+    return json({ resources: previewCourseImport(body.text) });
+  }
+  const courseResourceMatch = /^\/v1\/courses\/([^/]+)\/resources$/.exec(path);
+  if (courseResourceMatch && request.method === 'PUT') {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: 'invalid json' }, 400); }
+    try { return json({ resources: await saveCourseResources(store, decodeURIComponent(courseResourceMatch[1]), body.resources) }); }
+    catch (error) { if (error instanceof RangeError || error instanceof URIError) return json({ error: error.message }, 400); throw error; }
   }
 
   if (path === '/v1/health/sources') {
@@ -213,9 +266,10 @@ async function handleFetch(request, env) {
 
   if (path.startsWith('/v1/snapshot/')) {
     const sha = path.split('/').pop();
+    if (!/^[a-f0-9]{64}$/.test(sha || '')) return json({ error: 'invalid snapshot id' }, 400);
     const snap = await store.getSnapshot(sha);
     if (!snap) return json({ error: 'no such snapshot' }, 404);
-    return new Response(snap.body, { headers: { 'content-type': snap.content_type || 'text/plain' } });
+    return new Response(snap.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': `attachment; filename="snapshot-${sha}.txt"`, 'x-content-type-options': 'nosniff' } });
   }
 
   if (path === '/v1/poll' && request.method === 'POST') {
@@ -228,6 +282,7 @@ async function handleFetch(request, env) {
         startedAt: receipt.started_at,
         finishedAt: receipt.finished_at,
         outcome: receipt.outcome,
+        httpStatus: receipt.http_status,
         cadenceMs: source.cadenceMs,
         now: Date.now(),
       });
@@ -237,6 +292,8 @@ async function handleFetch(request, env) {
     // (50 D1 queries per invocation on Free) and not a property of the scheduled path. Poll one
     // source at a time with ?source=<id> when everything needs to run right now.
     const { receipts, deferred, pruned } = await pollDue(store, Date.now());
+    // A two-source poll can nearly exhaust D1's per-invocation query budget. The next minute
+    // normally has only status due, so perform the AI cache check on that lighter tick.
     return json({ receipts, deferred, pruned });
   }
 
@@ -266,6 +323,7 @@ async function handleFetch(request, env) {
     if (!menuRows.length) {
       return json({ error: 'No dining menu items available to evaluate for this date.' }, 404);
     }
+    if (!await claimFoodAiRun(store, now)) return json({ error: 'Daily dining AI limit reached; try again tomorrow.' }, 429);
     try {
       const recommendation = await rankDailyMenu({
         menuItems: menuRows,
@@ -275,10 +333,11 @@ async function handleFetch(request, env) {
         force: Boolean(body.force),
         now,
         cfEnv: env, // native env.AI binding: no API key, no REST round trip
+        beforeAiCall: aiBudgetGuard(store),
       });
       return json(recommendation);
     } catch (err) {
-      return json({ error: err.message }, 502);
+      return json({ error: err.message }, err.status || 502);
     }
   }
 
@@ -306,6 +365,7 @@ async function handleFetch(request, env) {
         force,
         now,
         cfEnv: env,
+        beforeAiCall: aiBudgetGuard(store),
       });
       const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
       return json({ draft, preview, model });
@@ -461,7 +521,7 @@ async function handleFetch(request, env) {
   return json(
     {
       error: 'not found',
-      routes: ['/healthz', '/v1/dashboard', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
+      routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
     },
     404,
   );
@@ -488,9 +548,17 @@ export default {
     // settings saved from the app first: the cron polls the feeds the app was configured with
     await applySettings(store);
     const { receipts, deferred, pruned } = await pollDue(store, Date.now());
+    // Keep the expensive AI cache check on a lighter tick to preserve the D1 query budget.
+    const alerts = receipts.length < MAX_SOURCES_PER_TICK
+      ? await syncAlertSummary(store, { cfEnv: env })
+      : { status: 'deferred' };
+    const food = receipts.length < MAX_SOURCES_PER_TICK
+      ? await syncFoodRecommendation(store, { cfEnv: env })
+      : { status: 'deferred' };
+    const weather = receipts.length < MAX_SOURCES_PER_TICK ? await syncWeather(store) : { status: 'deferred' };
     const summary = receipts.map((r) => `${r.source_id}:${r.outcome}`).join(' ');
     console.log(
-      `[cron] ${event.cron} ran=${receipts.length} ${summary}` +
+      `[cron] ${event.cron} ran=${receipts.length} ${summary} alerts_ai=${alerts.status} food_ai=${food.status} weather=${weather.status}` +
         `${deferred.length ? ` deferred=${deferred.join(',')}` : ''}` +
         `${pruned ? ` pruned=${pruned}` : ''}`,
     );

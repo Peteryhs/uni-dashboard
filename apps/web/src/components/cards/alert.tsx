@@ -4,9 +4,12 @@
  * "An empty slot renders zero height, not a green card."
  * When there is an outage or incident, this renders a high-visibility, glassmorphic notice banner.
  */
-import { AlertTriangle, ExternalLink } from 'lucide-react';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ExternalLink, X } from 'lucide-react';
 import { FreshnessLine } from '@/components/freshness';
 import { Badge } from '@/components/ui/badge';
+import { dismissAlert } from '@/lib/api';
 import type { AlertData, Card as CardT } from '@/lib/contract';
 import { shortAge } from '@/lib/time';
 import { cn } from '@/lib/utils';
@@ -46,6 +49,11 @@ const SEVERITY_TONE: Record<string, { ring: string; badge: string; text: string;
 
 export function AlertCard({ card, now }: { card: CardT<AlertData>; now: number }) {
   const d = card.data;
+  const queryClient = useQueryClient();
+  const [hiddenKey, setHiddenKey] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  if (d.dismissed || (d.key && hiddenKey === d.key)) return null;
 
   // No notices. That is an all clear only if the relay actually looked recently: the server marks
   // an old status check stale or dead on the age ladder, and swallowing that would quietly turn
@@ -67,53 +75,34 @@ export function AlertCard({ card, now }: { card: CardT<AlertData>; now: number }
   const worst = d.notices[0];
   const tone = SEVERITY_TONE[worst?.severity ?? 'info'] ?? SEVERITY_TONE.info;
 
+  const dismiss = async () => {
+    setHiddenKey(d.key);
+    try {
+      await dismissAlert(d.key);
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (cause) {
+      setHiddenKey(null);
+      setError(cause instanceof Error ? cause.message : 'Could not dismiss the alert');
+    }
+  };
+
   return (
     <div
       role="alert"
       className={cn(
-        'flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-md border px-3.5 py-2.5 bg-card text-xs transition-colors shadow-xs',
+        'flex flex-wrap items-center gap-2.5 rounded-md border px-3.5 py-2.5 bg-card text-xs transition-colors shadow-xs',
         tone.ring,
       )}
     >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className={cn('flex size-6 shrink-0 items-center justify-center rounded bg-background/80 border border-white/5', tone.text)}>
-          <AlertTriangle className="size-3.5" />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <Badge variant="outline" className={cn('px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider rounded', tone.badge)}>
-            {tone.label}
-          </Badge>
-          <span className="text-zinc-400 text-xs hidden md:inline">· UW Campus Status</span>
-          <div className="flex items-center gap-2 min-w-0">
-            {d.notices.map((n) => (
-              <span key={`${n.severity}-${n.title}`} className="font-medium truncate text-foreground">
-                {n.url ? (
-                  <a
-                    href={n.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="inline-flex items-center gap-1 hover:underline text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none rounded"
-                  >
-                    <span>{n.title}</span>
-                    <ExternalLink className="size-3 shrink-0 text-zinc-400" />
-                  </a>
-                ) : (
-                  n.title
-                )}
-              </span>
-            ))}
-          </div>
-        </div>
+      <AlertTriangle className={cn('size-4 shrink-0', tone.text)} aria-hidden />
+      <Badge variant="outline" className={cn('px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wider rounded', tone.badge)}>{tone.label}</Badge>
+      <span className="min-w-0 flex-1 text-foreground">{d.summary || worst?.title}</span>
+      {worst?.url && <a href={worst.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-zinc-300 hover:underline">Details <ExternalLink className="size-3" /></a>}
+      <button type="button" onClick={dismiss} aria-label="Dismiss campus alert" className="rounded p-1 text-zinc-300 hover:bg-white/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-live"><X className="size-3.5" /></button>
+      <div className="hidden sm:block shrink-0">
+        <FreshnessLine state={card.state} observedAt={card.observed_at} now={now} sourceId={card.source_id || undefined} />
       </div>
-
-      <div className="shrink-0 self-end sm:self-center border-t sm:border-t-0 border-white/5 pt-1 sm:pt-0">
-        <FreshnessLine
-          state={card.state}
-          observedAt={card.observed_at}
-          now={now}
-          sourceId={card.source_id || undefined}
-        />
-      </div>
+      {error && <span className="w-full text-amber-300">{error}</span>}
     </div>
   );
 }

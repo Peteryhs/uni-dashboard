@@ -7,7 +7,7 @@ import { buildDashboard } from '../apps/relay/src/cards.mjs';
 /**
  * Creates an in-memory Cloudflare D1 mock conforming to the D1 JS binding API.
  */
-function createMockD1() {
+function createMockD1(counter = { prepares: 0 }) {
   const db = new DatabaseSync(':memory:');
 
   return {
@@ -16,6 +16,7 @@ function createMockD1() {
       return { count: 0, duration: 0 };
     },
     prepare(sql) {
+      counter.prepares += 1;
       let bound = [];
       return {
         bind(...args) {
@@ -88,6 +89,17 @@ test('D1Store preserves numeric and boolean types', async () => {
   assert.equal(typeof r.all_day, 'boolean');
 });
 
+test('D1 timeline rows are ordered before the limit is applied', async () => {
+  const store = new D1Store(createMockD1());
+  await store.init();
+  await store.upsertRows('timeline_event', [
+    { source_id: 's', external_id: 'a-later', observed_at: now, valid_until: now + 1000, kind: 'class', title: 'Later', starts_at: now + 3600_000, ends_at: now + 7200_000 },
+    { source_id: 's', external_id: 'z-sooner', observed_at: now, valid_until: now + 1000, kind: 'class', title: 'Sooner', starts_at: now + 60_000, ends_at: now + 120_000 },
+  ]);
+  assert.equal((await store.rows('timeline_event', { orderBy: 'starts_at', limit: 1 }))[0].title, 'Sooner');
+  await assert.rejects(store.rows('timeline_event', { orderBy: 'starts_at DESC' }), /invalid order column/);
+});
+
 test('D1Store handles tombstoning with partition scope', async () => {
   const mockD1 = createMockD1();
   const store = new D1Store(mockD1);
@@ -107,6 +119,26 @@ test('D1Store handles tombstoning with partition scope', async () => {
   const remaining = await store.rows('menu_item');
   assert.equal(remaining.length, 1);
   assert.equal(remaining[0].external_id, 'd2');
+});
+
+test('D1Store removes a cancelled series within the query budget', async () => {
+  const counter = { prepares: 0 };
+  const store = new D1Store(createMockD1(counter));
+  await store.init();
+  await store.upsertRows('timeline_event', Array.from({ length: 80 }, (_, i) => ({
+    source_id: 'uw-portal-ics',
+    external_id: `class-${i}`,
+    observed_at: now,
+    valid_until: now + 86400_000,
+    kind: 'class',
+    title: 'Cancelled series',
+    starts_at: now + i * 86400_000,
+    ends_at: now + i * 86400_000 + MIN,
+  })));
+  const before = counter.prepares;
+  assert.equal(await store.tombstoneMissing('timeline_event', 'uw-portal-ics', []), 80);
+  assert.ok(counter.prepares - before <= 2, 'one lookup and one batched UPDATE are enough');
+  assert.equal((await store.rows('timeline_event')).length, 0);
 });
 
 test('D1Store manages snapshots and gzip compression', async () => {
@@ -139,6 +171,8 @@ test('D1Store executes job scheduling and exponential backoff', async () => {
   const [job] = await store.jobs();
   assert.equal(job.circuit_state, 'open');
   assert.equal(job.consecutive_failures, 5);
+  await store.recordJobResult('s', { startedAt: now, finishedAt: now, outcome: 'failed', httpStatus: 429, cadenceMs: 15 * 60_000, now });
+  assert.ok((await store.jobs())[0].next_due_at >= now + 30 * 60_000);
 });
 
 test('D1Store creates the schema with a batch, because D1 exec() truncates wrapped DDL', async () => {
@@ -242,6 +276,43 @@ test('init() skips the DDL when every table exists, and runs it when one is miss
   assert.equal(calls.batch, 2, 'a missing table means the DDL runs again, so old databases self-heal');
   await third.setSetting('LEARN_ICS_URL', 'https://learn.test/feed.ics');
   assert.equal((await third.settings()).length, 1);
+});
+
+test('D1 atomically reserves the AI daily allowance without allowing concurrent overspend', async () => {
+  const db = createMockD1();
+  const store = new D1Store(db);
+  await store.init();
+  const results = await Promise.all([store.reserveAiBudget('2026-09-23', 4000, 7000), store.reserveAiBudget('2026-09-23', 4000, 7000)]);
+  assert.equal(results.filter(Boolean).length, 1);
+  assert.equal((await store.aiUsage('2026-09-23')).reserved_neurons, 4000);
+});
+
+test('snapshot retention keeps bodies referenced by recent run receipts', async () => {
+  const db = createMockD1();
+  const store = new D1Store(db);
+  await store.init();
+  const old = now - 30 * 86_400_000;
+  const referenced = await store.saveSnapshot({ sourceId: 's', fetchedAt: old, contentType: 'text/plain', body: 'referenced' });
+  const unreferenced = await store.saveSnapshot({ sourceId: 's', fetchedAt: old, contentType: 'text/plain', body: 'unreferenced' });
+  await store.insertRun({ source_id: 's', started_at: now, finished_at: now, outcome: 'ok', body_sha256: referenced });
+  assert.equal(await store.pruneSnapshots(now - 7 * 86_400_000), 1);
+  assert.equal(await store.hasSnapshot(referenced), true);
+  assert.equal(await store.hasSnapshot(unreferenced), false);
+});
+
+test('existing D1 databases gain receipt indexes and latest runs use scheduled sources', async () => {
+  const db = createMockD1();
+  const store = new D1Store(db);
+  await store.init();
+  await store.scheduleJob('uw-status', now);
+  await store.insertRun({ source_id: 'uw-status', started_at: now, finished_at: now, outcome: 'ok' });
+  await store.insertRun({ source_id: 'uw-status', started_at: now + 1000, finished_at: now + 1000, outcome: 'failed' });
+  assert.equal((await store.lastRunPerSource())[0].outcome, 'failed');
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN ('idx_source_run_source_id','idx_source_run_finished')").first()).n, 2);
+  await db.exec('DROP INDEX idx_source_run_finished');
+  const migrated = new D1Store(db);
+  await migrated.init();
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='idx_source_run_finished'").first()).n, 1);
 });
 
 test('buildDashboard works end-to-end on D1Store', async () => {
