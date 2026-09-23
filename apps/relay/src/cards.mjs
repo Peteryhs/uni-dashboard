@@ -139,6 +139,23 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
     }
   }
 
+  let following = null;
+  if (next === schedule[0]) {
+    const nextExam = deadlines.find(
+      (d) => d.kind === 'exam' && d.starts_at >= next.starts_at && d.external_id !== next.external_id,
+    );
+    if (nextExam && (!schedule[1] || nextExam.starts_at < schedule[1].starts_at)) {
+      following = nextExam;
+    } else {
+      following =
+        schedule[1] ??
+        deadlines.find((d) => d.starts_at >= next.starts_at && d.external_id !== next.external_id) ??
+        null;
+    }
+  } else {
+    following = deadlines[1] ?? null;
+  }
+
   const source = await store.rows('timeline_event', { where: 'source_id = ?', params: [next.source_id], limit: 1 });
   return {
     id: 'next_commitment',
@@ -155,6 +172,16 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       ends_at: next.ends_at,
       all_day: Boolean(next.all_day),
       weather,
+      following: following
+        ? {
+            title: following.title,
+            kind: following.kind,
+            location: following.location ?? '',
+            starts_at: following.starts_at,
+            ends_at: following.ends_at,
+            all_day: Boolean(following.all_day),
+          }
+        : null,
     },
   };
 }

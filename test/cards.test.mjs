@@ -120,6 +120,21 @@ test('a deadline takes the hero slot only when nothing is scheduled ahead', () =
   });
 });
 
+test('next commitment card carries the following commitment in following field', async () => {
+  const store = new SqliteStore(':memory:');
+  const t = (h) => Date.UTC(2026, 8, 21, h);
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-portal-ics', external_id: 'c1', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: t(10), ends_at: t(11) },
+    { source_id: 'uw-portal-ics', external_id: 'c2', observed_at: now - MIN, valid_until: now + 15 * MIN, kind: 'class', title: 'ECE 198 LAB 001', location: 'E7 2400', starts_at: t(14), ends_at: t(17) },
+  ]);
+  const card = await nextCommitmentCard(store, { now: t(9), useWeather: false });
+  assert.equal(card.data.title, 'ECE 150 LEC 001');
+  assert.ok(card.data.following);
+  assert.equal(card.data.following.title, 'ECE 198 LAB 001');
+  assert.equal(card.data.following.location, 'E7 2400');
+  assert.equal(card.data.following.starts_at, t(14));
+});
+
 test('the deadlines card sends a flat list in time order, not one list per course', () => {
   const store = seed(new SqliteStore(':memory:'));
   const card = dueSoonCard(store, { now });

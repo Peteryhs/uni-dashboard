@@ -22,6 +22,15 @@ export const WeatherSlice = z.object({
   error: z.string().optional(),
 }).partial();
 
+export const FollowingCommitment = z.object({
+  title: z.string(),
+  kind: z.enum(['class', 'exam', 'deadline', 'event']).optional(),
+  location: z.string().default(''),
+  starts_at: EPOCH_MS.optional(),
+  ends_at: EPOCH_MS.optional(),
+  all_day: z.boolean().optional(),
+});
+
 export const NextCommitmentData = z.object({
   title: z.string(),
   subtitle: z.string().default(''),
@@ -31,6 +40,7 @@ export const NextCommitmentData = z.object({
   ends_at: EPOCH_MS.optional(),
   all_day: z.boolean().optional(),
   weather: WeatherSlice.nullable().optional(),
+  following: FollowingCommitment.nullable().optional(),
 });
 
 export const DueSoonLink = z.object({

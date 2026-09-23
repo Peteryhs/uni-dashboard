@@ -13,7 +13,7 @@ import { mutedIfStale } from '@/components/freshness';
 import { useChanged } from '@/hooks/use-dashboard';
 import { usePreferences } from '@/lib/preferences-store';
 import type { Card as CardT, NextCommitmentData } from '@/lib/contract';
-import { countdown, dayOffset, formatTime, formatWeekdayTime } from '@/lib/time';
+import { countdown, dayOffset, formatShortDay, formatTime, formatWeekdayTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
 const KIND_LABEL: Record<string, string> = {
@@ -105,6 +105,17 @@ export function NextCommitmentCard({
     ? `${dayWord} ${formatTime(d.starts_at)}`
     : formatWeekdayTime(d.starts_at);
 
+  let followingWhen = '';
+  if (d.following?.starts_at) {
+    const fOffset = dayOffset(d.following.starts_at, now);
+    const fDayWord = fOffset === 0 ? 'Today' : fOffset === 1 ? 'Tomorrow' : null;
+    followingWhen = d.following.all_day
+      ? (fDayWord ?? formatShortDay(d.following.starts_at))
+      : fDayWord
+        ? `${fDayWord} ${formatTime(d.following.starts_at)}`
+        : formatWeekdayTime(d.following.starts_at);
+  }
+
   const isCompact = preferences.density === 'compact';
 
   return (
@@ -144,6 +155,23 @@ export function NextCommitmentCard({
               {countdown(d.starts_at, now)}
             </span>
           </div>
+
+          {/* Next commitment after this one, in grey text under the main text */}
+          {d.following && (
+            <p className={cn(
+              'text-xs text-zinc-400 font-normal leading-normal truncate',
+              isCompact ? 'mt-0.5' : 'mt-1',
+            )}>
+              <span className="text-zinc-500">Then: </span>
+              <span className="text-zinc-400 font-medium">{d.following.title}</span>
+              {followingWhen && (
+                <span className="text-zinc-500 font-normal"> · {followingWhen}</span>
+              )}
+              {d.following.location && (
+                <span className="text-zinc-500 font-normal"> · {d.following.location}</span>
+              )}
+            </p>
+          )}
 
           {/* Subtitle only in detailed mode to reduce info density in compact */}
           {!isCompact && d.subtitle && (

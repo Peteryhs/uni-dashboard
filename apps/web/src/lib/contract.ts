@@ -87,6 +87,15 @@ export interface WeatherSlice {
   error?: string;
 }
 
+export interface FollowingCommitment {
+  title: string;
+  kind?: 'class' | 'exam' | 'deadline' | 'event';
+  location: string;
+  starts_at?: number;
+  ends_at?: number;
+  all_day?: boolean;
+}
+
 export interface NextCommitmentData {
   title: string;
   subtitle: string;
@@ -96,6 +105,7 @@ export interface NextCommitmentData {
   ends_at?: number;
   all_day?: boolean;
   weather?: WeatherSlice | null;
+  following?: FollowingCommitment | null;
 }
 
 export interface DueSoonLink {
