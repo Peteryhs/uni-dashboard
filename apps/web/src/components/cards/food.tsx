@@ -20,6 +20,7 @@ import {
   Sparkles,
   RefreshCw,
   AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { CardShell, EmptyState } from '@/components/card-shell';
 import { Badge } from '@/components/ui/badge';
@@ -416,6 +417,16 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
           >
             {nothingAtAll ? d.service_date : `${d.total_dishes} dishes · ${dayLabel}`}
           </Badge>
+          <a
+            href={`https://uwaterloo.ca/food-services/daily-menu?date=${d.service_date}`}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-zinc-400 hover:text-foreground transition-colors p-1 rounded hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-live"
+            title={`View official Waterloo daily menu for ${d.service_date}`}
+            aria-label={`View official Waterloo daily menu for ${d.service_date}`}
+          >
+            <ExternalLink className="size-3" />
+          </a>
         </div>
       }
     >

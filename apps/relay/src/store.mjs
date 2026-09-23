@@ -24,6 +24,26 @@ export class SqliteStore {
   constructor(path = ':memory:') {
     this.db = new DatabaseSync(path);
     this.db.exec(ddl());
+    this._migrate();
+  }
+
+  _migrate() {
+    try {
+      const cols = this.db.prepare('PRAGMA table_info(setting)').all().map((c) => c.name);
+      if (cols.includes('key') && !cols.includes('name')) {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS setting_migrated (
+            name TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          INSERT OR IGNORE INTO setting_migrated (name, value, updated_at)
+          SELECT key, value_json, updated_at FROM setting;
+          DROP TABLE setting;
+          ALTER TABLE setting_migrated RENAME TO setting;
+        `);
+      }
+    } catch {}
   }
 
   close() {
@@ -209,6 +229,11 @@ export class SqliteStore {
   /** Configuration rows set from the app, as { name, value, updated_at }. */
   settings() {
     return this.db.prepare('SELECT name, value, updated_at FROM setting ORDER BY name').all();
+  }
+
+  getSetting(name) {
+    const row = this.db.prepare('SELECT value FROM setting WHERE name=?').get(name);
+    return row ? row.value : null;
   }
 
   setSetting(name, value, now = Date.now()) {

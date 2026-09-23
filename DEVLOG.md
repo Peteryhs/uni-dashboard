@@ -8,6 +8,39 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-23 — Office hours AI extraction, schedule management & date-filtered daily menu
+
+133 tests, up from 116.
+
+**Office hours from unstructured text (SPEC-office-hours shipped):**
+Piazza posts, course announcements, and syllabi state office hours in natural language ("Mon & Wed 2:00-3:00pm in E7 3416, starting next week through Dec 5"). A student needs these as recurring timetable events, but manual entry across multiple courses has high friction, and blind AI insertion risks phantom events.
+- **Contract & Architecture**: `packages/contract/src/office-hours.mjs` defines `OfficeHourRule` and `OfficeHoursConfig`. Registered a dedicated user source adapter (`sources/office-hours/source.mjs`, id `user-office-hours`, kind `office_hours`).
+- **AI Structured Extraction**: `apps/relay/src/ai.mjs` extracts rules with schema validation and one-shot self-correction retry. Returns a 502 with the model's raw string if invalid.
+- **Strict Storage Isolation**: AI generation is strictly draft-only. Only explicit user saving via `PUT /v1/office-hours` writes to `OFFICE_HOURS_JSON` in the store. Zero AI hallucinations reach the database unconfirmed.
+- **Card Isolation**: Events carry `kind: 'office_hours'`, ensuring they never hijack the `next_commitment` hero countdown or pollute `due_soon` deadlines.
+- **Settings Schedule Tab**: Added 4th tab to the customization sheet in `apps/web/src/components/schedule-tab.tsx`. Supports pasting text, model selection, live draft review with editable fields, concrete first-occurrence date previews across DST boundaries, inline edit/delete of saved rules, and non-blocking undo toast notifications.
+- **Legacy SQLite Migration**: Added automatic `setting` table migration in `SqliteStore` to handle legacy `(key, value_json)` columns dynamically.
+
+**Daily Menu date filter precision:**
+- Waterloo Food Services supports direct server-side date filtering via `https://uwaterloo.ca/food-services/daily-menu?date=YYYY-MM-DD`.
+- Updated `sources/food/source.mjs` to always pass today's Toronto service date (`todayInToronto(now)`). Avoids stale landing page cache or waiting for Drupal CMS morning rollover.
+- Added external link icon in the Food Card header linking directly to Waterloo's filtered daily menu.
+- Updated `tools/fetch-fixtures.mjs` to fetch date-parameterized fixtures.
+
+**Deadlines card polish & density refinements:**
+- Opens vs Due separation: urgent work receives distinct priority colouring while content opening dates are rendered muted.
+- Filtered out administrative noise (NFA hold dates, tuition refund deadlines) and deduplicated out-of-scope group variations.
+- Inline task descriptions clamped to 20 words max with click-to-expand. Empty descriptions omitted.
+- Upcoming commitments and upcoming events separated into dedicated horizontal cards in both Detailed and Compact views, with a secondary preview for the following commitment.
+- One-click dismissal with in-session undo toast for calendar items in compact view.
+
+**Verification**:
+- 133/133 tests pass in `node --test` (~750ms).
+- `npm run web:typecheck` and `npm run web:build` pass with zero errors.
+- Verified live poll against Waterloo Food Services (21 dishes loaded) and office hours persistence.
+
+---
+
 
 ## 2026-09-22: the Cloudflare Worker port, and the free tier that shaped it
 

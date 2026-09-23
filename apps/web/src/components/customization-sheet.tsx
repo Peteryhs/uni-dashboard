@@ -49,6 +49,7 @@ import {
   type UserPreferences,
 } from '@/lib/preferences-store';
 import { cn } from '@/lib/utils';
+import { ScheduleTab } from './schedule-tab';
 
 const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'all', label: 'All Items' },
@@ -127,7 +128,7 @@ export function CustomizationSheet({
   resetPreferences: () => void;
 }) {
   const { setSection, setGroupNumber, undismissTask } = usePreferences();
-  const [activeTab, setActiveTab] = useState<'preferences' | 'taste' | 'credentials'>('taste');
+  const [activeTab, setActiveTab] = useState<'preferences' | 'taste' | 'credentials' | 'schedule'>('taste');
 
   return (
     <Sheet>
@@ -158,15 +159,21 @@ export function CustomizationSheet({
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as 'preferences' | 'taste' | 'credentials')}
+          onValueChange={(v) => setActiveTab(v as 'preferences' | 'taste' | 'credentials' | 'schedule')}
           className="mt-5"
         >
-          <TabsList className="grid w-full grid-cols-3 bg-secondary/40 p-1 border border-border/60 rounded-lg">
+          <TabsList className="grid w-full grid-cols-4 bg-secondary/40 p-1 border border-border/60 rounded-lg">
             <TabsTrigger
               value="taste"
               className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
               <Sparkles className="size-3.5 mr-1 text-amber" /> Taste AI
+            </TabsTrigger>
+            <TabsTrigger
+              value="schedule"
+              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+            >
+              <Calendar className="size-3.5 mr-1" /> Schedule
             </TabsTrigger>
             <TabsTrigger
               value="preferences"
@@ -544,6 +551,11 @@ export function CustomizationSheet({
           {/* Tab 3: Feeds & Credentials */}
           <TabsContent value="credentials" className="mt-5 space-y-5">
             <CredentialsManager />
+          </TabsContent>
+
+          {/* Tab 4: Schedule (Office Hours) */}
+          <TabsContent value="schedule" className="mt-5 space-y-5">
+            <ScheduleTab />
           </TabsContent>
         </Tabs>
       </SheetContent>

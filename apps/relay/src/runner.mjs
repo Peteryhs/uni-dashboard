@@ -11,7 +11,7 @@ import { validateRows } from '#contract/canonical.mjs';
 
 export async function runSource(source, store, { now = Date.now(), date = null, dryRun = false } = {}) {
   const startedAt = now;
-  const ctx = { now, date };
+  const ctx = { now, date, store };
   const receipt = {
     source_id: source.id,
     started_at: startedAt,
@@ -99,8 +99,13 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
 
   if (rows.length === 0) {
     // Valid-empty: an empty future menu day, or a status page saying everything is fine.
+    let tombstones = 0;
+    if (source.tombstoneOnEmpty && !dryRun) {
+      tombstones = await store.tombstoneMissing(source.shape, source.id, []);
+    }
     receipt.outcome = 'empty';
     receipt.error = '';
+    receipt.tombstones = tombstones;
     receipt.finished_at = Date.now();
     if (!dryRun) {
       await store.insertRun(receipt);

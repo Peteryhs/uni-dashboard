@@ -1,5 +1,5 @@
 /**
- * Workers AI recommendation and ranking engine for daily dining menus.
+ * Workers AI recommendation and ranking engine for daily dining menus and office hours parsing.
  *
  * Designed to dual-target:
  * 1. Cloudflare Workers environment: uses env.AI.run(model, payload)
@@ -7,6 +7,8 @@
  * 3. Offline / dev fallback: deterministic rule-based ranking engine if no credentials are configured
  */
 import { FoodAiRecommendation } from '#contract/card-data.mjs';
+import { OfficeHoursDraft, OFFICE_HOURS_JSON_SCHEMA } from '#contract/office-hours.mjs';
+import { config } from './config.mjs';
 
 try {
   process.loadEnvFile?.();
@@ -44,17 +46,13 @@ export const POPULAR_MODELS = [
 
 const FETCH_TIMEOUT_MS = 90_000;
 
-/** In-memory cache of evaluated recommendations: key -> { data, expiresAt } */
-const recommendationCache = new Map();
+/** In-memory cache of evaluated recommendations and parsed rules: key -> { data, expiresAt } */
+const aiCache = new Map();
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours (matches menu update cadence)
+const OFFICE_HOURS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for office hours parsing
 
 /**
  * Node builtins are reached through getBuiltinModule, never through a static import.
- *
- * The disk cache is a local-development nicety. A static `import ... from 'node:fs'` here made a
- * Cloudflare Worker bundle resolve node:fs for a cache file that a Worker could never write:
- * Workers have no writable filesystem and no getBuiltinModule, so they keep the in-memory cache
- * and skip the disk one.
  */
 function nodeBuiltin(name) {
   try {
@@ -79,7 +77,7 @@ function loadPersistentCache() {
       const now = Date.now();
       for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) {
         if (v && v.expiresAt > now && v.data) {
-          recommendationCache.set(k, v);
+          aiCache.set(k, v);
         }
       }
     }
@@ -92,7 +90,7 @@ function savePersistentCache() {
     const { fs, file } = diskCache;
     const now = Date.now();
     const obj = {};
-    for (const [k, v] of recommendationCache.entries()) {
+    for (const [k, v] of aiCache.entries()) {
       if (v && v.expiresAt > now) {
         obj[k] = v;
       }
@@ -105,11 +103,9 @@ function savePersistentCache() {
 loadPersistentCache();
 
 /**
- * Cache key: FNV-1a run twice with different offsets, hex encoded. Dependency-free, stable across
- * runtimes, and enough to key a 12 hour cache on. This used to be node:crypto sha256, which the
- * cache key never needed.
+ * Cache key: FNV-1a run twice with different offsets, hex encoded.
  */
-function hashKey(text) {
+export function hashKey(text) {
   let h1 = 0x811c9dc5;
   let h2 = 0xc9dc5118;
   for (let i = 0; i < text.length; i += 1) {
@@ -132,12 +128,242 @@ export function cacheKey(serviceDate, model, tasteProfile) {
   return hashKey(payload);
 }
 
+export function officeHoursCacheKey(text, model) {
+  return hashKey('oh:' + model + ':' + text.trim());
+}
+
 export function clearAiCache() {
-  recommendationCache.clear();
+  aiCache.clear();
   if (!diskCache) return;
   try {
     diskCache.fs.writeFileSync(diskCache.file, '{}', 'utf8');
   } catch {}
+}
+
+/**
+ * Safely unwrap text content from various Cloudflare Workers AI and OpenAI response shapes.
+ */
+export function unwrapAiResponseText(response) {
+  if (typeof response === 'string') return response;
+  const content =
+    response?.choices?.[0]?.message?.content ??
+    response?.response;
+  if (typeof content === 'string') return content;
+  if (content && typeof content === 'object') return JSON.stringify(content);
+  if (response && typeof response === 'object') return JSON.stringify(response);
+  return '';
+}
+
+/**
+ * Parse JSON from string, falling back to brace extraction.
+ */
+export function parseJsonFromAiText(text) {
+  if (typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {}
+  return extractJson(trimmed);
+}
+
+export function extractJson(str) {
+  if (typeof str !== 'string') return null;
+  const firstBrace = str.indexOf('{');
+  const lastBrace = str.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = str.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+  const firstBracket = str.indexOf('[');
+  const lastBracket = str.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    const candidate = str.slice(firstBracket, lastBracket + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Reusable structured AI execution helper.
+ * Dual-targets Worker binding and Cloudflare REST API.
+ * Retries once on schema validation failure with the error message appended.
+ * Throws 502 with raw text if schema validation fails twice.
+ */
+export async function runStructured({
+  systemMessage,
+  userMessage,
+  schema = null,
+  jsonSchema = null,
+  model = DEFAULT_AI_MODEL,
+  cfEnv = null,
+  env = null,
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  cacheKey = null,
+  ttlMs = CACHE_TTL_MS,
+  now = Date.now(),
+  force = false,
+  transform = null,
+  fewShotMessages = [],
+}) {
+  const effectiveEnv = cfEnv || env;
+  const hasWorkerAi = effectiveEnv && effectiveEnv.AI && typeof effectiveEnv.AI.run === 'function';
+  const hasRestCreds = Boolean(accountId && apiToken);
+
+  if (!hasWorkerAi && !hasRestCreds) {
+    throw new Error(
+      'Cloudflare Workers AI credentials not configured in Settings. Operation requires a valid Cloudflare Account ID and API Token.'
+    );
+  }
+
+  // Check cache
+  if (cacheKey && !force) {
+    const cached = aiCache.get(cacheKey);
+    if (cached && now < cached.expiresAt) {
+      return cached.data;
+    }
+  }
+
+  const responseFormat = jsonSchema
+    ? { type: 'json_schema', json_schema: jsonSchema }
+    : { type: 'json_object' };
+
+  async function callAi(messages) {
+    if (hasWorkerAi) {
+      try {
+        return await effectiveEnv.AI.run(model, {
+          messages,
+          response_format: responseFormat,
+        });
+      } catch (err) {
+        const msg = err?.message || String(err);
+        if (msg.includes("JSON Mode couldn't be met") || msg.includes('json mode')) {
+          const modeErr = new Error(`Cloudflare Workers AI JSON mode constraint could not be met: ${msg}`);
+          modeErr.status = 502;
+          throw modeErr;
+        }
+        throw new Error(`Workers AI execution failed: ${msg}`);
+      }
+    }
+
+    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages,
+          response_format: responseFormat,
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new Error(`Could not reach Cloudflare Workers AI: ${err.message}`);
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      const err = new Error(`Cloudflare Workers AI request failed (${res.status}): ${errText || 'Upstream error'}`);
+      err.status = res.status >= 500 ? 502 : res.status;
+      throw err;
+    }
+
+    const json = await res.json().catch(() => ({}));
+    return json.result ?? json;
+  }
+
+  const messages = [
+    { role: 'system', content: systemMessage },
+    ...fewShotMessages,
+    { role: 'user', content: userMessage },
+  ];
+
+  let rawResponse;
+  try {
+    rawResponse = await callAi(messages);
+  } catch (err) {
+    if (!err.status) err.status = 502;
+    throw err;
+  }
+
+  let rawText = unwrapAiResponseText(rawResponse);
+  let parsedObj = parseJsonFromAiText(rawText);
+  let transformed = parsedObj;
+  if (transform && parsedObj) {
+    try {
+      transformed = transform(parsedObj);
+    } catch {
+      transformed = null;
+    }
+  }
+
+  let validation = schema && transformed ? schema.safeParse(transformed) : { success: Boolean(transformed), data: transformed };
+
+  // Retry once on schema validation or JSON parse failure
+  if (!validation.success || !transformed) {
+    const validationError = validation.error
+      ? validation.error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
+      : 'Response was not valid JSON';
+
+    const retryMessages = [
+      ...messages,
+      { role: 'assistant', content: rawText || '{}' },
+      {
+        role: 'user',
+        content: `Your previous reply failed validation: ${validationError}. Return only valid JSON matching the schema.`,
+      },
+    ];
+
+    try {
+      rawResponse = await callAi(retryMessages);
+      rawText = unwrapAiResponseText(rawResponse);
+      parsedObj = parseJsonFromAiText(rawText);
+      transformed = parsedObj;
+      if (transform && parsedObj) {
+        try {
+          transformed = transform(parsedObj);
+        } catch {
+          transformed = null;
+        }
+      }
+      validation = schema && transformed ? schema.safeParse(transformed) : { success: Boolean(transformed), data: transformed };
+    } catch (retryErr) {
+      const err = new Error(`AI execution failed on retry: ${retryErr.message}`);
+      err.raw = rawText;
+      err.status = 502;
+      throw err;
+    }
+
+    if (!validation.success || !transformed) {
+      const secondError = validation.error
+        ? validation.error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
+        : 'Response was not valid JSON';
+      const err = new Error(`AI response failed schema validation after retry: ${secondError}`);
+      err.raw = rawText;
+      err.status = 502;
+      throw err;
+    }
+  }
+
+  const result = validation.data;
+
+  if (cacheKey) {
+    aiCache.set(cacheKey, {
+      data: result,
+      expiresAt: now + ttlMs,
+    });
+    savePersistentCache();
+  }
+
+  return result;
 }
 
 /**
@@ -204,159 +430,10 @@ export function buildPrompt({ serviceDate, tasteProfile, outlets }) {
   return { systemMessage, userMessage };
 }
 
-/**
- * Execute menu ranking strictly via Cloudflare Workers AI (Worker binding or REST API).
- * Never returns fake/placeholder rankings or fabricated match scores.
- *
- * If credentials are not configured or upstream API fails, throws an explicit error
- * so clients can render an honest status rather than fake data.
- */
-export async function rankDailyMenu({
-  menuItems = [],
-  serviceDate,
-  tasteProfile = {},
-  model = DEFAULT_AI_MODEL,
-  cfEnv = null,
-  env = null,
-  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
-  force = false,
-  now = Date.now(),
-}) {
-  const effectiveEnv = cfEnv || env;
-  const outlets = groupMenuByOutlet(menuItems);
-
-  if (outlets.length === 0) {
-    return FoodAiRecommendation.parse({
-      service_date: serviceDate,
-      model,
-      headline: 'No menu items posted for this service date.',
-      top_outlet: '',
-      ranked_outlets: [],
-      tip: 'Check back once Waterloo Food Services updates today menu.',
-      generated_at: now,
-    });
-  }
-
-  // Check cache: if a real evaluation succeeded in the reasonable past, use it unless forced
-  const key = cacheKey(serviceDate, model, tasteProfile);
-  if (!force) {
-    const cached = recommendationCache.get(key);
-    if (cached && now < cached.expiresAt) {
-      return cached.data;
-    }
-  }
-
-  // Validate that real AI credentials exist
-  const hasWorkerAi = effectiveEnv && effectiveEnv.AI && typeof effectiveEnv.AI.run === 'function';
-  const hasRestCreds = Boolean(accountId && apiToken);
-
-  if (!hasWorkerAi && !hasRestCreds) {
-    throw new Error(
-      'Cloudflare Workers AI credentials not configured in Settings. Menu evaluation requires a valid Cloudflare Account ID and API Token.'
-    );
-  }
-
-  const { systemMessage, userMessage } = buildPrompt({ serviceDate, tasteProfile, outlets });
-  let recommendation = null;
-
-  // Strategy 1: Native Cloudflare Worker binding (env.AI)
-  if (hasWorkerAi) {
-    try {
-      const response = await effectiveEnv.AI.run(model, {
-        messages: [
-          { role: 'system', content: systemMessage },
-          { role: 'user', content: userMessage },
-        ],
-        response_format: { type: 'json_object' },
-      });
-      recommendation = parseAiResponse(response, serviceDate, model);
-    } catch (err) {
-      throw new Error(`Workers AI execution failed: ${err.message}`);
-    }
-  }
-
-  // Strategy 2: Cloudflare Workers AI REST API (Node.js relay with credentials)
-  if (!recommendation && hasRestCreds) {
-    let res;
-    try {
-      const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`;
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: systemMessage },
-            { role: 'user', content: userMessage },
-          ],
-          response_format: { type: 'json_object' },
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-    } catch (err) {
-      throw new Error(`Could not reach Cloudflare Workers AI: ${err.message}`);
-    }
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`Cloudflare Workers AI request failed (${res.status}): ${errText || 'Upstream error'}`);
-    }
-
-    const json = await res.json().catch(() => ({}));
-    const rawResult = json.result ?? json;
-    recommendation = parseAiResponse(rawResult, serviceDate, model);
-  }
-
-  if (!recommendation) {
-    throw new Error('Workers AI returned an invalid or unparseable response.');
-  }
-
-  // Validate against contract schema
-  const validated = FoodAiRecommendation.parse({
-    ...recommendation,
-    service_date: serviceDate,
-    model,
-    generated_at: now,
-  });
-
-  // Store in cache
-  recommendationCache.set(key, {
-    data: validated,
-    expiresAt: now + CACHE_TTL_MS,
-  });
-  savePersistentCache();
-
-  return validated;
-}
-
-function parseAiResponse(response, serviceDate, model) {
-  let parsed = null;
-
-  // Modern Cloudflare Workers AI / OpenAI shape: { choices: [{ message: { content: "..." } }] }
-  // Older shape: { response: "..." }
-  // Raw string shape: "..."
-  const textContent =
-    response?.choices?.[0]?.message?.content ??
-    response?.response ??
-    (typeof response === 'string' ? response : null);
-
-  if (textContent && typeof textContent === 'string') {
-    try {
-      parsed = JSON.parse(textContent);
-    } catch {
-      parsed = extractJson(textContent);
-    }
-  } else if (typeof response === 'object' && response !== null && Array.isArray(response.ranked_outlets)) {
-    parsed = response;
-  }
-
+function transformMenuAiResponse(parsed, serviceDate, model, now) {
   if (!parsed || !Array.isArray(parsed.ranked_outlets)) {
     return null;
   }
-
   return {
     service_date: serviceDate,
     model,
@@ -377,18 +454,213 @@ function parseAiResponse(response, serviceDate, model) {
         : [],
     })),
     tip: parsed.tip || '',
-    generated_at: Date.now(),
+    generated_at: now,
   };
 }
 
-function extractJson(str) {
-  const match = str.match(/\{[\s\S]*\}/);
-  if (match) {
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
+/**
+ * Execute menu ranking strictly via Cloudflare Workers AI (Worker binding or REST API).
+ * Never returns fake/placeholder rankings or fabricated match scores.
+ */
+export async function rankDailyMenu({
+  menuItems = [],
+  serviceDate,
+  tasteProfile = {},
+  model = DEFAULT_AI_MODEL,
+  cfEnv = null,
+  env = null,
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  force = false,
+  now = Date.now(),
+}) {
+  const outlets = groupMenuByOutlet(menuItems);
+
+  if (outlets.length === 0) {
+    return FoodAiRecommendation.parse({
+      service_date: serviceDate,
+      model,
+      headline: 'No menu items posted for this service date.',
+      top_outlet: '',
+      ranked_outlets: [],
+      tip: 'Check back once Waterloo Food Services updates today menu.',
+      generated_at: now,
+    });
   }
-  return null;
+
+  const key = cacheKey(serviceDate, model, tasteProfile);
+  const { systemMessage, userMessage } = buildPrompt({ serviceDate, tasteProfile, outlets });
+
+  return await runStructured({
+    systemMessage,
+    userMessage,
+    schema: FoodAiRecommendation,
+    model,
+    cfEnv,
+    env,
+    accountId,
+    apiToken,
+    cacheKey: key,
+    ttlMs: CACHE_TTL_MS,
+    now,
+    force,
+    transform: (parsed) => transformMenuAiResponse(parsed, serviceDate, model, now),
+  });
+}
+
+/**
+ * Build system and user prompt for parsing office hours text into structured recurrence rules.
+ */
+export function buildOfficeHoursPrompt({ text, course = '', dateStr, timezone = config.timezone }) {
+  const systemMessage = [
+    `You are an expert academic schedule parser for University of Waterloo students.`,
+    `Current date is ${dateStr} in timezone ${timezone}.`,
+    `Your task is to parse unstructured text written by a professor, instructor, or teaching assistant describing office hours, tutorial sessions, or help sessions into structured recurrence rules.`,
+    `CRITICAL REQUIREMENTS:`,
+    `1. Output weekdays strictly as two-letter iCalendar codes in the 'byday' array: ['MO','TU','WE','TH','FR','SA','SU'].`,
+    `   Note that 'MW' means ['MO','WE'], 'TTh' or 'TR' means ['TU','TH'], 'MWF' means ['MO','WE','FR'], 'Th' means ['TH'].`,
+    `2. Output times in 24-hour wall-clock format 'HH:MM' (e.g. '14:00' for 2:00pm, '10:30' for 10:30am). In academic contexts, '2-3pm' means '14:00' to '15:00'.`,
+    `3. Standard UW slot preservation: 50-minute slots like '10:30-11:20' or '13:30-14:20' must be preserved exactly. Do not round or correct them to :30.`,
+    `4. One rule per distinct weekday-set + time + location combination. 'Mon & Wed 2-3 in E7 3416' is ONE rule with byday: ['MO','WE']. However, a session on Mon 2-3 and a different session on Thu 10-11 are TWO separate rules.`,
+    `5. If a course code is known or mentioned (e.g. 'ECE 198'), assign it to 'course'. Otherwise use empty string ''.`,
+    `6. 'kind' must be one of: 'office_hours', 'tutorial', 'help_session', 'other'.`,
+    `7. 'starts_on': inclusive start date 'YYYY-MM-DD' if stated (e.g., 'starting next week', 'starts Oct 3'), otherwise null (meaning immediately).`,
+    `8. 'until': inclusive end date 'YYYY-MM-DD' if stated (e.g., 'through Dec 5', 'until Dec 5'), otherwise null (+120 days default).`,
+    `9. Non-representable schedule exceptions: Reading week exclusions, holiday cancellations, appointment-only instructions, or other conditions MUST be placed into 'notes'.`,
+    `10. Uncertainties, assumptions, or missing end dates MUST be placed into the 'warnings' array.`,
+    `11. HONESTY: Never invent a location, host, or end date. Empty string or null is correct when the text is silent.`,
+    `12. If the text specifies no recurring schedule at all (e.g. 'Office hours by appointment only, email me'), output an EMPTY rules array (rules: []) and explain in 'warnings'. Never fabricate a recurring rule.`,
+    `13. 'confidence' is a number between 0 and 1 representing your confidence in the extraction.`,
+    `14. 'source_text' is the specific text snippet that generated this rule.`,
+    `Return ONLY a valid JSON object matching the requested schema.`,
+  ].join('\n');
+
+  const fewShotMessages = [
+    {
+      role: 'user',
+      content: JSON.stringify({
+        text: 'Office hours: Mon & Wed 2:00-3:00pm in E7 3416, starting next week through Dec 5.\nTA session Thursdays 10:30-11:20 in DC 2568 (no session during reading week).',
+        course: 'ECE 198',
+      }),
+    },
+    {
+      role: 'assistant',
+      content: JSON.stringify({
+        rules: [
+          {
+            course: 'ECE 198',
+            label: 'Office hours',
+            kind: 'office_hours',
+            host: '',
+            location: 'E7 3416',
+            byday: ['MO', 'WE'],
+            start_local: '14:00',
+            end_local: '15:00',
+            starts_on: '2026-09-28',
+            until: '2026-12-05',
+            notes: '',
+            confidence: 0.95,
+            source_text: 'Office hours: Mon & Wed 2:00-3:00pm in E7 3416, starting next week through Dec 5.',
+          },
+          {
+            course: 'ECE 198',
+            label: 'TA session',
+            kind: 'help_session',
+            host: '',
+            location: 'DC 2568',
+            byday: ['TH'],
+            start_local: '10:30',
+            end_local: '11:20',
+            starts_on: null,
+            until: null,
+            notes: 'no session during reading week',
+            confidence: 0.95,
+            source_text: 'TA session Thursdays 10:30-11:20 in DC 2568 (no session during reading week).',
+          },
+        ],
+        warnings: ['TA session has no end date stated, defaulted to term duration'],
+      }),
+    },
+  ];
+
+  const userMessage = JSON.stringify({
+    text,
+    course: course || '',
+  });
+
+  return { systemMessage, fewShotMessages, userMessage };
+}
+
+/**
+ * Parse office hours text with AI into a validated OfficeHoursDraft.
+ * Never writes to storage.
+ */
+export async function parseOfficeHoursWithAi({
+  text,
+  course = '',
+  model = DEFAULT_AI_MODEL,
+  cfEnv = null,
+  env = null,
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  force = false,
+  now = Date.now(),
+  timezone = config.timezone,
+}) {
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    throw new Error('Office hours text cannot be empty');
+  }
+
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+  const key = officeHoursCacheKey(text, model);
+  const { systemMessage, fewShotMessages, userMessage } = buildOfficeHoursPrompt({
+    text,
+    course,
+    dateStr,
+    timezone,
+  });
+
+  return await runStructured({
+    systemMessage,
+    userMessage,
+    schema: OfficeHoursDraft,
+    jsonSchema: OFFICE_HOURS_JSON_SCHEMA,
+    model,
+    cfEnv,
+    env,
+    accountId,
+    apiToken,
+    cacheKey: key,
+    ttlMs: OFFICE_HOURS_CACHE_TTL_MS,
+    now,
+    force,
+    fewShotMessages,
+    transform: (parsed) => {
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) return null;
+      const rawRules = parsed.rules;
+      const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+      const rules = rawRules.map((r) => ({
+        course: r.course || course || '',
+        label: r.label || 'Office hours',
+        kind: ['office_hours', 'tutorial', 'help_session', 'other'].includes(r.kind) ? r.kind : 'office_hours',
+        host: r.host || '',
+        location: r.location || '',
+        byday: Array.isArray(r.byday) ? r.byday : [],
+        start_local: r.start_local || '',
+        end_local: r.end_local || '',
+        starts_on: r.starts_on || null,
+        until: r.until || null,
+        notes: r.notes || '',
+        confidence: typeof r.confidence === 'number' ? r.confidence : 1,
+        source_text: r.source_text || text.trim(),
+      }));
+      return { rules, warnings };
+    },
+  });
 }

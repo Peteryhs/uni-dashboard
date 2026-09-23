@@ -24,7 +24,7 @@ export const WeatherSlice = z.object({
 
 export const FollowingCommitment = z.object({
   title: z.string(),
-  kind: z.enum(['class', 'exam', 'deadline', 'event']).optional(),
+  kind: z.enum(['class', 'exam', 'deadline', 'event', 'office_hours']).optional(),
   location: z.string().default(''),
   starts_at: EPOCH_MS.optional(),
   ends_at: EPOCH_MS.optional(),
@@ -34,7 +34,7 @@ export const FollowingCommitment = z.object({
 export const NextCommitmentData = z.object({
   title: z.string(),
   subtitle: z.string().default(''),
-  kind: z.enum(['class', 'exam', 'deadline', 'event']).optional(),
+  kind: z.enum(['class', 'exam', 'deadline', 'event', 'office_hours']).optional(),
   location: z.string().default(''),
   starts_at: EPOCH_MS.optional(),
   ends_at: EPOCH_MS.optional(),

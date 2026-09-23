@@ -40,7 +40,7 @@ const today = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 }).format(new Date());
 
-await grab('food daily menu', 'https://uwaterloo.ca/food-services/daily-menu', `food-${today}.html`);
+await grab('food daily menu', `https://uwaterloo.ca/food-services/daily-menu?date=${today}`, `food-${today}.html`);
 await grab('campus status json', 'https://status.uwaterloo.ca/api/v2/status.json', `status-${today}.json`);
 
 // Public feed stand-in for the two secret ICS feeds, to prove the ICS path with real bytes.

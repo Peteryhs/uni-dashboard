@@ -18,6 +18,8 @@ import {
   type Bundle,
   type HealthResponse,
   type FoodAiRecommendation,
+  type OfficeHoursConfig,
+  type ParseOfficeHoursResponse,
 } from './contract';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
@@ -194,4 +196,71 @@ export async function rankFoodWithAi(
     throw new RelayError(errJson.error || `AI ranking failed with ${res.status}`, res.status);
   }
   return res.json() as Promise<FoodAiRecommendation>;
+}
+
+export interface AiModelInfo {
+  id: string;
+  name: string;
+  tag?: string;
+}
+
+export interface AiModelsResponse {
+  default_model: string;
+  models: AiModelInfo[];
+}
+
+export async function fetchAiModels(signal?: AbortSignal): Promise<AiModelsResponse> {
+  return getJson<AiModelsResponse>('/v1/ai/models', signal);
+}
+
+export async function parseOfficeHours(
+  text: string,
+  opts: { course?: string; model?: string; force?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<ParseOfficeHoursResponse> {
+  const res = await fetch('/v1/ai/parse-office-hours', {
+    method: 'POST',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ text, ...opts }),
+  });
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}));
+    const message = errJson.error || `Parsing failed with status ${res.status}`;
+    const err = new RelayError(message, res.status);
+    if (errJson.raw) {
+      (err as any).raw = errJson.raw;
+    }
+    throw err;
+  }
+  return res.json() as Promise<ParseOfficeHoursResponse>;
+}
+
+export async function getOfficeHours(signal?: AbortSignal): Promise<OfficeHoursConfig> {
+  return getJson<OfficeHoursConfig>('/v1/office-hours', signal);
+}
+
+export async function putOfficeHours(
+  config: OfficeHoursConfig,
+  signal?: AbortSignal,
+): Promise<{ config: OfficeHoursConfig; rows_written: number }> {
+  const res = await fetch('/v1/office-hours', {
+    method: 'PUT',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}));
+    throw new RelayError(errJson.error || `Saving office hours failed with status ${res.status}`, res.status);
+  }
+  return res.json() as Promise<{ config: OfficeHoursConfig; rows_written: number }>;
 }

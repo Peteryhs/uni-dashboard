@@ -259,6 +259,11 @@ export class D1Store {
     return res.results || [];
   }
 
+  async getSetting(name) {
+    const row = await this.db.prepare('SELECT value FROM setting WHERE name=?').bind(name).first();
+    return row ? row.value : null;
+  }
+
   async setSetting(name, value, now = Date.now()) {
     await this.db
       .prepare(

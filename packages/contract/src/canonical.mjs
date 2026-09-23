@@ -21,7 +21,7 @@ export const RowBase = {
 
 export const TimelineEvent = z.object({
   ...RowBase,
-  kind: z.enum(['class', 'exam', 'deadline', 'event']),
+  kind: z.enum(['class', 'exam', 'deadline', 'event', 'office_hours']),
   title: z.string(),
   subtitle: z.string().default(''),
   location: z.string().default(''),

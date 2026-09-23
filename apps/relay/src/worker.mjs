@@ -17,7 +17,9 @@ import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
-import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
+import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
+import { OfficeHoursConfig } from '#contract/office-hours.mjs';
+import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -45,6 +47,14 @@ const WRITABLE_SETTINGS = {
   CLOUDFLARE_ACCOUNT_ID: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
   CLOUDFLARE_API_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
   RELAY_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
+  OFFICE_HOURS_JSON: (v) => {
+    try {
+      const parsed = JSON.parse(v);
+      return OfficeHoursConfig.safeParse(parsed).success;
+    } catch {
+      return false;
+    }
+  },
 };
 
 const SETTING_KEYS = Object.keys(WRITABLE_SETTINGS);
@@ -59,6 +69,7 @@ async function applySettings(store) {
   const fromDb = [];
   for (const row of rows) {
     if (!SETTING_KEYS.includes(row.name) || !row.value) continue;
+    if (row.name === 'OFFICE_HOURS_JSON') continue;
     process.env[row.name] = row.value;
     fromDb.push(row.name);
   }
@@ -271,6 +282,87 @@ async function handleFetch(request, env) {
     }
   }
 
+  if (path === '/v1/ai/parse-office-hours' && request.method === 'POST') {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'invalid json' }, 400);
+    }
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) {
+      return json({ error: 'Office hours text cannot be empty' }, 400);
+    }
+    const course = typeof body.course === 'string' ? body.course.trim() : '';
+    const model = body.model || DEFAULT_AI_MODEL;
+    const force = Boolean(body.force);
+    const now = Date.now();
+
+    try {
+      const draft = await parseOfficeHoursWithAi({
+        text,
+        course,
+        model,
+        force,
+        now,
+        cfEnv: env,
+      });
+      const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
+      return json({ draft, preview, model });
+    } catch (err) {
+      const status = err.status || 502;
+      const payload = { error: err.message };
+      if (err.raw) payload.raw = err.raw;
+      return json(payload, status);
+    }
+  }
+
+  if (path === '/v1/office-hours' && request.method === 'GET') {
+    const raw = await store.getSetting('OFFICE_HOURS_JSON');
+    if (!raw) {
+      return json({ rules: [], version: 1 });
+    }
+    try {
+      const config = JSON.parse(raw);
+      const parsed = OfficeHoursConfig.safeParse(config);
+      return json(parsed.success ? parsed.data : { rules: [], version: 1 });
+    } catch {
+      return json({ rules: [], version: 1 });
+    }
+  }
+
+  if (path === '/v1/office-hours' && request.method === 'PUT') {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'invalid json' }, 400);
+    }
+    const now = Date.now();
+    if (body && Array.isArray(body.rules)) {
+      body.rules = body.rules.map((r) => ({
+        ...r,
+        id: r.id || crypto.randomUUID().slice(0, 10),
+        created_at: r.created_at || now,
+        updated_at: now,
+      }));
+    }
+    const parsed = OfficeHoursConfig.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Validation failed', details: parsed.error.issues }, 400);
+    }
+    const config = parsed.data;
+    await store.setSetting('OFFICE_HOURS_JSON', JSON.stringify(config), now);
+
+    const source = sourceById('user-office-hours', SOURCES);
+    let rowsWritten = 0;
+    if (source) {
+      const receipt = await runSource(source, store, { now });
+      rowsWritten = receipt.rows_written;
+    }
+    return json({ config, rows_written: rowsWritten });
+  }
+
   /**
    * Credentials, writable from the app.
    *
@@ -340,7 +432,9 @@ async function handleFetch(request, env) {
           );
         }
         await store.setSetting(name, trimmed, Date.now());
-        process.env[name] = trimmed;
+        if (name !== 'OFFICE_HOURS_JSON') {
+          process.env[name] = trimmed;
+        }
         stored.push({ name, cleared: false });
       }
 

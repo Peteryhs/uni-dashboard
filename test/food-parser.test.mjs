@@ -144,3 +144,29 @@ test('valid_until covers the service day rather than an arbitrary window', () =>
   }).format(new Date(validUntil));
   assert.match(asLocal, /2026-09-22, 03/, `expected 03:00 the next day, got ${asLocal}`);
 });
+
+test('fetchRaw always includes date parameter for current Toronto date', async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls = [];
+  globalThis.fetch = async (target) => {
+    fetchedUrls.push(String(target));
+    return {
+      status: 200,
+      headers: { get: () => 'text/html' },
+      text: async () => '<div class="food_header_title">REV</div><div class="food_link">Soup</div>',
+    };
+  };
+
+  try {
+    // 1. Without explicit date in ctx: defaults to today in Toronto based on now
+    await foodSource.fetchRaw({ now: Date.UTC(2026, 8, 23, 14, 0) });
+    assert.equal(fetchedUrls[0], 'https://uwaterloo.ca/food-services/daily-menu?date=2026-09-23');
+
+    // 2. With explicit date in ctx
+    await foodSource.fetchRaw({ date: '2026-09-24' });
+    assert.equal(fetchedUrls[1], 'https://uwaterloo.ca/food-services/daily-menu?date=2026-09-24');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

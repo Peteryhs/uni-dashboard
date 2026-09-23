@@ -5,8 +5,10 @@
 import food from './food/source.mjs';
 import { portalIcs, learnIcs } from './ics/source.mjs';
 import status from './status/source.mjs';
+import userOfficeHours from './office-hours/source.mjs';
 
-export const SOURCES = [food, portalIcs, learnIcs, status];
+export const SOURCES = [food, portalIcs, learnIcs, status, userOfficeHours];
+export { userOfficeHours };
 
 export function enabledSources(sources = SOURCES) {
   return sources.filter((s) => !s.disabled);

@@ -46,7 +46,9 @@ function endOfServiceDay(serviceDate, tz = DEFAULT_TZ) {
 }
 
 export async function fetchRaw(ctx) {
-  const target = ctx?.date ? `${url}?date=${ctx.date}` : url;
+  const serviceDate = ctx?.date ?? todayInToronto(ctx?.now ?? Date.now());
+  const baseUrl = ctx?.url ?? url;
+  const target = baseUrl.includes('?') ? `${baseUrl}&date=${serviceDate}` : `${baseUrl}?date=${serviceDate}`;
   const res = await fetch(target, {
     headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml' },
     redirect: 'follow',

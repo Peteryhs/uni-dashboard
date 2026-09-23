@@ -89,7 +89,7 @@ export interface WeatherSlice {
 
 export interface FollowingCommitment {
   title: string;
-  kind?: 'class' | 'exam' | 'deadline' | 'event';
+  kind?: 'class' | 'exam' | 'deadline' | 'event' | 'office_hours';
   location: string;
   starts_at?: number;
   ends_at?: number;
@@ -99,13 +99,65 @@ export interface FollowingCommitment {
 export interface NextCommitmentData {
   title: string;
   subtitle: string;
-  kind?: 'class' | 'exam' | 'deadline' | 'event';
+  kind?: 'class' | 'exam' | 'deadline' | 'event' | 'office_hours';
   location: string;
   starts_at?: number;
   ends_at?: number;
   all_day?: boolean;
   weather?: WeatherSlice | null;
   following?: FollowingCommitment | null;
+}
+
+// ---------------------------------------------------------------------------
+// Office Hours types
+// ---------------------------------------------------------------------------
+
+export type WeekdayCode = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
+export type OfficeHourKind = 'office_hours' | 'tutorial' | 'help_session' | 'other';
+
+export interface OfficeHourRule {
+  id: string;
+  course: string;
+  label: string;
+  kind: OfficeHourKind;
+  host: string;
+  location: string;
+  byday: WeekdayCode[];
+  start_local: string;
+  end_local: string;
+  starts_on: string | null;
+  until: string | null;
+  notes: string;
+  confidence: number;
+  source_text: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface OfficeHoursConfig {
+  rules: OfficeHourRule[];
+  version: 1;
+}
+
+export type OfficeHoursDraftRule = Omit<OfficeHourRule, 'id' | 'created_at' | 'updated_at'>;
+
+export interface OfficeHoursDraft {
+  rules: OfficeHoursDraftRule[];
+  warnings: string[];
+}
+
+export interface PreviewOccurrence {
+  rule_index: number;
+  starts_at: number;
+  ends_at: number;
+  label: string;
+  location: string;
+}
+
+export interface ParseOfficeHoursResponse {
+  draft: OfficeHoursDraft;
+  preview: PreviewOccurrence[];
+  model: string;
 }
 
 export interface DueSoonLink {

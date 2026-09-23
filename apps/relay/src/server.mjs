@@ -17,7 +17,9 @@ import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
-import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
+import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
+import { OfficeHoursConfig } from '#contract/office-hours.mjs';
+import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
 
 export function createServer({ store, sources = SOURCES, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true }) {
   const started = Date.now();
@@ -195,6 +197,90 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         } catch (err) {
           return send(502, { error: err.message });
         }
+      }
+
+      if (url.pathname === '/v1/ai/parse-office-hours' && req.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body = {};
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          return send(400, { error: 'invalid json' });
+        }
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!text) {
+          return send(400, { error: 'Office hours text cannot be empty' });
+        }
+        const course = typeof body.course === 'string' ? body.course.trim() : '';
+        const model = body.model || DEFAULT_AI_MODEL;
+        const force = Boolean(body.force);
+        const now = Date.now();
+
+        try {
+          const draft = await parseOfficeHoursWithAi({
+            text,
+            course,
+            model,
+            force,
+            now,
+          });
+          const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
+          return send(200, { draft, preview, model });
+        } catch (err) {
+          const status = err.status || 502;
+          const payload = { error: err.message };
+          if (err.raw) payload.raw = err.raw;
+          return send(status, payload);
+        }
+      }
+
+      if (url.pathname === '/v1/office-hours' && req.method === 'GET') {
+        const raw = store.getSetting('OFFICE_HOURS_JSON');
+        if (!raw) {
+          return send(200, { rules: [], version: 1 });
+        }
+        try {
+          const config = JSON.parse(raw);
+          const parsed = OfficeHoursConfig.safeParse(config);
+          return send(200, parsed.success ? parsed.data : { rules: [], version: 1 });
+        } catch {
+          return send(200, { rules: [], version: 1 });
+        }
+      }
+
+      if (url.pathname === '/v1/office-hours' && req.method === 'PUT') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let body = {};
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          return send(400, { error: 'invalid json' });
+        }
+        const now = Date.now();
+        if (body && Array.isArray(body.rules)) {
+          body.rules = body.rules.map((r) => ({
+            ...r,
+            id: r.id || globalThis.crypto.randomUUID().slice(0, 10),
+            created_at: r.created_at || now,
+            updated_at: now,
+          }));
+        }
+        const parsed = OfficeHoursConfig.safeParse(body);
+        if (!parsed.success) {
+          return send(400, { error: 'Validation failed', details: parsed.error.issues });
+        }
+        const config = parsed.data;
+        store.setSetting('OFFICE_HOURS_JSON', JSON.stringify(config), now);
+
+        const source = sourceById('user-office-hours', sources);
+        let rowsWritten = 0;
+        if (source) {
+          const receipt = await runSource(source, store, { now });
+          rowsWritten = receipt.rows_written;
+        }
+        return send(200, { config, rows_written: rowsWritten });
       }
 
       /**
