@@ -32,6 +32,7 @@ export function aiBudgetGuard(store, { now = null } = {}) {
     if (!reserved) {
       const error = new Error('Today’s AI allowance is reserved. Your schedule and recommendations still work; AI imports resume after midnight UTC.');
       error.status = 429;
+      error.code = 'AI_DAILY_BUDGET_REACHED';
       throw error;
     }
     return reserved;

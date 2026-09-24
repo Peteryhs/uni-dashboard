@@ -1,0 +1,110 @@
+.ai-menu-summary {
+  position: relative;
+  margin: 0 0 18px;
+  padding: 3px 0 3px 17px;
+  color: #8dbaff;
+}
+
+.ai-menu-summary::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 14px;
+  border-top: 3px solid #3478eb;
+  border-left: 3px solid #3478eb;
+  border-top-left-radius: 8px;
+  content: '';
+}
+
+.ai-menu-summary--quiet {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 38px;
+  margin-bottom: 12px;
+  color: #8dbaff;
+  font-size: 12px;
+}
+
+.ai-menu-summary__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.ai-menu-summary__restaurant {
+  min-width: 0;
+  color: #8dbaff;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.ai-menu-summary__rank-again {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 2px;
+  color: #8dbaff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ai-menu-summary__rank-again:hover:not(:disabled) {
+  color: #bfd8ff;
+}
+
+.ai-menu-summary__rank-again:focus-visible {
+  outline: 2px solid #78adff;
+  outline-offset: 2px;
+}
+
+.ai-menu-summary__rank-again:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.ai-menu-summary__rank-again--quiet {
+  color: #8dbaff;
+}
+
+.ai-menu-summary__rank-again--quiet:hover:not(:disabled) {
+  color: #bfd8ff;
+}
+
+.ai-menu-summary__rerank-error {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  color: #ffb4aa;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ai-menu-summary__limited {
+  margin: 7px 0 0;
+  color: #a9c7f2;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ai-menu-summary--quiet .ai-menu-summary__limited {
+  margin: 0;
+  color: inherit;
+}
+
+@media (max-width: 760px) {
+  .ai-menu-summary__heading { align-items: flex-start; }
+  .ai-menu-summary__restaurant { font-size: 16px; }
+  .ai-menu-summary__rank-again {
+    min-height: 44px;
+    flex: 0 0 auto;
+  }
+}

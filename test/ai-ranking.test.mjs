@@ -7,6 +7,8 @@ import {
   rankDailyMenu,
   clearAiCache,
   DEFAULT_AI_MODEL,
+  parseJsonFromAiText,
+  unwrapAiResponseText,
 } from '../apps/relay/src/ai.mjs';
 
 const SAMPLE_ROWS = [
@@ -60,6 +62,14 @@ test('buildPrompt formats prompt for compact token consumption', () => {
   assert.ok(prompt.systemMessage.includes('JSON'));
   assert.ok(prompt.userMessage.includes('2026-09-21'));
   assert.ok(prompt.userMessage.includes('Jerk Chicken Drumsticks'));
+});
+
+test('AI JSON parser accepts fenced, nested-string, and prose-wrapped objects without changing fields', () => {
+  const expected = { headline: 'Cafe serves "spicy" soup.', ranked_outlets: [{ outlet: 'Cafe' }] };
+  assert.deepEqual(parseJsonFromAiText(`\`\`\`json\n${JSON.stringify(expected)}\n\`\`\``), expected);
+  assert.deepEqual(parseJsonFromAiText(JSON.stringify(JSON.stringify(expected))), expected);
+  assert.deepEqual(parseJsonFromAiText(`Here is the result:\n${JSON.stringify(expected)}\nEnd.`), expected);
+  assert.equal(unwrapAiResponseText({ choices: [{ message: { content: [{ type: 'text', text: 'ok' }] } }] }), 'ok');
 });
 
 test('cacheKey produces deterministic hashes regardless of whitespace or casing', () => {
@@ -187,6 +197,101 @@ test('rankDailyMenu handles OpenAI/Gemma 4 choices response format', async () =>
   assert.equal(res.ranked_outlets[0].highlights[0].dish, 'Soy Chili Chicken Wings');
 });
 
+test('rankDailyMenu keeps JSON mode and never invents a missing score', async () => {
+  clearAiCache();
+  let calls = 0;
+  const malformed = {
+    headline: 'Cafe looks good.',
+    top_outlet: 'Cafe',
+    ranked_outlets: [{ outlet: 'Cafe', rank: 1, verdict: 'Good fit.', highlights: [] }],
+    tip: '',
+  };
+  const env = { AI: { run: async (_model, payload) => {
+    calls++;
+    assert.equal(payload.response_format.type, 'json_object');
+    assert.equal(payload.max_tokens, 2048, 'dining gets the full supported JSON output budget');
+    return { response: JSON.stringify(malformed) };
+  } } };
+
+  await assert.rejects(rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: {},
+    model: DEFAULT_AI_MODEL,
+    env,
+    force: true,
+    now: 5000,
+  }), (error) => {
+    assert.match(error.message, /match_score/);
+    assert.equal(error.diagnostic.parses_as_json, true);
+    assert.equal(error.diagnostic.has_ranking_key, true);
+    return true;
+  });
+  assert.equal(calls, 2, 'one bounded retry is allowed');
+});
+
+test('rankDailyMenu retries unreadable JSON without echoing the provider text and keeps safe diagnostics', async () => {
+  clearAiCache();
+  const privateProviderText = 'PRIVATE_PROFILE_RAW_SENTINEL: this is not JSON';
+  let calls = 0;
+  const env = { AI: { run: async (_model, payload) => {
+    calls++;
+    if (calls === 2) {
+      const retryPrompt = payload.messages.at(-1).content;
+      assert.match(retryPrompt, /Return one JSON object only/);
+      assert.doesNotMatch(retryPrompt, /PRIVATE_PROFILE_RAW_SENTINEL/);
+    }
+    return { response: privateProviderText };
+  } } };
+
+  await assert.rejects(rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'private taste profile' },
+    model: DEFAULT_AI_MODEL,
+    env,
+    force: true,
+    now: 5_500,
+  }), (error) => {
+    assert.match(error.message, /Response was not valid JSON/);
+    assert.equal(error.diagnostic.response_chars, privateProviderText.length);
+    assert.equal(error.diagnostic.starts_with_json, false);
+    assert.equal(error.diagnostic.ends_with_json, false);
+    assert.equal(error.diagnostic.parses_as_json, false);
+    assert.doesNotMatch(JSON.stringify(error.diagnostic), /PRIVATE_PROFILE_RAW_SENTINEL/);
+    return true;
+  });
+  assert.equal(calls, 2, 'malformed output gets one bounded retry');
+});
+
+test('rankDailyMenu unwraps provider envelopes and camelCase keys without changing selected model or score', async () => {
+  clearAiCache();
+  const selectedModel = '@cf/zai-org/glm-4.7-flash';
+  let calls = 0;
+  const aiData = {
+    headline: 'Cafe fits today.',
+    topOutlet: 'Cafe',
+    rankedOutlets: [{ outletName: 'Cafe', rank: 1, matchScore: 83, verdict: 'Good fit.', highlights: [] }],
+    tip: 'Go early.',
+  };
+  const res = await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'comfort food' },
+    model: selectedModel,
+    env: { AI: { run: async (model) => {
+      calls++;
+      assert.equal(model, selectedModel);
+      return { response: JSON.stringify({ result: JSON.stringify(aiData) }) };
+    } } },
+    force: true,
+    now: 6000,
+  });
+  assert.equal(calls, 1);
+  assert.equal(res.model, selectedModel);
+  assert.equal(res.ranked_outlets[0].match_score, 83);
+});
+
 test('rankDailyMenu caches evaluation and returns identical payload', async () => {
   clearAiCache();
   let calls = 0;
@@ -303,4 +408,3 @@ test('rankDailyMenu clamps dish highlight why to 5 words max', async () => {
   const h2 = res.ranked_outlets[0].highlights[1];
   assert.equal(h2.why, 'Crispy spicy beef');
 });
-

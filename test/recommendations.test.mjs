@@ -36,6 +36,35 @@ test('lunch never takes priority over an imminent assessment or an in-progress c
   assert.match(feed.items.find(item => item.kind === 'food').body, /next break/);
 });
 
+test('lunch names the AI-highlighted dishes instead of the first menu rows', () => {
+  const data = syntheticDay();
+  data.menu = [
+    { service_date: DATE, outlet: 'Campus Cafe', dish: 'Pasta', url: 'https://example.edu/pasta' },
+    { service_date: DATE, outlet: 'Campus Cafe', dish: 'Tofu bowl', url: 'https://example.edu/tofu' },
+    { service_date: DATE, outlet: 'Campus Cafe', dish: 'Soup', url: 'https://example.edu/soup' },
+  ];
+  data.food.recommendation.ranked_outlets[0].highlights = [{ dish: 'Tofu bowl', why: 'Plant protein' }];
+  const lunch = recommendationsFromData({ ...data, now: at(DATE, '11:45') }).items.find(item => item.kind === 'food');
+  assert.match(lunch.body, /Tofu bowl\./);
+  assert.doesNotMatch(lunch.body, /AI picks?:/i);
+  assert.doesNotMatch(lunch.body, /Pasta|Soup/);
+  assert.equal(lunch.action.url, 'https://example.edu/tofu');
+  data.food.recommendation.ranked_outlets[0].highlights = [{ dish: 'Missing dish', why: 'Not posted' }];
+  const unmatched = recommendationsFromData({ ...data, now: at(DATE, '11:45') }).items.find(item => item.kind === 'food');
+  assert.match(unmatched.body, /No AI-highlighted dish matched/);
+  assert.doesNotMatch(unmatched.body, /Pasta|Tofu bowl|Soup/);
+});
+
+test('lunch title uses the short dining hall name', () => {
+  const data = syntheticDay();
+  const outlet = 'The Market - Residence Dining Hall';
+  data.food.recommendation.top_outlet = outlet;
+  data.food.recommendation.ranked_outlets[0].outlet = outlet;
+  data.menu = [{ service_date: DATE, outlet, dish: 'Butter Chicken', url: 'https://example.edu/butter-chicken' }];
+  const lunch = recommendationsFromData({ ...data, now: at(DATE, '11:45') }).items.find(item => item.kind === 'food');
+  assert.equal(lunch.title, 'Lunch: The Market');
+});
+
 test('ambiguous LEARN events stay visible in calendar without blocking study windows or becoming tasks', () => {
   const data = syntheticDay();
   data.calendar.days[0].events.push({
@@ -61,7 +90,7 @@ test('quiz coverage uses only explicit LEARN description text and formats due ti
     description: 'Please complete once you have reviewed the content in Part 2.',
   });
   const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
-  const quiz = feed.tasks.small.find(task => task.title === 'Résumé Quiz - 15 minutes - Due');
+  const quiz = feed.tasks.small.find(task => task.title === 'Résumé Quiz');
   assert.deepEqual(quiz.topics, ['Part 2']);
   assert.match(quiz.body, /Coverage: Part 2\./);
   assert.match(quiz.body, /Due today at 11:59 pm\./);
@@ -191,7 +220,7 @@ test('annotation-rich assessment matches without merging differently numbered qu
   data.syllabi[0].entries.push({ ...assessment, id: 'quiz20', title: 'Quiz 20 | topics: arrays | 11:59 PM', topics: ['Arrays'] });
   const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
   assert.equal(feed.tasks.small.length, 2);
-  const quiz = feed.tasks.small.find(task => task.title === 'ECE 150 - Quiz 2 - Due');
+  const quiz = feed.tasks.small.find(task => task.title === 'ECE 150 - Quiz 2');
   assert.deepEqual(quiz.topics, ['Loops and functions']);
   assert.equal(quiz.source_label, 'LEARN + syllabus');
 });

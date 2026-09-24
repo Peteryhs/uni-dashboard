@@ -68,6 +68,7 @@ export function SourcesPanel({
               open && 'rotate-180 text-foreground',
             )}
           />
+          <span className="settings-source-toggle-label">{open ? 'Close' : 'Open'}</span>
         </button>
 
         <Button

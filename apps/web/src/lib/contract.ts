@@ -17,6 +17,46 @@ import {
   SCHEMA_VERSION as SCHEMA_VERSION_JS,
 } from '#contract/cards.mjs';
 import { validateCalendar as validateCalendarJs } from '#contract/calendar.mjs';
+import { validateRecommendations as validateRecommendationsJs } from '#contract/recommendations.mjs';
+
+export interface RecommendationItem {
+  id: string;
+  revision: string;
+  kind: 'class' | 'task' | 'learning' | 'office_hours' | 'focus' | 'conflict' | 'food' | 'weather';
+  priority: number;
+  title: string;
+  body: string;
+  course: string | null;
+  starts_at: number | null;
+  ends_at: number | null;
+  due_at: number | null;
+  scheduled_date: string | null;
+  time_label: 'Due' | 'Starts' | 'Scheduled' | null;
+  effort: 'large' | 'small' | 'unknown';
+  estimated_minutes: number | null;
+  available_minutes: number | null;
+  action: { label: string; url: string } | null;
+  topics: string[];
+  readings: string[];
+  reason: string;
+  evidence: string;
+  source_label: string;
+  state: 'live' | 'ageing' | 'stale' | 'dead';
+  can_complete: boolean;
+}
+
+export interface RecommendationResponse {
+  schema_version: 1;
+  generated_at: number;
+  timezone: string;
+  refresh_after_ms: number;
+  headline: string;
+  items: RecommendationItem[];
+  tasks: { large: RecommendationItem[]; small: RecommendationItem[] };
+  warnings: string[];
+}
+
+export const validateRecommendations = validateRecommendationsJs as (value: unknown) => RecommendationResponse;
 
 export type CardState =
   | 'live'
@@ -88,6 +128,10 @@ export interface CalendarEvent {
   description: string;
   url: string | null;
   links: { label: string; url: string; kind: string }[];
+  topics?: string[];
+  readings?: string[];
+  syllabus_evidence?: string[];
+  syllabus_scope?: 'date' | 'period' | null;
   starts_at: number;
   ends_at: number;
   all_day: boolean;
@@ -114,6 +158,49 @@ export interface CalendarData {
 export interface CourseResource { title: string; url: string; kind: 'learn' | 'textbook' | 'resource' }
 
 export const validateCalendar = validateCalendarJs as (value: unknown) => CalendarData;
+
+// ---------------------------------------------------------------------------
+// Course syllabus schedule, saved for backend calendar and recommendation use.
+// ---------------------------------------------------------------------------
+
+export type SyllabusEntryKind = 'topic' | 'assessment' | 'reading';
+
+export interface SyllabusEntry {
+  id: string;
+  kind: SyllabusEntryKind;
+  title: string;
+  start_date: string;
+  end_date: string;
+  due_at: number | null;
+  topics: string[];
+  readings: string[];
+  url: string | null;
+  effort: 'large' | 'small' | 'unknown';
+  estimated_minutes: number | null;
+  evidence: string;
+}
+
+export interface CourseSyllabus {
+  course: string;
+  title: string;
+  term_start: string | null;
+  entries: SyllabusEntry[];
+  warnings: string[];
+  updated_at: number;
+}
+
+export interface CourseSyllabusPreview {
+  syllabus: CourseSyllabus;
+  method: 'rules' | 'ai';
+  warnings: string[];
+}
+
+export interface CourseSyllabusPreviewRequest {
+  text: string;
+  term_start?: string;
+  year?: number;
+  use_ai: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Per-card payload types. These mirror packages/contract/src/card-data.mjs.

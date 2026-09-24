@@ -4,7 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { D1Store } from '../apps/relay/src/d1-store.mjs';
 import worker, { pollDue } from '../apps/relay/src/worker.mjs';
 import { syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
-import { syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
+import { saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
+import { clearAiCache } from '../apps/relay/src/ai.mjs';
 import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
 
 /**
@@ -381,6 +382,44 @@ test('the AI route fails loudly when there is no binding and no REST credentials
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /credentials not configured/i);
+});
+
+test('Worker manual food ranking persists matching results for the automatic recommendation reader', async () => {
+  clearAiCache();
+  const { api } = createMockD1();
+  const store = new D1Store(api);
+  await store.init();
+  const serviceDate = '2026-09-22';
+  await store.upsertRows('menu_item', [{
+    source_id: 'uw-food-daily-menu', external_id: 'manual-dish', observed_at: now,
+    valid_until: now + 43_200_000, service_date: serviceDate, outlet: 'REV', dish: 'Soup', diet: [], allergens: [],
+  }]);
+  const profile = await saveFoodProfile(store, { bio: 'soup fan' });
+  let aiCalls = 0;
+  const env = { DB: api, AI: { run: async () => {
+    aiCalls++;
+    return { response: JSON.stringify({
+      headline: 'Manual soup pick.',
+      top_outlet: 'REV',
+      ranked_outlets: [{ outlet: 'REV', rank: 1, match_score: 86, verdict: 'Soup fits your profile.', highlights: [] }],
+      tip: '',
+    }) };
+  } } };
+
+  const response = await worker.fetch(new Request('https://dash.test/v1/ai/rank-food', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tasteProfile: profile, model: profile.selectedAiModel, date: serviceDate, force: true }),
+  }), env, {});
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).headline, 'Manual soup pick.');
+
+  const savedResponse = await worker.fetch(new Request(`https://dash.test/v1/food/recommendation?date=${serviceDate}`), env, {});
+  const saved = await savedResponse.json();
+  assert.equal(saved.status, 'ready');
+  assert.equal(saved.recommendation.headline, 'Manual soup pick.');
+  assert.equal((await syncFoodRecommendation(store, { cfEnv: env, now })).cached, true);
+  assert.equal(aiCalls, 1, 'background ranking reuses the manual result under the shared signature');
 });
 
 test('raw HTML snapshots download as text rather than execute on the dashboard origin', async () => {

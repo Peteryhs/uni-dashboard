@@ -21,7 +21,7 @@ import { buildCalendar, calendarOptions } from './calendar.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
-import { claimFoodAiRun, getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { claimFoodAiRun, cleanFoodProfile, getFoodProfile, getFoodRecommendation, persistManualFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
 import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
@@ -309,9 +309,10 @@ async function handleFetch(request, env) {
       return json({ error: 'invalid json' }, 400);
     }
     const tasteProfile = body.tasteProfile || {};
-    const model = body.model || DEFAULT_AI_MODEL;
+    const model = body.model || cleanFoodProfile(tasteProfile).selectedAiModel || DEFAULT_AI_MODEL;
     const now = Date.now();
-    const serviceDate = body.date || todayInToronto(now);
+    const requestedDate = body.date || todayInToronto(now);
+    const serviceDate = requestedDate;
 
     let menuRows = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
     if (!menuRows.length) {
@@ -323,7 +324,7 @@ async function handleFetch(request, env) {
     if (!menuRows.length) {
       return json({ error: 'No dining menu items available to evaluate for this date.' }, 404);
     }
-    if (!await claimFoodAiRun(store, now)) return json({ error: 'Daily dining AI limit reached; try again tomorrow.' }, 429);
+    if (!await claimFoodAiRun(store, now)) return json({ error: 'Daily manual dining ranking cap reached; try again after UTC midnight.' }, 429);
     try {
       const recommendation = await rankDailyMenu({
         menuItems: menuRows,
@@ -334,6 +335,15 @@ async function handleFetch(request, env) {
         now,
         cfEnv: env, // native env.AI binding: no API key, no REST round trip
         beforeAiCall: aiBudgetGuard(store),
+      });
+      await persistManualFoodRecommendation(store, {
+        recommendation,
+        tasteProfile,
+        model,
+        requestedDate,
+        serviceDate: menuRows[0]?.service_date || serviceDate,
+        menuItems: menuRows,
+        startedAt: now,
       });
       return json(recommendation);
     } catch (err) {

@@ -148,44 +148,100 @@ export function unwrapAiResponseText(response) {
   if (typeof response === 'string') return response;
   const content =
     response?.choices?.[0]?.message?.content ??
-    response?.response;
+    response?.response ??
+    response?.output_text;
   if (typeof content === 'string') return content;
-  if (content && typeof content === 'object') return JSON.stringify(content);
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === 'string' ? part : part?.text ?? part?.content ?? '').filter(Boolean).join('\n');
+  }
+  if (content && typeof content === 'object') {
+    if (typeof content.text === 'string') return content.text;
+    if (typeof content.content === 'string') return content.content;
+    return JSON.stringify(content);
+  }
   if (response && typeof response === 'object') return JSON.stringify(response);
   return '';
 }
 
-/**
- * Parse JSON from string, falling back to brace extraction.
- */
+function parseJsonCandidate(candidate) {
+  let value = candidate;
+  // A few model/provider combinations return a JSON-encoded string containing the JSON object.
+  // Unwrap at most twice; never try to repair values or infer missing fields.
+  for (let depth = 0; depth <= 2; depth++) {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === 'string' && depth < 2) {
+        value = parsed.trim();
+        continue;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Parse plain, fenced, nested-string, or prose-wrapped JSON without rewriting its data. */
 export function parseJsonFromAiText(text) {
   if (typeof text !== 'string') return null;
   const trimmed = text.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {}
+  const direct = parseJsonCandidate(trimmed);
+  if (direct !== null) return direct;
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  if (fenced) {
+    const parsed = parseJsonCandidate(fenced[1]);
+    if (parsed !== null) return parsed;
+  }
   return extractJson(trimmed);
 }
 
 export function extractJson(str) {
   if (typeof str !== 'string') return null;
-  const firstBrace = str.indexOf('{');
-  const lastBrace = str.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    const candidate = str.slice(firstBrace, lastBrace + 1);
-    try {
-      return JSON.parse(candidate);
-    } catch {}
-  }
-  const firstBracket = str.indexOf('[');
-  const lastBracket = str.lastIndexOf(']');
-  if (firstBracket !== -1 && lastBracket > firstBracket) {
-    const candidate = str.slice(firstBracket, lastBracket + 1);
-    try {
-      return JSON.parse(candidate);
-    } catch {}
+  for (let start = 0; start < str.length; start++) {
+    if (str[start] !== '{' && str[start] !== '[') continue;
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    for (let end = start; end < str.length; end++) {
+      const char = str[end];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{' || char === '[') stack.push(char);
+      else if (char === '}' || char === ']') {
+        const open = stack.pop();
+        if ((char === '}' && open !== '{') || (char === ']' && open !== '[')) break;
+        if (!stack.length) {
+          const parsed = parseJsonCandidate(str.slice(start, end + 1));
+          if (parsed !== null) return parsed;
+          break;
+        }
+      }
+    }
   }
   return null;
+}
+
+function safeResponseDiagnostic(rawResponse, rawText) {
+  const trimmed = rawText.trim();
+  const finishReason = rawResponse?.choices?.[0]?.finish_reason ?? rawResponse?.finish_reason;
+  return {
+    response_chars: rawText.length,
+    starts_with_json: /^[\[{]/.test(trimmed),
+    ends_with_json: /[\]}]$/.test(trimmed),
+    has_ranking_key: /\b(?:ranked_outlets|rankedOutlets)\b/.test(rawText),
+    parses_as_json: parseJsonFromAiText(rawText) !== null,
+    response_envelope: rawResponse?.choices ? 'choices' : rawResponse?.response !== undefined ? 'response' : 'other',
+    ...(typeof finishReason === 'string' && /^[a-z_-]+$/i.test(finishReason) ? { finish_reason: finishReason } : {}),
+  };
 }
 
 /**
@@ -303,14 +359,19 @@ export async function runStructured({
 
   let rawText = unwrapAiResponseText(rawResponse);
   let parsedObj = parseJsonFromAiText(rawText);
-  let transformed = parsedObj;
-  if (transform && parsedObj) {
+  let transformError = '';
+  const applyTransform = (value) => {
+    if (!transform || !value) return value;
     try {
-      transformed = transform(parsedObj);
-    } catch {
-      transformed = null;
+      const transformed = transform(value);
+      if (!transformed) transformError = 'Response JSON did not match the expected structure';
+      return transformed;
+    } catch (error) {
+      transformError = error instanceof Error ? error.message : String(error);
+      return null;
     }
-  }
+  };
+  let transformed = applyTransform(parsedObj);
 
   let validation = schema && transformed ? schema.safeParse(transformed) : { success: Boolean(transformed), data: transformed };
 
@@ -318,14 +379,19 @@ export async function runStructured({
   if (!validation.success || !transformed) {
     const validationError = validation.error
       ? validation.error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
-      : 'Response was not valid JSON';
+      : !parsedObj ? 'Response was not valid JSON' : transformError || 'Response JSON did not match the expected structure';
 
     const retryMessages = [
       ...messages,
-      { role: 'assistant', content: rawText || '{}' },
       {
         role: 'user',
-        content: `Your previous reply failed validation: ${validationError}. Return only valid JSON matching the schema.`,
+        content: [
+          `Your previous response was rejected: ${validationError}.`,
+          'Re-evaluate using only the menu and taste profile from the first user message.',
+          'Return one JSON object only, with no markdown, commentary, or reasoning text.',
+          'Include headline, top_outlet, ranked_outlets, and tip. Each ranked outlet must include outlet, rank, an integer match_score from 0 to 100, verdict, and highlights.',
+          'Do not invent or default a score. Use the evidence in the posted menu and taste profile.',
+        ].join(' '),
       },
     ];
 
@@ -333,14 +399,8 @@ export async function runStructured({
       rawResponse = await callAi(retryMessages);
       rawText = unwrapAiResponseText(rawResponse);
       parsedObj = parseJsonFromAiText(rawText);
-      transformed = parsedObj;
-      if (transform && parsedObj) {
-        try {
-          transformed = transform(parsedObj);
-        } catch {
-          transformed = null;
-        }
-      }
+      transformError = '';
+      transformed = applyTransform(parsedObj);
       validation = schema && transformed ? schema.safeParse(transformed) : { success: Boolean(transformed), data: transformed };
     } catch (retryErr) {
       const err = new Error(`AI execution failed on retry: ${retryErr.message}`);
@@ -352,9 +412,10 @@ export async function runStructured({
     if (!validation.success || !transformed) {
       const secondError = validation.error
         ? validation.error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
-        : 'Response was not valid JSON';
+        : !parsedObj ? 'Response was not valid JSON' : transformError || 'Response JSON did not match the expected structure';
       const err = new Error(`AI response failed schema validation after retry: ${secondError}`);
       err.raw = rawText;
+      err.diagnostic = safeResponseDiagnostic(rawResponse, rawText);
       err.status = 502;
       throw err;
     }
@@ -438,29 +499,36 @@ export function buildPrompt({ serviceDate, tasteProfile, outlets }) {
 }
 
 function transformMenuAiResponse(parsed, serviceDate, model, now) {
-  if (!parsed || !Array.isArray(parsed.ranked_outlets)) {
-    return null;
+  let payload = parsed;
+  for (let depth = 0; depth < 4 && payload && typeof payload === 'object'; depth++) {
+    if (Array.isArray(payload.ranked_outlets) || Array.isArray(payload.rankedOutlets)) break;
+    const nested = payload.result ?? payload.data ?? payload.output ?? payload.response ?? payload.content ?? payload.recommendation;
+    if (nested === undefined) break;
+    payload = typeof nested === 'string' ? parseJsonFromAiText(nested) : nested;
   }
+  const ranked = payload?.ranked_outlets ?? payload?.rankedOutlets;
+  if (!Array.isArray(ranked)) throw new TypeError('Expected a ranked_outlets array in the JSON response');
   return {
     service_date: serviceDate,
     model,
-    headline: parsed.headline || 'Top dining hall recommendations for today.',
-    top_outlet: parsed.top_outlet || parsed.ranked_outlets[0]?.outlet || '',
-    ranked_outlets: parsed.ranked_outlets.map((o, idx) => ({
-      outlet: o.outlet,
-      rank: o.rank ?? idx + 1,
-      match_score: Math.max(0, Math.min(100, Math.round(Number(o.match_score) || 75))),
-      verdict: o.verdict || '',
+    headline: payload.headline,
+    top_outlet: payload.top_outlet ?? payload.topOutlet,
+    ranked_outlets: ranked.map((o) => ({
+      outlet: o.outlet ?? o.outlet_name ?? o.outletName,
+      rank: o.rank,
+      match_score: o.match_score ?? o.matchScore,
+      verdict: o.verdict,
       highlights: Array.isArray(o.highlights)
         ? o.highlights.map((h) => {
-            const rawWhy = String(h.why || '').trim();
+            const rawWhy = typeof h.why === 'string' ? h.why.trim() : h.why;
+            if (typeof rawWhy !== 'string') return { dish: h.dish, why: rawWhy };
             const words = rawWhy.split(/\s+/).filter(Boolean);
             const why = words.length > 5 ? words.slice(0, 5).join(' ') : rawWhy;
-            return { dish: String(h.dish || ''), why };
+            return { dish: h.dish, why };
           })
-        : [],
+        : o.highlights,
     })),
-    tip: parsed.tip || '',
+    tip: payload.tip,
     generated_at: now,
   };
 }
@@ -510,6 +578,7 @@ export async function rankDailyMenu({
     apiToken,
     cacheKey: key,
     ttlMs: CACHE_TTL_MS,
+    maxTokens: 2048,
     beforeAiCall,
     now,
     force,

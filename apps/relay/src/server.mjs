@@ -21,7 +21,7 @@ import { RUN_RETENTION_MS } from './schema.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
-import { claimFoodAiRun, getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { claimFoodAiRun, cleanFoodProfile, getFoodProfile, getFoodRecommendation, persistManualFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
 import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
@@ -252,10 +252,11 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           return send(400, { error: 'invalid json' });
         }
         const tasteProfile = body.tasteProfile || {};
-        const model = body.model || DEFAULT_AI_MODEL;
+        const model = body.model || cleanFoodProfile(tasteProfile).selectedAiModel || DEFAULT_AI_MODEL;
         const force = Boolean(body.force);
         const now = Date.now();
-        const serviceDate = body.date || todayInToronto(now);
+        const requestedDate = body.date || todayInToronto(now);
+        const serviceDate = requestedDate;
 
         let menuRows = store.rows('menu_item', {
           where: 'service_date = ?',
@@ -279,7 +280,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
         if (!menuRows.length) {
           return send(404, { error: 'No dining menu items available to evaluate for this date.' });
         }
-        if (!await claimFoodAiRun(store, now)) return send(429, { error: 'Daily dining AI limit reached; try again tomorrow.' });
+        if (!await claimFoodAiRun(store, now)) return send(429, { error: 'Daily manual dining ranking cap reached; try again after UTC midnight.' });
 
         try {
           const recommendation = await rankDailyMenu({
@@ -290,6 +291,15 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
             force,
             now,
             beforeAiCall: aiBudgetGuard(store),
+          });
+          await persistManualFoodRecommendation(store, {
+            recommendation,
+            tasteProfile,
+            model,
+            requestedDate,
+            serviceDate: menuRows[0]?.service_date || serviceDate,
+            menuItems: menuRows,
+            startedAt: now,
           });
           return send(200, recommendation);
         } catch (err) {

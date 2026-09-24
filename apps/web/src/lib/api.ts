@@ -23,11 +23,17 @@ import {
   validateCalendar,
   type CalendarData,
   type CourseResource,
+  type CourseSyllabus,
+  type CourseSyllabusPreview,
+  type CourseSyllabusPreviewRequest,
+  validateRecommendations,
+  type RecommendationResponse,
 } from './contract';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
 const CALENDAR_CACHE_KEY = 'uni-dashboard:last-calendar:v1';
 const TOKEN_KEY = 'uni-dashboard:relay-token';
+const RECOMMENDATIONS_CACHE_KEY = 'uni-dashboard:last-recommendations:v1';
 
 /** Build-time default, overridable at runtime so a device can be paired without a rebuild. */
 const BUILD_TOKEN = (import.meta.env.VITE_RELAY_TOKEN as string | undefined) ?? '';
@@ -118,6 +124,52 @@ export async function fetchBundle(signal?: AbortSignal): Promise<Bundle> {
   const bundle = validateBundle(raw);
   writeCachedBundle(bundle);
   return bundle;
+}
+
+function recommendationsCacheKey(section: number | null, group: number | null): string {
+  return `${RECOMMENDATIONS_CACHE_KEY}:${section ?? 'all'}:${group ?? 'all'}`;
+}
+
+export function readCachedRecommendations(section: number | null = null, group: number | null = null): RecommendationResponse | undefined {
+  try {
+    const raw = localStorage.getItem(recommendationsCacheKey(section, group));
+    return raw ? validateRecommendations(JSON.parse(raw)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchRecommendations(section: number | null = null, group: number | null = null, signal?: AbortSignal): Promise<RecommendationResponse> {
+  const params = new URLSearchParams();
+  if (section !== null) params.set('section', String(section));
+  if (group !== null) params.set('group', String(group));
+  const response = validateRecommendations(await getJson<unknown>(`/v1/recommendations${params.size ? `?${params}` : ''}`, signal));
+  try { localStorage.setItem(recommendationsCacheKey(section, group), JSON.stringify(response)); } catch { /* storage is optional */ }
+  return response;
+}
+
+export interface PostedMenu {
+  requested_date: string;
+  service_date: string | null;
+  status: 'today' | 'previous' | 'unavailable';
+  items: { outlet: string; station: string; dish: string; diet: string[]; allergens: string[]; url: string }[];
+}
+
+export function fetchPostedMenu(signal?: AbortSignal): Promise<PostedMenu> {
+  return getJson<PostedMenu>('/v1/menu', signal);
+}
+
+export function fetchCurrentWeather(signal?: AbortSignal): Promise<{ temp_c: number | null; observed_at: number | null; state: string }> {
+  return getJson('/v1/weather/current', signal);
+}
+
+export async function saveRecommendationAction(id: string, action: 'done' | 'undo' | 'snooze', until?: number): Promise<void> {
+  const res = await fetch('/v1/recommendations/actions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ id, action, ...(until ? { until } : {}) }),
+  });
+  if (!res.ok) throw new RelayError(`Could not update recommendation (${res.status})`, res.status);
 }
 
 export async function fetchCalendar(start: string, days = 7, section: number | null = null, group: number | null = null, signal?: AbortSignal): Promise<CalendarData> {
@@ -242,10 +294,30 @@ export async function getFoodTasteProfile(): Promise<{ profile: (Record<string, 
   return res.json();
 }
 
-export async function fetchFoodRecommendation(date: string): Promise<{ status: string; recommendation: FoodAiRecommendation | null; error?: string }> {
+export async function fetchFoodRecommendation(date: string): Promise<{
+  status: string;
+  recommendation: FoodAiRecommendation | null;
+  stale?: boolean;
+  limit_reason?: string;
+  error?: string;
+}> {
   const res = await fetch(`/v1/food/recommendation?date=${encodeURIComponent(date)}`, { headers: authHeaders() });
   if (!res.ok) throw new RelayError(`failed to load AI ranking: ${res.status}`, res.status);
   return res.json();
+}
+
+export interface AiUsageStatus {
+  day: string;
+  budget_neurons: number;
+  reserved_neurons: number;
+  remaining_neurons: number;
+  calls: number;
+  resets_at: number;
+  accounting: string;
+}
+
+export function fetchAiUsage(signal?: AbortSignal): Promise<AiUsageStatus> {
+  return getJson<AiUsageStatus>('/v1/ai/usage', signal);
 }
 
 export async function dismissAlert(key: string): Promise<void> {
@@ -263,6 +335,43 @@ export async function saveCourseResources(course: string, resources: CourseResou
   const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/resources`, { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ resources }) });
   if (!res.ok) throw new RelayError(`could not save course links: ${res.status}`, res.status);
   return (await res.json()).resources;
+}
+
+export async function fetchCourseSyllabus(course: string, signal?: AbortSignal): Promise<CourseSyllabus | null> {
+  const response = await getJson<{ syllabus: CourseSyllabus | null }>(`/v1/courses/${encodeURIComponent(course)}/syllabus`, signal);
+  return response.syllabus;
+}
+
+export async function previewCourseSyllabus(
+  course: string,
+  input: CourseSyllabusPreviewRequest,
+  signal?: AbortSignal,
+): Promise<CourseSyllabusPreview> {
+  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/syllabus/preview`, {
+    method: 'POST',
+    signal,
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { error?: string };
+    throw new RelayError(payload.error || `could not preview syllabus: ${res.status}`, res.status);
+  }
+  return res.json() as Promise<CourseSyllabusPreview>;
+}
+
+export async function saveCourseSyllabus(course: string, syllabus: CourseSyllabus): Promise<CourseSyllabus> {
+  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/syllabus`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
+    body: JSON.stringify(syllabus),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { error?: string };
+    throw new RelayError(payload.error || `could not save syllabus: ${res.status}`, res.status);
+  }
+  const response = await res.json() as { syllabus: CourseSyllabus };
+  return response.syllabus;
 }
 
 export interface AiModelInfo {

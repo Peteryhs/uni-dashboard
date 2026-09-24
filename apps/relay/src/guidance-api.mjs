@@ -6,7 +6,7 @@ import { aiBudgetGuard, aiBudgetStatus } from './ai-budget.mjs';
 import { getCachedWeather } from './weather-cache.mjs';
 
 export function isGuidanceRoute(path) {
-  return path === '/v1/recommendations' || path === '/v1/recommendations/actions' || path === '/v1/ai/usage' ||
+  return path === '/v1/recommendations' || path === '/v1/recommendations/actions' || path === '/v1/ai/usage' || path === '/v1/menu' || path === '/v1/weather/current' ||
     /^\/v1\/courses\/[^/]+\/syllabus(?:\/preview)?$/.test(path);
 }
 
@@ -36,6 +36,24 @@ export async function readGuidanceJson(stream) {
 
 export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, now = Date.now() }) {
   try {
+    if (url.pathname === '/v1/menu' && method === 'GET') {
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+      const today = await store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: 500 });
+      const rows = today.length ? today : await store.rows('menu_item', {
+        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [date], limit: 500,
+      });
+      const serviceDate = rows[0]?.service_date ?? null;
+      return { status: 200, body: {
+        requested_date: date, service_date: serviceDate, status: !serviceDate ? 'unavailable' : serviceDate === date ? 'today' : 'previous',
+        items: rows.map(row => ({ outlet: row.outlet, station: row.station || '', dish: row.dish, diet: row.diet || [], allergens: row.allergens || [], url: row.url || '' })),
+      } };
+    }
+    if (url.pathname === '/v1/weather/current' && method === 'GET') {
+      const weather = await getCachedWeather(store, { now });
+      const hours = weather?.forecast || [];
+      const hour = hours.filter(row => row.at <= now).at(-1) || hours[0];
+      return { status: 200, body: { temp_c: Number.isFinite(hour?.temp_c) ? Math.round(hour.temp_c) : null, observed_at: weather?.observed_at ?? null, state: weather?.state ?? 'unavailable' } };
+    }
     if (url.pathname === '/v1/recommendations' && method === 'GET') {
       const { section, group } = calendarOptions(url.searchParams, now);
       const weather = await getCachedWeather(store, { now });

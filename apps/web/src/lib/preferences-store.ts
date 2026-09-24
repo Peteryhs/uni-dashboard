@@ -65,6 +65,9 @@ function readPreferences(): UserPreferences {
       tasteProfile: {
         ...DEFAULT_TASTE_PROFILE,
         ...(parsed.tasteProfile || {}),
+        selectedAiModel: parsed.tasteProfile?.selectedAiModel === '@cf/zhipu/glm-4.7-flash'
+          ? '@cf/zai-org/glm-4.7-flash'
+          : parsed.tasteProfile?.selectedAiModel || DEFAULT_TASTE_PROFILE.selectedAiModel,
       },
     };
   } catch {

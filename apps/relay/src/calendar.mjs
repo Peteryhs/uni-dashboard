@@ -228,8 +228,12 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
     const home = learnHomeFromEvents([{ links: context.links }]);
     if (home) learnHomes.set(course, home);
   }
+  // The catalog must outlive a quiet calendar range: saved links and syllabi are
+  // still useful even when a course has no event in these 31 days. Keep the
+  // event map range-local so the counts and IDs below remain range-local too.
   const byCourse = new Map();
-  for (const document of relevantSyllabi) byCourse.set(document.course, new Map());
+  for (const document of syllabi) byCourse.set(document.course, new Map());
+  for (const course of Object.keys(library)) if (!byCourse.has(course)) byCourse.set(course, new Map());
   for (const day of groups) for (const event of day.events) {
     if (!event.course) continue;
     if (!byCourse.has(event.course)) byCourse.set(event.course, new Map());

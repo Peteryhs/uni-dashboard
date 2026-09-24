@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { buildCalendar, calendarOptions } from '../apps/relay/src/calendar.mjs';
+import { saveCourseResources } from '../apps/relay/src/course-library.mjs';
+import { saveCourseSyllabus } from '../apps/relay/src/syllabus.mjs';
 import { validateCalendar } from '#contract/calendar.mjs';
 import { validateRow } from '#contract/canonical.mjs';
 
@@ -83,6 +85,37 @@ test('calendar retains source UIDs and deduplicates legacy rows after a restart'
   const calendar = await buildCalendar(store, { start: '2026-03-08', days: 1, now });
   assert.equal(calendar.count, 1);
   assert.equal(calendar.days[0].events[0].source_id, 'uw-learn-ics');
+});
+
+test('course catalog retains saved resources and out-of-range syllabi while counts stay range-local', async () => {
+  const store = new SqliteStore(':memory:');
+  const resource = { title: 'Course notes', url: 'https://example.edu/chem-notes', kind: 'resource' };
+  await saveCourseResources(store, 'CHEM 120', [resource]);
+  await saveCourseSyllabus(store, 'MATH 115', {
+    course: 'MATH 115',
+    title: 'MATH 115 syllabus',
+    term_start: '2026-09-08',
+    entries: [{
+      id: 'quiz-1', title: 'Quiz 1', kind: 'assessment', start_date: '2026-09-15', end_date: '2026-09-15',
+      due_at: null, topics: [], readings: [], url: null, effort: 'small', estimated_minutes: null, evidence: 'Sep 15: Quiz 1',
+    }],
+    warnings: [], updated_at: now,
+  }, { now });
+
+  const calendar = await buildCalendar(store, { start: '2026-03-08', days: 1, now });
+  const courses = new Map(calendar.courses.map((course) => [course.course, course]));
+  assert.deepEqual([...courses.keys()], ['CHEM 120', 'MATH 115']);
+  assert.deepEqual(courses.get('CHEM 120').resources, [resource]);
+  assert.deepEqual(courses.get('CHEM 120').event_ids, []);
+  assert.deepEqual(courses.get('MATH 115').event_ids, []);
+  for (const course of courses.values()) {
+    assert.equal(course.class_count, 0);
+    assert.equal(course.deadline_count, 0);
+    assert.equal(course.office_hours_count, 0);
+  }
+  assert.equal(calendar.count, 0);
+  assert.deepEqual(validateCalendar(calendar), calendar);
+  store.close();
 });
 
 test('calendar carries an overnight event into each day it occupies', async () => {

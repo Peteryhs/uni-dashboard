@@ -17,7 +17,12 @@ function displayTime(ms) { return timeFormat.format(ms).replace(/\./g, ''); }
 function json(raw, fallback) { try { return JSON.parse(raw || 'null') ?? fallback; } catch { return fallback; } }
 function hash(value) { let n = 2166136261; for (const char of String(value)) { n ^= char.charCodeAt(0); n = Math.imul(n, 16777619); } return (n >>> 0).toString(36); }
 function safeUrl(value) { try { const url = new URL(value); return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; } }
+function shortOutletName(value) { return String(value || '').replace(/\s*[-–]\s*Residence Dining Hall\s*$/i, '').trim(); }
 function effortFor(title, explicit) { return explicit && explicit !== 'unknown' ? explicit : /\b(project|essay|report|assignment|midterm|final|exam)\b/i.test(title) ? 'large' : /\b(quiz|prework|survey|training)\b/i.test(title) ? 'small' : 'unknown'; }
+function displayTaskTitle(title) {
+  // LEARN appends timing/status to some calendar summaries. The due time already has its own field.
+  return String(title || '').replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').trim();
+}
 function item(kind, key, values) {
   const { revision_seed, ...rest } = values;
   const revision = hash(JSON.stringify(revision_seed || [values.title, values.starts_at, values.ends_at, values.due_at, values.topics, values.readings]));
@@ -67,7 +72,8 @@ function taskItem(event, entry, course, now) {
   const date = event?.all_day ? day(event.starts_at) : due != null ? day(due) : entry?.start_date;
   if (!date || date < shift(day(now), -1) || date > shift(day(now), 14) || (due != null && due < now - DAY)) return null;
   const rankTime = due ?? clock(date, 23, 59);
-  const title = event?.title || entry.title;
+  const sourceTitle = event?.title || entry.title;
+  const title = displayTaskTitle(sourceTitle) || sourceTitle;
   const effort = effortFor(title, entry?.effort);
   const exam = event?.category === 'exam' || /\b(exam|midterm|final)\b/i.test(title);
   const ongoingExam = exam && event && event.starts_at <= now && event.ends_at > now;
@@ -76,7 +82,7 @@ function taskItem(event, entry, course, now) {
   const coverage = topics.length ? ` Coverage: ${topics.join('; ')}.` : /quiz|exam|midterm/i.test(title) ? ' Coverage has not been provided; check the course instructions.' : '';
   const noExact = !event?.links?.some(link => ['quiz', 'submit'].includes(link.kind));
   return item('task', event?.id || `${course?.course}:${entry.id}`, {
-    revision_seed: [title, due, date, topics, readings],
+    revision_seed: [sourceTitle, due, date, topics, readings],
     title: ongoingExam ? `Now: ${title}` : overdue ? `Confirm ${exam ? 'assessment' : 'submission'}: ${title}` : title,
     body: `${ongoingExam ? `Scheduled now until ${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.` : overdue ? `The listed ${exam ? 'assessment' : 'due'} ${due == null ? 'date' : 'time'} has passed; ${exam ? 'completion' : 'submission'} status is unknown.` : due == null ? `Listed for ${date}; no exact time was supplied. Check the course instructions.` : `${exam ? 'Starts' : 'Due'} ${dueText(due, now)}.`}${coverage}`,
     priority: ongoingExam ? 1200 : taskPriority(rankTime - now, effort, exam), course: event?.course || course?.course || null,
@@ -189,12 +195,22 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     const top = ready?.ranked_outlets?.find(outlet => outlet.outlet === ready.top_outlet) || ready?.ranked_outlets?.[0];
     const freshMenu = menu.filter(row => row.service_date === today);
     if (ready || freshMenu.length) {
-      const dishes = freshMenu.filter(row => !top || row.outlet === top.outlet).slice(0, 3);
+      const outletDishes = freshMenu.filter(row => !top || row.outlet === top.outlet);
+      const highlights = top?.highlights || [];
+      const dishKey = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const dishes = ready
+        ? highlights.map(highlight => outletDishes.find(row => dishKey(row.dish) === dishKey(highlight.dish))).filter(Boolean)
+        : outletDishes.slice(0, 3);
+      const pickedDishes = [...new Map(dishes.map(row => [dishKey(row.dish), row])).values()];
+      const dishSummary = pickedDishes.length
+        ? `${pickedDishes.map(row => row.dish).join(', ')}.`
+        : ready ? 'No AI-highlighted dish matched today’s posted menu.' : null;
+      const menuUrl = safeUrl(pickedDishes[0]?.url || outletDishes[0]?.url);
       const observed = Math.max(food?.updated_at || 0, ...freshMenu.map(row => row.observed_at || 0));
       const state = observed ? ageState(observed, 12 * HOUR, freshnessNow) : 'stale';
-      candidates.push(item('food', `lunch:${today}:${top?.outlet || 'menu'}`, { title: ready ? `Lunch: ${ready.top_outlet || top?.outlet || 'your dining picks'}` : 'Check today’s lunch menu',
-        body: [ready?.headline, dishes.map(row => row.dish).join(', '), currentBlock ? 'You are in a scheduled class now; plan for your next break.' : 'Check the outlet’s posted opening hours before heading over.'].filter(Boolean).join(' '),
-        priority: currentBlock ? 610 : lunchSoon ? 920 : 540, action: safeUrl(dishes[0]?.url) ? { label: 'View menu', url: safeUrl(dishes[0].url) } : null,
+      candidates.push(item('food', `lunch:${today}:${top?.outlet || 'menu'}`, { title: ready ? `Lunch: ${shortOutletName(ready.top_outlet || top?.outlet) || 'dining menu'}` : 'Check today’s lunch menu',
+        body: [dishSummary, currentBlock ? 'You are in a scheduled class now; plan for your next break.' : 'Check the outlet’s posted opening hours before heading over.'].filter(Boolean).join(' '),
+        priority: currentBlock ? 610 : lunchSoon ? 920 : 540, action: menuUrl ? { label: 'View menu', url: menuUrl } : null,
         state, source_label: ready ? 'Cached dining recommendation' : 'Today’s menu', reason: 'Lunch is approaching in your campus time zone.', evidence: ready ? 'Uses the saved menu ranking; no AI request was made for this update.' : 'Current menu dishes; no personalized ranking is available.' }));
     }
   }

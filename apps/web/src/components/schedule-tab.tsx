@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Sparkles,
+  Bot,
   Calendar,
   User,
   AlertCircle,
@@ -9,8 +9,6 @@ import {
   Check,
   Trash2,
   Edit2,
-  X,
-  RotateCcw,
   BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -122,7 +120,7 @@ function EditableRuleCard({ rule, onChange, idPrefix, confidence }: EditableRule
   };
 
   return (
-    <div className="rounded-xl border border-border/70 bg-card/60 p-4 space-y-3.5 backdrop-blur-sm">
+    <div className="settings-rule-editor space-y-3.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-1">
           <Badge variant="outline" className="text-[10px] uppercase font-semibold text-live border-live/30">
@@ -531,9 +529,9 @@ export function ScheduleTab() {
       </div>
 
       {/* SECTION 1: ADD NEW */}
-      <div className="space-y-3.5 rounded-xl border border-border/60 bg-secondary/20 p-4">
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-4 text-live" />
+      <div className="settings-office-hours-create space-y-3.5">
+        <div className="settings-ai-heading flex items-center gap-2">
+          <Bot className="size-4 text-[#78adff]" />
           <h3 className="text-sm font-semibold text-foreground">Add Office Hours with AI</h3>
         </div>
         <p className="text-xs text-zinc-400">
@@ -555,7 +553,7 @@ export function ScheduleTab() {
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3">
             <div>
               <Label htmlFor={courseInputId} className="text-xs text-zinc-300 font-medium">
                 Course Code (Optional)
@@ -612,7 +610,7 @@ export function ScheduleTab() {
               onClick={() => handleParse(false)}
               disabled={parsing || !pastedText.trim()}
               aria-busy={parsing}
-              className="h-8 text-xs bg-live text-black hover:bg-live/90 font-medium cursor-pointer"
+              className="settings-ai-action h-8 text-xs font-medium cursor-pointer"
             >
               {parsing ? (
                 <>
@@ -621,7 +619,7 @@ export function ScheduleTab() {
                 </>
               ) : (
                 <>
-                  <Sparkles className="size-3.5 mr-1.5" />
+                  <Bot className="size-3.5 mr-1.5" />
                   Parse with AI
                 </>
               )}
@@ -632,7 +630,7 @@ export function ScheduleTab() {
 
       {/* SECTION 2: DRAFT PREVIEW STATE */}
       {draft && (
-        <div className="space-y-4 rounded-xl border border-live/40 bg-live/5 p-4 animate-in fade-in duration-200">
+        <div className="settings-office-hours-draft space-y-4 animate-in fade-in duration-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BookOpen className="size-4 text-live" />
@@ -774,7 +772,7 @@ export function ScheduleTab() {
         {loadingConfig ? (
           <div className="p-6 text-center text-xs text-zinc-400">Loading saved entries...</div>
         ) : config.rules.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border/80 bg-background/30 p-6 text-center space-y-1">
+          <div className="settings-office-hours-empty space-y-1">
             <p className="text-xs text-zinc-400">No recurring office hours saved yet.</p>
             <p className="text-[11px] text-zinc-500">
               Paste your course announcement above to create structured recurring entries.
@@ -823,7 +821,7 @@ export function ScheduleTab() {
               return (
                 <div
                   key={rule.id}
-                  className="rounded-xl border border-border/60 bg-card/40 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:border-border"
+                  className="settings-office-hours-rule flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
                 >
                   <div className="space-y-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -932,7 +930,6 @@ export function ScheduleTab() {
               onClick={handleUndoDelete}
               className="flex items-center gap-1.5 rounded-lg bg-live/15 hover:bg-live/25 px-2.5 py-1 text-xs font-semibold text-live transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live shrink-0 cursor-pointer"
             >
-              <RotateCcw className="size-3" />
               <span>Undo</span>
             </button>
             <button
@@ -941,7 +938,7 @@ export function ScheduleTab() {
               aria-label="Dismiss notification"
               className="rounded p-1 text-zinc-400 hover:text-zinc-200 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-live cursor-pointer shrink-0"
             >
-              <X className="size-3.5" />
+              <span className="text-xs">Dismiss</span>
             </button>
           </div>,
           document.body

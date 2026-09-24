@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Sliders,
   Star,
   Utensils,
-  LayoutGrid,
   RotateCcw,
   KeyRound,
   Check,
@@ -12,8 +12,6 @@ import {
   Lock,
   Calendar,
   Clock,
-  ShieldCheck,
-  Sparkles,
   Cpu,
   Bot,
   GraduationCap,
@@ -21,7 +19,7 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
+  SheetClose,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -29,7 +27,6 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -38,26 +35,34 @@ import {
   fetchCredentialsStatus,
   updateCredentials,
   triggerPoll,
+  fetchAiUsage,
+  getFoodTasteProfile,
+  saveFoodTasteProfile,
+  type AiUsageStatus,
   type CredentialsStatus,
 } from '@/lib/api';
 import {
   usePreferences,
+  DEFAULT_TASTE_PROFILE,
   type DietaryPreference,
-  type LayoutDensity,
   type SpiceLevel,
   type TasteProfile,
   type UserPreferences,
 } from '@/lib/preferences-store';
 import { cn } from '@/lib/utils';
 import { ScheduleTab } from './schedule-tab';
+import { CourseSettingsTab } from './course-settings-tab';
+import { SourcesPanel } from './sources-panel';
+import type { CalendarData } from '@/lib/contract';
+import './customization-sheet.css';
 
 const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
-  { id: 'all', label: 'All Items' },
+  { id: 'all', label: 'All items' },
   { id: 'halal', label: 'Halal' },
   { id: 'vegan', label: 'Vegan' },
   { id: 'vegetarian', label: 'Vegetarian' },
-  { id: 'dairy', label: 'Dairy-Free' },
-  { id: 'gluten', label: 'Gluten-Free' },
+  { id: 'dairy', label: 'Dairy-free' },
+  { id: 'gluten', label: 'Gluten-free' },
 ];
 
 interface TasteChip {
@@ -86,53 +91,154 @@ const AI_MODEL_OPTIONS = [
   {
     id: '@cf/google/gemma-4-26b-a4b-it',
     name: 'Google Gemma 4 (26B-A4B)',
-    badge: 'Recommended · 4B Active MoE',
   },
   {
-    id: '@cf/zhipu/glm-4.7-flash',
+    id: '@cf/zai-org/glm-4.7-flash',
     name: 'GLM-4.7 Flash',
-    badge: 'Ultra-Fast Flash',
   },
   {
     id: '@cf/meta/llama-4-scout-17b-16e-instruct',
     name: 'Meta Llama 4 Scout (17B)',
-    badge: '16-Expert MoE',
   },
   {
     id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
     name: 'DeepSeek-R1 Distill (32B)',
-    badge: 'Reasoning Specialist',
   },
   {
     id: '@cf/qwen/qwen3-30b-a3b-fp8',
     name: 'Qwen3 (30B-A3B)',
-    badge: 'Dense & MoE',
   },
 ];
 
 export function CustomizationSheet({
+  open,
+  onOpenChange,
+  hideTrigger = false,
   preferences,
-  setDensity,
+  courseData,
+  courseDataPending,
+  courseDataError,
+  focusCourse,
+  onRetryCourseData,
+  onCourseDataSaved,
   setDietaryFilter,
   setOnlyFavorites,
   toggleFavoriteDish,
   updateTasteProfile,
   resetPreferences,
 }: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
   preferences: UserPreferences;
-  setDensity: (d: LayoutDensity) => void;
+  courseData?: CalendarData;
+  courseDataPending: boolean;
+  courseDataError: boolean;
+  focusCourse?: string | null;
+  onRetryCourseData: () => void;
+  onCourseDataSaved: () => void;
   setDietaryFilter: (f: DietaryPreference) => void;
   setOnlyFavorites: (fav: boolean) => void;
   toggleFavoriteDish: (dish: string) => void;
   updateTasteProfile: (patch: Partial<TasteProfile>) => void;
   resetPreferences: () => void;
 }) {
-  const { setSection, setGroupNumber, undismissTask } = usePreferences();
-  const [activeTab, setActiveTab] = useState<'preferences' | 'taste' | 'credentials' | 'schedule'>('taste');
+  const { undismissTask } = usePreferences();
+  const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule'>('taste');
+  const [showMoreTaste, setShowMoreTaste] = useState(false);
+  const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
+  const [tasteProfileError, setTasteProfileError] = useState('');
+  const [aiUsage, setAiUsage] = useState<AiUsageStatus | null>(null);
+  const [savingTasteProfile, setSavingTasteProfile] = useState(false);
+  const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const relayTasteProfile = {
+    bio: preferences.tasteProfile.bio,
+    spiceLevel: preferences.tasteProfile.spiceLevel,
+    dietaryGoals: preferences.tasteProfile.dietaryGoals,
+    selectedAiModel: preferences.tasteProfile.selectedAiModel,
+    dietaryFilter: preferences.dietaryFilter,
+  };
+  const relayTasteProfileKey = JSON.stringify(relayTasteProfile);
+  const tasteProfileIsSaved = Boolean(relayTasteProfileKey && savedTasteProfileKey === relayTasteProfileKey);
+
+  useEffect(() => {
+    if (open && focusCourse) setActiveTab('courses');
+  }, [open, focusCourse]);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    getFoodTasteProfile().then(({ profile }) => {
+      if (!active) return;
+      setSavedTasteProfileKey(profile ? JSON.stringify({
+        bio: profile.bio ?? '',
+        spiceLevel: profile.spiceLevel ?? 'medium',
+        dietaryGoals: profile.dietaryGoals ?? [],
+        selectedAiModel: profile.selectedAiModel ?? DEFAULT_TASTE_PROFILE.selectedAiModel,
+        dietaryFilter: profile.dietaryFilter ?? 'all',
+      }) : '');
+    }).catch(() => { if (active) setSavedTasteProfileKey(''); });
+    return () => { active = false; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    fetchAiUsage(controller.signal).then(setAiUsage).catch(() => setAiUsage(null));
+    return () => controller.abort();
+  }, [open]);
+
+  const handleSaveTasteProfile = async () => {
+    setSavingTasteProfile(true);
+    setTasteProfileError('');
+    try {
+      await saveFoodTasteProfile(relayTasteProfile);
+      try {
+        localStorage.setItem('uni-dashboard:food-profile-synced:v1', relayTasteProfileKey);
+      } catch {
+        // The relay remains authoritative if local storage is unavailable.
+      }
+      setSavedTasteProfileKey(relayTasteProfileKey);
+    } catch (error) {
+      setTasteProfileError(error instanceof Error ? error.message : 'Could not save the dining profile.');
+    } finally {
+      setSavingTasteProfile(false);
+    }
+  };
+
+  const handleResetPreferences = async () => {
+    resetPreferences();
+    setResetStatus(null);
+    setTasteProfileError('');
+    const defaultRelayProfile = {
+      bio: DEFAULT_TASTE_PROFILE.bio,
+      spiceLevel: DEFAULT_TASTE_PROFILE.spiceLevel,
+      dietaryGoals: DEFAULT_TASTE_PROFILE.dietaryGoals,
+      selectedAiModel: DEFAULT_TASTE_PROFILE.selectedAiModel,
+      dietaryFilter: 'all',
+    };
+    const defaultKey = JSON.stringify(defaultRelayProfile);
+    try {
+      await saveFoodTasteProfile(defaultRelayProfile);
+      try {
+        localStorage.setItem('uni-dashboard:food-profile-synced:v1', defaultKey);
+      } catch {
+        // The relay remains authoritative if local storage is unavailable.
+      }
+      setSavedTasteProfileKey(defaultKey);
+      setResetStatus({ type: 'success', message: 'Preferences reset.' });
+    } catch (error) {
+      setSavedTasteProfileKey('');
+      setResetStatus({
+        type: 'error',
+        message: error instanceof Error ? `Local preferences reset; dining profile was not saved: ${error.message}` : 'Local preferences reset; dining profile was not saved.',
+      });
+    }
+  };
 
   return (
-    <Sheet>
-      <SheetTrigger asChild>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      {!hideTrigger && <SheetTrigger asChild>
         <Button
           variant="outline"
           size="sm"
@@ -141,86 +247,66 @@ export function CustomizationSheet({
           <Sliders className="size-3.5" />
           <span className="hidden sm:inline">Settings</span>
         </Button>
-      </SheetTrigger>
-      <SheetContent className="w-full sm:max-w-lg border-border/80 bg-card p-6 text-foreground overflow-y-auto max-h-screen shadow-2xl">
-        <SheetHeader className="p-0 text-left">
-          <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-lg border border-live/30 bg-live/10 text-live">
-              <Sliders className="size-4" />
-            </div>
-            <div>
-              <SheetTitle className="text-base font-semibold">Dashboard Settings</SheetTitle>
-              <SheetDescription className="text-xs text-zinc-400">
-                Taste profile, AI dining advisor, layout, and feeds.
-              </SheetDescription>
-            </div>
-          </div>
+      </SheetTrigger>}
+      <SheetContent showCloseButton={false} className="settings-sheet border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
+        <SheetHeader className="settings-heading p-0 text-left">
+          <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
         </SheetHeader>
+        <SheetClose className="settings-close" aria-label="Close settings">Close</SheetClose>
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as 'preferences' | 'taste' | 'credentials' | 'schedule')}
-          className="mt-5"
+          onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule')}
+          className="settings-tabs-wrap mt-5"
         >
-          <TabsList className="grid w-full grid-cols-4 bg-secondary/40 p-1 border border-border/60 rounded-lg">
+          <TabsList className="settings-tabs grid h-10 w-full grid-cols-4 bg-secondary/50 p-1 border border-border/60 rounded-lg">
             <TabsTrigger
               value="taste"
-              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
-              <Sparkles className="size-3.5 mr-1 text-amber" /> Taste AI
+              <Bot className="size-3.5 mr-1 text-[#3478eb]" /> Dining
+            </TabsTrigger>
+            <TabsTrigger
+              value="courses"
+              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+            >
+              <GraduationCap className="size-3.5 mr-1" /> Courses
             </TabsTrigger>
             <TabsTrigger
               value="schedule"
-              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
               <Calendar className="size-3.5 mr-1" /> Schedule
             </TabsTrigger>
             <TabsTrigger
-              value="preferences"
-              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <Sliders className="size-3.5 mr-1" /> General
-            </TabsTrigger>
-            <TabsTrigger
               value="credentials"
-              className="text-xs data-[state=active]:bg-card data-[state=active]:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
             >
-              <KeyRound className="size-3.5 mr-1" /> Feeds
+              <KeyRound className="size-3.5 mr-1" /> Connections
             </TabsTrigger>
           </TabsList>
 
           {/* Tab 1: AI Taste Profile */}
-          <TabsContent value="taste" className="mt-5 space-y-5">
-            {/* Intro banner */}
-            <div className="rounded-lg border border-border/80 bg-secondary/30 p-3.5 text-xs">
-              <div className="flex items-center gap-2 font-semibold text-foreground">
-                <Bot className="size-4 text-live" />
-                <span>Cloudflare Workers AI Dining Advisor</span>
-              </div>
-              <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
-                Describe your cravings and dietary goals. Powered by Google Gemma 4 on Workers AI free compute (10,000 neurons per day). It evaluates daily menus and ranks today best hall for you.
-              </p>
-            </div>
+          <TabsContent value="taste" className="settings-panel mt-5 space-y-4">
 
             {/* Bio / Freeform prompt with default labels directly below */}
             <div>
               <div className="flex items-center justify-between">
-                <Label htmlFor="taste-bio" className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Sparkles className="size-3.5 text-amber" /> Taste Profile & Cravings
+                <Label htmlFor="taste-bio" className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
+                  <Bot className="size-3.5 text-[#3478eb]" /> What you like
                 </Label>
-                <span className="text-[11px] text-zinc-400">Natural language</span>
               </div>
               <Textarea
                 id="taste-bio"
                 value={preferences.tasteProfile.bio}
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateTasteProfile({ bio: e.target.value })}
-                placeholder="e.g. I love spicy food, high protein chicken dishes, and noodle bowls. Dislike celery and pork."
-                className="mt-2 min-h-20 text-xs bg-secondary/30 border-border/80 text-foreground placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none resize-none"
+                placeholder="Spicy food, chicken, noodle bowls; no celery or pork"
+                className="settings-input mt-2 min-h-20 text-xs bg-secondary/30 border-border/80 text-foreground placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:outline-none resize-none"
               />
 
               {/* Default labels right below the box - unified, no separate sections */}
               <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {DEFAULT_TASTE_CHIPS.map((chip) => {
+                {DEFAULT_TASTE_CHIPS.filter((chip, index) => index < 4 || showMoreTaste || (chip.type === 'spice' ? preferences.tasteProfile.spiceLevel === chip.value : preferences.tasteProfile.dietaryGoals.includes(chip.value))).map((chip) => {
                   const active =
                     chip.type === 'spice'
                       ? preferences.tasteProfile.spiceLevel === chip.value
@@ -230,6 +316,7 @@ export function CustomizationSheet({
                     <button
                       key={chip.id}
                       type="button"
+                      aria-pressed={active}
                       onClick={() => {
                         if (chip.type === 'spice') {
                           const nextSpice =
@@ -246,31 +333,30 @@ export function CustomizationSheet({
                         }
                       }}
                       className={cn(
-                        'rounded-md px-2.5 py-1 text-xs font-medium transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                        'settings-chip rounded-md px-2.5 py-1 text-xs font-medium transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:ring-offset-1 focus-visible:ring-offset-background',
                         active
-                          ? 'border-live/60 bg-live/15 text-live shadow-xs font-semibold'
+                          ? 'border-white/30 bg-white/10 text-white font-semibold'
                           : 'border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground',
                       )}
                     >
-                      {active ? '✓ ' : '+ '}
+                      {active && <Check aria-hidden="true" className="mr-1 inline size-3" />}
                       {chip.label}
                     </button>
                   );
                 })}
+                <button type="button" onClick={() => setShowMoreTaste((value) => !value)} className="settings-chip rounded-md border border-border/60 px-2.5 py-1 text-xs text-zinc-300 hover:bg-secondary/40">
+                  {showMoreTaste ? 'Fewer' : 'More'}
+                </button>
               </div>
             </div>
 
-            <Separator className="bg-border/60" />
-
             {/* Workers AI Engine Selection */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Cpu className="size-3.5 text-cyan-400" /> Workers AI Model
-                </Label>
-                <span className="text-[10px] text-zinc-400 font-mono">10k neurons/day free</span>
-              </div>
-              <div className="mt-2 space-y-1.5">
+            <details className="settings-disclosure settings-model-picker">
+              <summary className="settings-model-summary">
+                <span className="flex items-center gap-1.5 font-medium"><Cpu className="size-3.5 text-[#3478eb]" /> AI model</span>
+                <span className="settings-model-current">{AI_MODEL_OPTIONS.find((model) => model.id === preferences.tasteProfile.selectedAiModel)?.name ?? 'Selected model'}</span>
+              </summary>
+              <div className="settings-model-options">
                 {AI_MODEL_OPTIONS.map((m) => {
                   const isSelected = preferences.tasteProfile.selectedAiModel === m.id;
                   return (
@@ -279,102 +365,58 @@ export function CustomizationSheet({
                       type="button"
                       onClick={() => updateTasteProfile({ selectedAiModel: m.id })}
                       className={cn(
-                        'w-full flex items-center justify-between rounded-lg border p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+                        'settings-model-option w-full flex items-center justify-between rounded-md p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:ring-offset-1 focus-visible:ring-offset-background',
                         isSelected
-                          ? 'border-live/60 bg-live/10 text-foreground'
-                          : 'border-border/60 bg-secondary/25 text-zinc-400 hover:border-white/20 hover:text-foreground',
+                        ? 'is-selected text-[#8dbaff]'
+                          : 'text-zinc-400 hover:text-foreground',
                       )}
                     >
                       <div className="flex items-center gap-2">
-                        <span className={cn('size-2 rounded-full', isSelected ? 'bg-live' : 'bg-zinc-600')} />
+                        <span className={cn('size-2 rounded-full', isSelected ? 'bg-white' : 'bg-zinc-600')} />
                         <span className="text-xs font-medium text-foreground">{m.name}</span>
                       </div>
-                      <span className="text-[10px] font-mono text-zinc-400">{m.badge}</span>
+                      {isSelected && <Check className="size-3.5 text-[#78adff]" aria-label="Selected" />}
                     </button>
                   );
                 })}
               </div>
+            </details>
+
+            <div className="settings-profile-save">
+              <Button
+                type="button"
+                onClick={() => void handleSaveTasteProfile()}
+                disabled={savingTasteProfile || tasteProfileIsSaved}
+                className="settings-ai-action h-9 px-3 text-xs font-medium disabled:opacity-60"
+              >
+                {savingTasteProfile ? <RefreshCw className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
+                {savingTasteProfile ? 'Saving profile…' : tasteProfileIsSaved ? 'Saved to relay' : 'Save dining profile'}
+              </Button>
+              {tasteProfileError ? (
+                <p className="settings-profile-message settings-profile-message--error" role="alert">{tasteProfileError}</p>
+              ) : tasteProfileIsSaved ? (
+                <p className="settings-profile-message">Saved. The relay will recalculate dining picks.</p>
+              ) : (
+                <p className="settings-profile-message">Profile changes stay local until saved.</p>
+              )}
             </div>
 
-            <Separator className="bg-border/60" />
+            {aiUsage && <p className="settings-ai-usage">Shared AI allowance: {aiUsage.remaining_neurons.toLocaleString()} of {aiUsage.budget_neurons.toLocaleString()} neurons remaining <span>(relay reservation)</span></p>}
 
-            {/* Sort Outlets by AI Rank Toggle */}
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="sort-ai-toggle" className="text-xs font-semibold text-foreground cursor-pointer">
-                  Sort Outlets by AI Rank
-                </Label>
-                <p className="text-[11px] text-zinc-400">
-                  Floats today top-matching dining hall to the top of the food card.
-                </p>
-              </div>
-              <Switch
-                id="sort-ai-toggle"
-                checked={preferences.tasteProfile.sortByAiRank}
-                onCheckedChange={(val) => updateTasteProfile({ sortByAiRank: val })}
-              />
-            </div>
-          </TabsContent>
-
-          {/* Tab 2: General Preferences */}
-          <TabsContent value="preferences" className="mt-5 space-y-6">
-            {/* Layout density */}
             <div>
-              <Label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <LayoutGrid className="size-3.5" /> Layout Density
+              <Label className="flex items-center gap-2 text-xs font-medium text-zinc-200">
+                <Utensils className="size-3.5" /> Menu filter
               </Label>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDensity('detailed')}
-                  className={`flex flex-col items-start rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
-                    preferences.density === 'detailed'
-                      ? 'border-live/60 bg-live/10 text-foreground shadow-xs'
-                      : 'border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground'
-                  }`}
-                >
-                  <span className="text-xs font-medium text-foreground">Detailed View</span>
-                  <span className="mt-1 text-xs text-zinc-400">
-                    Full dish lists, weather details, and complete timelines.
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setDensity('compact')}
-                  className={`flex flex-col items-start rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
-                    preferences.density === 'compact'
-                      ? 'border-live/60 bg-live/10 text-foreground shadow-xs'
-                      : 'border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground'
-                  }`}
-                >
-                  <span className="text-xs font-medium text-foreground">Compact View</span>
-                  <span className="mt-1 text-xs text-zinc-400">
-                    Ultra-minimal glanceable summary for quick scanning.
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <Separator className="bg-border/60" />
-
-            {/* Dietary preferences */}
-            <div>
-              <Label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <Utensils className="size-3.5" /> Default Dietary Filter
-              </Label>
-              <p className="mt-1 text-xs text-zinc-400">
-                Automatically filters daily menus across dining halls.
-              </p>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {DIETARY_OPTIONS.map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
+                    aria-pressed={preferences.dietaryFilter === opt.id}
                     onClick={() => setDietaryFilter(opt.id)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
+                    className={`settings-chip rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
                       preferences.dietaryFilter === opt.id
-                        ? 'border border-live/60 bg-live/20 text-live hover:bg-live/30'
+                        ? 'border border-white/30 bg-white/10 text-foreground hover:bg-white/15'
                         : 'border border-border/60 bg-secondary/30 text-zinc-300 hover:border-white/20 hover:text-foreground'
                     }`}
                   >
@@ -384,13 +426,11 @@ export function CustomizationSheet({
               </div>
             </div>
 
-            <Separator className="bg-border/60" />
-
             {/* Taste History & Starred Dishes */}
             <div>
               <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  <Star className="size-3.5 text-amber" /> Taste History & Favorites
+                <Label className="flex items-center gap-2 text-xs font-medium text-zinc-200">
+                  <Star className="size-3.5 text-zinc-400" /> Favorites
                 </Label>
                 <div className="flex items-center gap-2">
                   <Label htmlFor="fav-toggle" className="text-xs text-zinc-300 cursor-pointer">
@@ -403,10 +443,6 @@ export function CustomizationSheet({
                   />
                 </div>
               </div>
-
-              <p className="mt-1 text-xs text-zinc-400">
-                Star items on the food card to prioritize what you love when it appears on the menu.
-              </p>
 
               {preferences.favoriteDishes.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
@@ -424,138 +460,89 @@ export function CustomizationSheet({
                         className="ml-1 rounded-md p-0.5 text-zinc-400 hover:bg-amber/20 hover:text-amber-foreground focus-visible:ring-2 focus-visible:ring-amber focus-visible:outline-none"
                         title="Remove from favorites"
                       >
-                        ×
+                        Remove
                       </button>
                     </Badge>
                   ))}
                 </div>
               ) : (
-                <div className="mt-3 rounded-lg border border-dashed border-border/70 p-3 text-center">
-                  <p className="text-xs text-zinc-400">
-                    No favorited dishes yet. Click the star icon next to dishes on the food card!
-                  </p>
-                </div>
+                <p className="mt-3 text-xs text-zinc-400">No favorites yet.</p>
               )}
             </div>
 
-            <Separator className="bg-border/60" />
+          </TabsContent>
 
-            {/* Courses & Group Scope Section */}
-            <div>
-              <Label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <GraduationCap className="size-3.5 text-cyan-400" /> Course Group & Section
-              </Label>
-              <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
-                LEARN publishes every group's deadline; tell us yours to hide the rest.
-              </p>
+          <TabsContent value="courses" className="settings-panel settings-courses mt-5">
+            <CourseSettingsTab
+              data={courseData}
+              pending={courseDataPending}
+              error={courseDataError}
+              focusCourse={focusCourse}
+              onRetry={onRetryCourseData}
+              onSaved={onCourseDataSaved}
+            />
+          </TabsContent>
 
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="course-section" className="text-xs font-medium text-foreground">
-                    Section
-                  </Label>
-                  <Input
-                    id="course-section"
-                    type="number"
-                    min={1}
-                    max={999}
-                    placeholder="e.g. 2"
-                    value={preferences.section ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.trim();
-                      setSection(val ? Number(val) : null);
-                    }}
-                    className="h-8 text-xs bg-secondary/30 border-border/70"
-                  />
-                  <p className="text-[10px] text-zinc-400">Section number (e.g. 2 for Sec 002)</p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="course-group" className="text-xs font-medium text-foreground">
-                    Group Number
-                  </Label>
-                  <Input
-                    id="course-group"
-                    type="number"
-                    min={1}
-                    max={999}
-                    placeholder="e.g. 7"
-                    value={preferences.groupNumber ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value.trim();
-                      setGroupNumber(val ? Number(val) : null);
-                    }}
-                    className="h-8 text-xs bg-secondary/30 border-border/70"
-                  />
-                  <p className="text-[10px] text-zinc-400">Your assigned team or group number</p>
-                </div>
-              </div>
-
-              {/* Dismissed Tasks Manager */}
-              <div className="mt-4 pt-3 border-t border-border/40">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold text-foreground">
-                    Hidden Deadlines & Tasks
-                  </Label>
-                  <span className="text-[11px] font-mono text-zinc-400">
-                    {preferences.dismissedTasks.length} hidden
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] text-zinc-400">
-                  Tasks you have hidden from the deadlines card.
-                </p>
-
-                {preferences.dismissedTasks.length > 0 ? (
-                  <div className="mt-2.5 space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                    {preferences.dismissedTasks.map((id) => (
-                      <div
-                        key={id}
-                        className="flex items-center justify-between gap-2 rounded-md bg-secondary/25 border border-border/50 px-2.5 py-1 text-xs text-zinc-300"
-                      >
-                        <span className="truncate max-w-[280px]" title={id}>
-                          {id.includes('@') ? id.split('@')[0] : id}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => undismissTask(id)}
-                          className="h-6 px-1.5 text-[10px] text-live hover:text-live hover:bg-live/10 gap-1"
-                        >
-                          <RotateCcw className="size-2.5" /> Restore
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-xs text-zinc-400 italic">No tasks currently hidden.</p>
+          <TabsContent value="credentials" className="settings-panel mt-5 space-y-4">
+            <CredentialsManager />
+            <div className="settings-subsection">
+              <SourceStatus />
+            </div>
+            <details className="settings-disclosure settings-advanced">
+              <summary className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                <span className="flex items-center gap-2 font-medium"><Sliders className="size-3.5" /> Advanced</span>
+                <span className="text-zinc-500">Reset preferences</span>
+              </summary>
+              <div className="mt-3 space-y-2">
+                <p className="text-xs leading-relaxed text-zinc-400">Reset local settings and the saved dining profile.</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleResetPreferences()}
+                  className="h-8 w-full justify-start gap-2 text-xs text-zinc-300 hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <RotateCcw className="size-3.5" /> Reset all preferences
+                </Button>
+                {resetStatus && (
+                  <p className={cn('text-xs', resetStatus.type === 'error' ? 'text-rose-300' : 'text-emerald-300')} role={resetStatus.type === 'error' ? 'alert' : 'status'}>
+                    {resetStatus.message}
+                  </p>
                 )}
               </div>
-            </div>
-
-            <Separator className="bg-border/60" />
-
-            {/* Reset button */}
-            <div className="pt-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={resetPreferences}
-                className="h-8 w-full gap-2 text-xs text-zinc-400 hover:text-destructive hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-              >
-                <RotateCcw className="size-3.5" />
-                Reset All Preferences to Default
-              </Button>
-            </div>
+            </details>
           </TabsContent>
 
-          {/* Tab 3: Feeds & Credentials */}
-          <TabsContent value="credentials" className="mt-5 space-y-5">
-            <CredentialsManager />
-          </TabsContent>
-
-          {/* Tab 4: Schedule (Office Hours) */}
-          <TabsContent value="schedule" className="mt-5 space-y-5">
+          <TabsContent value="schedule" className="settings-panel settings-schedule mt-5 space-y-4">
             <ScheduleTab />
+
+            <section className="settings-subsection">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-xs font-medium text-zinc-200">Hidden schedule items</h3>
+                <span className="text-[11px] text-zinc-400">{preferences.dismissedTasks.length}</span>
+              </div>
+              {preferences.dismissedTasks.length > 0 ? (
+                <div className="mt-2.5 max-h-40 space-y-1.5 overflow-y-auto pr-1">
+                  {preferences.dismissedTasks.map((id) => (
+                    <div key={id} className="settings-hidden-item flex min-w-0 items-center justify-between gap-2 text-xs text-zinc-300">
+                      <span className="min-w-0 truncate" title={id}>
+                        {id.includes('@') ? id.split('@')[0] : id}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => undismissTask(id)}
+                        className="h-7 shrink-0 gap-1 px-2 text-[10px] text-zinc-300 hover:bg-white/5 hover:text-foreground"
+                      >
+                        <RotateCcw className="size-2.5" /> Restore
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-zinc-400">No hidden items.</p>
+              )}
+            </section>
           </TabsContent>
         </Tabs>
       </SheetContent>
@@ -595,7 +582,7 @@ function CredentialsManager() {
     return (
       <div className="flex items-center justify-center py-10 text-muted-foreground gap-2 text-xs">
         <RefreshCw className="size-4 animate-spin text-live" />
-        <span>Checking credential status...</span>
+        <span>Loading connections…</span>
       </div>
     );
   }
@@ -638,7 +625,7 @@ function CredentialsManager() {
 
       setFeedback({
         type: 'success',
-        message: 'Credentials saved! Feeds and AI configuration synchronized.',
+        message: 'Saved. Sync started.',
       });
       setPortalUrl('');
       setLearnUrl('');
@@ -655,17 +642,6 @@ function CredentialsManager() {
 
   return (
     <div className="space-y-4">
-      {/* Intro info box */}
-      <div className="rounded-lg border border-border/80 bg-secondary/30 p-3.5 text-xs">
-        <div className="flex items-center gap-2 font-semibold text-foreground">
-          <ShieldCheck className="size-4 text-live" />
-          <span>Local Credential Vault</span>
-        </div>
-        <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
-          Your credentials are saved strictly in your local .env file. They never touch third-party servers.
-        </p>
-      </div>
-
       {feedback && (
         <div
           className={cn(
@@ -684,15 +660,12 @@ function CredentialsManager() {
         </div>
       )}
 
-      <form onSubmit={handleSave} className="space-y-4">
-        {/* Feed 1: Google Calendar or UW Portal */}
-        <div className="rounded-lg border border-border/80 bg-card p-3.5 space-y-2.5">
+      <form onSubmit={handleSave} className="space-y-3">
+        <div className="settings-connection">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Calendar className="size-4 text-live" />
-              <span className="text-xs font-semibold text-foreground">
-                1. Schedule Feed (Google Calendar or Portal)
-              </span>
+              <span className="text-xs font-medium text-foreground">Calendar feed</span>
             </div>
             {status?.portal.configured ? (
               <Badge
@@ -706,14 +679,14 @@ function CredentialsManager() {
                 variant="outline"
                 className="border-amber/40 bg-amber/10 text-amber-foreground text-[10px]"
               >
-                Locked / Missing
+                Missing
               </Badge>
             )}
           </div>
 
           <div>
-            <Label htmlFor="portal-url" className="text-xs font-mono text-zinc-400">
-              GOOGLE_CALENDAR_ICS_URL / PORTAL_ICS_URL
+            <Label htmlFor="portal-url" className="text-xs text-zinc-400">
+              Google Calendar or Portal URL
             </Label>
             <Input
               id="portal-url"
@@ -730,12 +703,11 @@ function CredentialsManager() {
           </div>
         </div>
 
-        {/* Feed 2: Waterloo LEARN Deadlines */}
-        <div className="rounded-lg border border-border/80 bg-card p-3.5 space-y-2.5">
+        <div className="settings-connection">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="size-4 text-cyan-400" />
-              <span className="text-xs font-semibold text-foreground">2. Waterloo LEARN Deadlines</span>
+              <span className="text-xs font-medium text-foreground">LEARN feed</span>
             </div>
             {status?.learn.configured ? (
               <Badge
@@ -749,14 +721,14 @@ function CredentialsManager() {
                 variant="outline"
                 className="border-amber/40 bg-amber/10 text-amber-foreground text-[10px]"
               >
-                Locked / Missing
+                Missing
               </Badge>
             )}
           </div>
 
           <div>
-            <Label htmlFor="learn-url" className="text-xs font-mono text-zinc-400">
-              LEARN_ICS_URL
+            <Label htmlFor="learn-url" className="text-xs text-zinc-400">
+              LEARN URL
             </Label>
             <Input
               id="learn-url"
@@ -773,40 +745,18 @@ function CredentialsManager() {
           </div>
         </div>
 
-        {/* Cloudflare Workers AI credentials (optional for local dev) */}
-        <div className="rounded-lg border border-border/80 bg-card p-3.5 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Bot className="size-4 text-live" />
-              <span className="text-xs font-semibold text-foreground">
-                3. Cloudflare Workers AI (Optional Local Relay)
-              </span>
-            </div>
-            {status?.cloudflare?.configured ? (
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]"
-              >
-                Connected
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="border-white/10 bg-secondary/40 text-zinc-400 text-[10px]"
-              >
-                Offline Fallback Active
-              </Badge>
-            )}
-          </div>
+        <details className="settings-connection settings-disclosure">
+          <summary className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+            <span className="flex items-center gap-2 font-medium"><Bot className="size-4 text-[#3478eb]" /> AI service</span>
+            <span className={status?.cloudflare?.configured ? 'text-emerald-300' : 'text-zinc-400'}>
+              {status?.cloudflare?.configured ? 'Connected' : 'Optional'}
+            </span>
+          </summary>
 
-          <p className="text-[11px] text-zinc-400 leading-relaxed">
-            Optional for local development. When deployed as a Cloudflare Worker, credentials are provided automatically.
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <Label htmlFor="cf-account" className="text-[11px] font-mono text-zinc-400">
-                CLOUDFLARE_ACCOUNT_ID
+              <Label htmlFor="cf-account" className="text-[11px] text-zinc-400">
+                Account ID
               </Label>
               <Input
                 id="cf-account"
@@ -818,8 +768,8 @@ function CredentialsManager() {
               />
             </div>
             <div>
-              <Label htmlFor="cf-token" className="text-[11px] font-mono text-zinc-400">
-                CLOUDFLARE_API_TOKEN
+              <Label htmlFor="cf-token" className="text-[11px] text-zinc-400">
+                API token
               </Label>
               <Input
                 id="cf-token"
@@ -831,25 +781,51 @@ function CredentialsManager() {
               />
             </div>
           </div>
-        </div>
+        </details>
 
         {/* Submit button */}
         <Button
           type="submit"
           disabled={saving || (!portalUrl.trim() && !learnUrl.trim() && !cfAccountId.trim() && !cfApiToken.trim())}
-          className="w-full h-9 gap-2 text-xs font-medium bg-live hover:bg-live/90 text-live-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+          className="w-full h-9 gap-2 text-xs font-medium bg-zinc-100 text-zinc-950 hover:bg-white focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
         >
           {saving ? (
             <>
-              <RefreshCw className="size-3.5 animate-spin" /> Saving & Polling...
+              <RefreshCw className="size-3.5 animate-spin" /> Saving…
             </>
           ) : (
             <>
-              <Lock className="size-3.5" /> Save Credentials & Sync Now
+              <Lock className="size-3.5" /> Save and sync
             </>
           )}
         </Button>
       </form>
+    </div>
+  );
+}
+
+function SourceStatus() {
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setError('');
+    try {
+      await triggerPoll();
+      await queryClient.invalidateQueries({ queryKey: ['health'] });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not refresh sources.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2 settings-source-panel">
+      <SourcesPanel onRefresh={() => void refresh()} isFetching={refreshing} />
+      {error && <p className="text-xs text-rose-300" role="alert">{error}</p>}
     </div>
   );
 }

@@ -17,7 +17,7 @@ import {
   MapPin,
   Compass,
   Building2,
-  Sparkles,
+  Bot,
   RefreshCw,
   AlertCircle,
   ExternalLink,
@@ -505,19 +505,19 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
           {preferences.density === 'compact' ? (
             <div className="flex items-center justify-between gap-2 rounded-lg border border-border/80 bg-secondary/25 px-3 py-1.5 text-xs shadow-xs">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="flex size-5 items-center justify-center rounded border border-amber/30 bg-amber/10 text-amber shrink-0">
-                  <Sparkles className="size-3 fill-amber" />
+                <div className="flex size-5 items-center justify-center rounded bg-[#3478eb] text-white shrink-0">
+                  <Bot className="size-3" />
                 </div>
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="font-semibold text-foreground text-xs shrink-0">
                     {aiRec?.top_outlet ? (
-                      <>Today Pick: <span className="text-amber">{getOutletLocation(aiRec.top_outlet).name}</span></>
+                      <>Today Pick: <span className="text-[#78adff]">{getOutletLocation(aiRec.top_outlet).name}</span></>
                     ) : (
                       'AI Dining Advisor'
                     )}
                   </span>
                   {aiRec?.ranked_outlets?.[0]?.match_score !== undefined && (
-                    <span className="rounded bg-amber/15 border border-amber/30 px-1 py-0 text-[9px] font-bold text-amber-foreground shrink-0">
+                    <span className="rounded bg-[#3478eb]/15 border border-[#3478eb]/40 px-1 py-0 text-[9px] font-bold text-[#78adff] shrink-0">
                       {aiRec.ranked_outlets[0].match_score}% Match
                     </span>
                   )}
@@ -544,7 +544,7 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
                   className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary/40 px-2 py-0.5 text-[11px] text-zinc-300 hover:text-foreground transition-colors"
                   title="Re-evaluate today menu against your taste profile"
                 >
-                  <RefreshCw className={cn('size-2.5', aiLoading && 'animate-spin text-amber')} />
+                  <RefreshCw className={cn('size-2.5', aiLoading && 'animate-spin text-[#78adff]')} />
                   <span className="hidden sm:inline">{aiLoading ? '...' : 'Re-rank'}</span>
                 </button>
               </div>
@@ -553,20 +553,20 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
             <div className="rounded-lg border border-border/80 bg-secondary/25 p-3 sm:p-3.5 shadow-xs">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-6 items-center justify-center rounded-md border border-amber/30 bg-amber/10 text-amber shrink-0">
-                    <Sparkles className="size-3.5 fill-amber" />
+                  <div className="flex size-6 items-center justify-center rounded-md bg-[#3478eb] text-white shrink-0">
+                    <Bot className="size-3.5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-xs font-semibold text-foreground">
                         {aiRec?.top_outlet ? (
-                          <>Today Top Pick: <span className="text-amber">{getOutletLocation(aiRec.top_outlet).name}</span></>
+                          <>Today Top Pick: <span className="text-[#78adff]">{getOutletLocation(aiRec.top_outlet).name}</span></>
                         ) : (
                           'AI Dining Advisor'
                         )}
                       </span>
                       {aiRec?.ranked_outlets?.[0]?.match_score !== undefined && (
-                        <span className="rounded bg-amber/15 border border-amber/30 px-1.5 py-0.2 text-[10px] font-bold text-amber-foreground">
+                        <span className="rounded bg-[#3478eb]/15 border border-[#3478eb]/40 px-1.5 py-0.2 text-[10px] font-bold text-[#78adff]">
                           {aiRec.ranked_outlets[0].match_score}% Match
                         </span>
                       )}
@@ -594,7 +594,7 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
                     className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary/30 px-2 py-1 text-[11px] text-zinc-300 hover:border-white/20 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
                     title="Re-evaluate today menu against your taste profile"
                   >
-                    <RefreshCw className={cn('size-3', aiLoading && 'animate-spin text-amber')} />
+                    <RefreshCw className={cn('size-3', aiLoading && 'animate-spin text-[#78adff]')} />
                     <span className="hidden sm:inline">{aiLoading ? 'Evaluating...' : 'Re-rank'}</span>
                   </button>
                 </div>
@@ -981,7 +981,7 @@ function PinnedOutletSection({
                     className={cn(
                       'rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
                       outlet.aiInfo.rank === 1
-                        ? 'border-amber/40 bg-amber/15 text-amber-200'
+                        ? 'border-[#3478eb]/40 bg-[#3478eb]/15 text-[#78adff]'
                         : 'border-border/80 bg-secondary/40 text-zinc-300',
                     )}
                   >
@@ -993,7 +993,7 @@ function PinnedOutletSection({
               {/* AI Verdict summary for this outlet (Detailed mode only) */}
               {density !== 'compact' && outlet.aiInfo?.verdict && (
                 <div className="mt-1 flex items-start gap-1.5 rounded-md bg-secondary/30 px-2 py-1 text-[11px] text-zinc-300 border border-border/50">
-                  <Sparkles className="size-3 text-amber shrink-0 mt-0.5" />
+                  <Bot className="size-3 text-[#78adff] shrink-0 mt-0.5" />
                   <span className="leading-snug">{outlet.aiInfo.verdict}</span>
                 </div>
               )}
@@ -1143,11 +1143,11 @@ function DishItem({
           <span
             title={aiHighlight}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md border border-amber/40 bg-amber/15 font-medium text-amber-200 shrink-0',
+              'inline-flex items-center gap-1 rounded-md border border-[#3478eb]/40 bg-[#3478eb]/15 font-medium text-[#78adff] shrink-0',
               compact ? 'px-1 py-0 text-[9px] max-w-[100px] sm:max-w-[130px]' : 'px-1.5 py-0.5 text-[10px] max-w-[140px] sm:max-w-[200px]',
             )}
           >
-            <Sparkles className={cn(compact ? 'size-2' : 'size-2.5', 'text-amber shrink-0')} />
+            <Bot className={cn(compact ? 'size-2' : 'size-2.5', 'text-[#78adff] shrink-0')} />
             <span className="truncate">{aiHighlight}</span>
           </span>
         )}
