@@ -139,3 +139,52 @@ test('string values for use_ai cannot trigger a metered AI call', async () => {
   }), /use_ai must be a boolean/);
   assert.equal(modelCalls, 0);
 });
+
+test('multi-line block syllabus extracts weekly learning topics and assessments with anchored dates', async () => {
+  const text = `ECE105 course schedule: Note this is meant as a guide and not as an absolute schedule.
+Week 1
+Mathematics necessary for describing physics. Coordinate systems (1D,2D,maybe some
+3D) and unit vectors. Cartesian and circular coordinates.
+Materials from textbook:
+Assignment #1 due Sunday Sept 20
+Quiz #1 Friday Sept 18
+Week 2 +
+Solving for Motion in 1D and 2D with constant linear acceleration. Problem solving
+techniques.
+Materials from textbook:
+Assignment #2 due Sunday Sept 27
+Quiz #2 Friday Sept 25
+Week 7
+Rotational motion. Newton’s laws in rotational motion. Torque.
+Materials from textbook:
+Assignment #7 due Sunday Nov15
+Quiz #7 Friday Nob 13`;
+
+  const preview = await previewSyllabus(null, { course: 'ECE 105', year: 2020, text }, { now });
+  assert.equal(preview.method, 'rules');
+  assert.equal(preview.syllabus.term_start, '2020-09-14', 'infers term_start Monday from Week 1 dates');
+
+  const topics = preview.syllabus.entries.filter((entry) => entry.kind === 'topic');
+  assert.equal(topics.length, 3);
+  assert.equal(topics[0].title, 'Mathematics necessary for describing physics');
+  assert.equal(topics[0].start_date, '2020-09-14');
+  assert.equal(topics[0].end_date, '2020-09-20');
+  assert.ok(topics[0].topics.includes('Mathematics necessary for describing physics'));
+  assert.ok(topics[0].topics.some((t) => t.includes('Coordinate systems')));
+
+  assert.equal(topics[1].title, 'Solving for Motion in 1D and 2D with constant linear acceleration');
+  assert.equal(topics[1].start_date, '2020-09-21');
+  assert.equal(topics[1].end_date, '2020-09-27');
+
+  assert.equal(topics[2].title, 'Rotational motion');
+  assert.equal(topics[2].start_date, '2020-11-09');
+  assert.equal(topics[2].end_date, '2020-11-15');
+
+  const assessments = preview.syllabus.entries.filter((entry) => entry.kind === 'assessment');
+  assert.equal(assessments.length, 6);
+  assert.equal(assessments.find((a) => a.title === 'Assignment #1').start_date, '2020-09-20');
+  assert.equal(assessments.find((a) => a.title === 'Quiz #1').start_date, '2020-09-18');
+  assert.equal(assessments.find((a) => a.title === 'Assignment #7').start_date, '2020-11-15');
+  assert.equal(assessments.find((a) => a.title === 'Quiz #7').start_date, '2020-11-13');
+});
+

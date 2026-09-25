@@ -9,8 +9,8 @@ import { config } from './config.mjs';
 const PREFIX = 'SYLLABUS:';
 const DAY = 86_400_000;
 const campusFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
-const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-const MONTH = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\.?';
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, nob: 11, dec: 12 };
+const MONTH = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Nob|Dec(?:ember)?)\\.?';
 const COVERAGE_REFERENCE = String.raw`\b(?:chapters?|ch\.?|sections?|secs?\.?|units?|modules?|lectures?|weeks?)\s+\d+(?:\.\d+)?(?:(?:\s*(?:[-–—−]|\b(?:to|through)\b)\s*\d+(?:\.\d+)?)|(?:\s*,\s*\d+(?:\.\d+)?)|(?:\s*,?\s*(?:and|&)\s*\d+(?:\.\d+)?))*`;
 
 function decode(value) {
@@ -59,10 +59,12 @@ export function syllabusAssessmentMatches(entry, course, event) {
   return entry.start_date <= day && entry.end_date >= day;
 }
 
+const WEEKDAY = '(?:Mon(?:day)?|Tue(?:s(?:day)?)?|Wed(?:nesday)?|Thu(?:r(?:s(?:day)?)?)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\\.?,?\\s*';
+
 function dateRange(text, context) {
   const iso = text.match(/\b(20\d{2}-\d{2}-\d{2})(?:\s*(?:to|[-–—])\s*(20\d{2}-\d{2}-\d{2}))?\b/i);
   if (iso) return { start: iso[1], end: iso[2] || iso[1], token: iso[0] };
-  const named = new RegExp(`\\b(${MONTH})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*(?:to|[-–—])\\s*(?:(${MONTH})\\s+)?(\\d{1,2})(?:st|nd|rd|th)?)?(?:,?\\s+(20\\d{2}))?\\b`, 'i').exec(text);
+  const named = new RegExp(`\\b(?:${WEEKDAY})?(${MONTH})\\s*(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*(?:to|[-–—])\\s*(?:(${MONTH})\\s*)?(\\d{1,2})(?:st|nd|rd|th)?)?(?:,?\\s+(20\\d{2}))?\\b`, 'i').exec(text);
   if (named) {
     const y = Number(named[5] || context.year);
     const month = MONTHS[named[1].slice(0, 3).toLowerCase()];
@@ -71,10 +73,10 @@ function dateRange(text, context) {
     const end = date(y, endMonth, Number(named[4] || named[2]));
     return start && end ? { start, end, token: named[0] } : { invalid: true };
   }
-  const week = /\bweek\s*(\d{1,2})(?:\s*(?:to|[-–—])\s*(\d{1,2}))?\b/i.exec(text);
+  const week = /\bweek\s*(\d{1,2}(?:\.\d+)?)(?:\s*(?:to|[-–—])\s*(\d{1,2}(?:\.\d+)?))?(?:\s*\+)?/i.exec(text);
   if (week) {
-    if (!context.term_start) return { needsAnchor: true };
-    const first = Number(week[1]), last = Number(week[2] || first);
+    if (!context.term_start) return { needsAnchor: true, token: week[0] };
+    const first = Number(week[1]), last = Math.ceil(Number(week[2] || first));
     if (first < 1 || last < first || last > 53) return { invalid: true };
     return { start: addDays(context.term_start, (first - 1) * 7), end: addDays(context.term_start, last * 7 - 1), token: week[0], week: true };
   }
@@ -82,14 +84,33 @@ function dateRange(text, context) {
 }
 
 function cleanLabel(value) {
-  return value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/https?:\/\/\S+/g, '').replace(/\*\*|^#+\s*/g, '').replace(/^[\s|,:;()\-–—]+|[\s|,:;()\-–—]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  let cleaned = value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\*\*|^#+\s*/g, '')
+    .replace(/^[\s|,:;\-–—+]+|[\s|,:;\-–—+]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  while (cleaned.endsWith('(') || (cleaned.endsWith(')') && (cleaned.match(/\(/g) || []).length < (cleaned.match(/\)/g) || []).length)) {
+    cleaned = cleaned.slice(0, -1).trim();
+  }
+  while (cleaned.startsWith(')') || (cleaned.startsWith('(') && (cleaned.match(/\)/g) || []).length < (cleaned.match(/\(/g) || []).length)) {
+    cleaned = cleaned.slice(1).trim();
+  }
+  return cleaned.replace(/^[\s|,:;\-–—+]+|[\s|,:;\-–—+]+$/g, '').trim();
 }
+
 function safeUrl(text) {
   const match = text.match(/https:\/\/[^\s<>"')\]]+/i);
   if (!match) return null;
   try { const url = new URL(match[0].replace(/\.,?$/, '').replace(/\\&/g, '&')); return !url.username && !url.password ? url.href : null; } catch { return null; }
 }
+
 function kindOf(text) { return /\b(?:quiz|test|exam|midterm|final examination|assignment|project|submission|report|essay|due|deadline)\b/i.test(text) ? 'assessment' : /^(?:reading|read|textbook|chapter|chapters)\b/i.test(text) ? 'reading' : 'topic'; }
+
 function timeDue(text, range, kind) {
   if (kind !== 'assessment' || range.start !== range.end) return null;
   const match = /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i.exec(text) || /\b([01]\d|2[0-3]):([0-5]\d)\b/.exec(text);
@@ -101,9 +122,13 @@ function timeDue(text, range, kind) {
   const [y, m, d] = range.start.split('-').map(Number);
   return zonedToEpoch(y, m, d, hour, minute, 0, config.timezone);
 }
-function makeEntry(text, evidence, range, forcedKind = null) {
-  const stripped = text.replace(range.token || '', '').replace(/\bweek\s*\d{1,2}\b/i, '');
-  const title = cleanLabel(stripped);
+
+function makeEntry(text, evidence, range, forcedKind = null, customTopics = null) {
+  const stripped = text.replace(range.token || '', '').replace(/\bweek\s*\d{1,2}(?:\.\d+)?(?:\s*(?:to|[-–—])\s*\d{1,2}(?:\.\d+)?)?(?:\s*\+)?/i, '');
+  let title = cleanLabel(stripped);
+  if (forcedKind === 'assessment' || (!forcedKind && kindOf(title) === 'assessment')) {
+    title = cleanLabel(title.replace(/\s+(?:due|available|on|at)$/i, ''));
+  }
   if (!title || /^(?:date|week|topics?|schedule|readings?|assessment|no class|reading week|holiday)(?:\s*\|\s*)?$/i.test(title)) return null;
   const kind = forcedKind || kindOf(title);
   const labeledCoverage = /\b(?:topics?|covers?|coverage|content)\s*[:：]\s*([^|;]+)/i.exec(title)?.[1]?.trim();
@@ -117,31 +142,48 @@ function makeEntry(text, evidence, range, forcedKind = null) {
   return {
     id: hashKey(`${kind}:${range.start}:${range.end}:${title}`), kind, title,
     start_date: range.start, end_date: range.end, due_at: timeDue(evidence, range, kind),
-    topics: kind === 'topic' ? [title.slice(0, 200)] : coverage ? [coverage.slice(0, 200)] : [],
+    topics: customTopics || (kind === 'topic' ? [title.slice(0, 200)] : coverage ? [coverage.slice(0, 200)] : []),
     readings: kind === 'reading' ? [title.slice(0, 200)] : reading ? [reading.slice(0, 200)] : [],
     url: safeUrl(text), effort: large ? 'large' : small ? 'small' : 'unknown',
     estimated_minutes: estimated && estimated <= 6000 ? estimated : null, evidence: evidence.slice(0, 2000),
   };
 }
 
+function getMonday(dateStr) {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  const day = (d.getUTCDay() + 6) % 7;
+  return addDays(dateStr, -day);
+}
+
 function parseRules(text, context) {
   const entries = [], warnings = [];
   let headers = null, unmatched = 0, needsAnchor = false, invalid = 0;
-  for (const line of text.split('\n').map((value) => value.trim()).filter(Boolean)) {
+  const lines = text.split('\n').map((v) => v.trim()).filter(Boolean);
+
+  for (const line of lines) {
     if (/^(?:last\s+)?(?:updated|revised|printed|downloaded|posted|copyright)\b/i.test(line.replace(/^#+\s*/, ''))) continue;
     const cells = line.replace(/^\s*\||\|\s*$/g, '').split('|').map((value) => value.trim());
-    if (cells.length >= 2 && cells.some((value) => /^(?:week|date|day|week of)$/i.test(value)) && cells.some((value) => /topic|content|reading|assessment|lecture|assignment/i.test(value))) { headers = cells.map((value) => value.toLowerCase()); continue; }
-    if (/^[\s|:\-]+$/.test(line)) continue;
-    if (headers && cells.length >= 2 && cells.length < headers.length) while (cells.length < headers.length) cells.push('');
-    const dateCell = headers && cells.length === headers.length ? cells.map((value, index) => {
-      if (!/date|week|day/.test(headers[index])) return '';
-      return /week/.test(headers[index]) && /^\d{1,2}(?:\s*[-–—]\s*\d{1,2})?$/.test(value) ? `Week ${value}` : value;
-    }).join(' ') : line;
-    const range = dateRange(dateCell, context);
-    if (range?.needsAnchor) { needsAnchor = true; continue; }
-    if (range?.invalid || (range && (!SyllabusDate.safeParse(range.start).success || !SyllabusDate.safeParse(range.end).success || range.start > range.end))) { invalid++; continue; }
-    if (!range) { if (/\b(?:quiz|assignment|project|chapter|week|topic|reading|exam)\b/i.test(line)) unmatched++; continue; }
-    if (headers && cells.length === headers.length) {
+    if (cells.length >= 2 && cells.some((value) => /^(?:week|date|day|week of)$/i.test(value)) && cells.some((value) => /topic|content|reading|assessment|lecture|assignment/i.test(value))) {
+      headers = cells.map((value) => value.toLowerCase());
+      break;
+    }
+  }
+
+  if (headers) {
+    for (const line of lines) {
+      if (/^(?:last\s+)?(?:updated|revised|printed|downloaded|posted|copyright)\b/i.test(line.replace(/^#+\s*/, ''))) continue;
+      const cells = line.replace(/^\s*\||\|\s*$/g, '').split('|').map((value) => value.trim());
+      if (cells.length >= 2 && cells.some((value) => /^(?:week|date|day|week of)$/i.test(value)) && cells.some((value) => /topic|content|reading|assessment|lecture|assignment/i.test(value))) continue;
+      if (/^[\s|:\-]+$/.test(line)) continue;
+      if (cells.length >= 2 && cells.length < headers.length) while (cells.length < headers.length) cells.push('');
+      const dateCell = cells.length === headers.length ? cells.map((value, index) => {
+        if (!/date|week|day/.test(headers[index])) return '';
+        return /week/.test(headers[index]) && /^\d{1,2}(?:\s*[-–—]\s*\d{1,2})?$/.test(value) ? `Week ${value}` : value;
+      }).join(' ') : line;
+      const range = dateRange(dateCell, context);
+      if (range?.needsAnchor) { needsAnchor = true; continue; }
+      if (range?.invalid || (range && (!SyllabusDate.safeParse(range.start).success || !SyllabusDate.safeParse(range.end).success || range.start > range.end))) { invalid++; continue; }
+      if (!range) { if (/\b(?:quiz|assignment|project|chapter|week|topic|reading|exam)\b/i.test(line)) unmatched++; continue; }
       let added = false;
       cells.forEach((value, index) => {
         if (/date|week|day/.test(headers[index]) || !value || /^(?:[-–—]|none|n\/a)$/i.test(value)) return;
@@ -153,16 +195,146 @@ function parseRules(text, context) {
         if (entry) { entries.push(entry); added = true; }
       });
       if (added) continue;
+      const entry = makeEntry(line, line, range);
+      if (entry) entries.push(entry);
     }
-    const entry = makeEntry(line, line, range);
-    if (entry) entries.push(entry);
+  } else {
+    const weekPattern = /^\s*(?:#+\s*|\*{1,3}\s*)?week\s*(\d{1,2}(?:\.\d+)?)(?:\s*(?:to|[-–—])\s*(\d{1,2}(?:\.\d+)?))?(?:\s*\+)?\s*[:：\-–—]?\s*(.*)$/i;
+    const hasWeekBlocks = lines.some((l) => weekPattern.test(l));
+
+    if (hasWeekBlocks) {
+      const blocks = [];
+      let currentBlock = null;
+
+      for (const line of lines) {
+        if (/^(?:last\s+)?(?:updated|revised|printed|downloaded|posted|copyright)\b/i.test(line.replace(/^#+\s*/, ''))) continue;
+        const m = weekPattern.exec(line);
+        if (m) {
+          if (currentBlock) blocks.push(currentBlock);
+          currentBlock = {
+            headerLine: line,
+            firstWeek: Number(m[1]),
+            lastWeek: Math.ceil(Number(m[2] || m[1])),
+            headerRest: m[3] ? m[3].trim() : '',
+            lines: [],
+          };
+        } else if (currentBlock) {
+          currentBlock.lines.push(line);
+        } else {
+          const range = dateRange(line, context);
+          if (range?.needsAnchor) { needsAnchor = true; }
+          else if (range?.invalid) { invalid++; }
+          else if (range?.start && range.start <= range.end) {
+            const entry = makeEntry(line, line, range);
+            if (entry) entries.push(entry);
+          }
+        }
+      }
+      if (currentBlock) blocks.push(currentBlock);
+
+      if (!context.term_start) {
+        for (const block of blocks) {
+          const blockDates = [];
+          for (const l of block.lines) {
+            const r = dateRange(l, context);
+            if (r?.start && !r.invalid && !r.needsAnchor && !r.week) {
+              blockDates.push(r.start);
+            }
+          }
+          if (blockDates.length > 0 && block.firstWeek >= 1 && block.firstWeek <= 12) {
+            blockDates.sort();
+            const minMon = getMonday(blockDates[0]);
+            const inferred = addDays(minMon, -(block.firstWeek - 1) * 7);
+            if (SyllabusDate.safeParse(inferred).success) {
+              context.term_start = inferred;
+              break;
+            }
+          }
+        }
+      }
+
+      for (const block of blocks) {
+        const blockDates = [];
+        for (const l of block.lines) {
+          const r = dateRange(l, context);
+          if (r?.start && !r.invalid && !r.needsAnchor && !r.week) {
+            blockDates.push(r.start);
+          }
+        }
+
+        let weekRange = null;
+        if (blockDates.length > 0) {
+          blockDates.sort();
+          const startMon = getMonday(blockDates[0]);
+          const endSun = addDays(getMonday(blockDates[blockDates.length - 1]), 6);
+          weekRange = { start: startMon, end: endSun, token: block.headerLine };
+        } else if (context.term_start) {
+          const start = addDays(context.term_start, (block.firstWeek - 1) * 7);
+          const end = addDays(context.term_start, block.lastWeek * 7 - 1);
+          weekRange = { start, end, token: block.headerLine, week: true };
+        } else {
+          needsAnchor = true;
+        }
+
+        const topicLines = [];
+        const readingLines = [];
+
+        for (const line of block.lines) {
+          const ownRange = dateRange(line, context);
+          if (ownRange?.invalid) { invalid++; continue; }
+          const isAssessment = kindOf(line) === 'assessment';
+
+          if (isAssessment) {
+            const entryRange = ownRange?.start ? ownRange : weekRange;
+            if (entryRange && entryRange.start <= entryRange.end) {
+              const entry = makeEntry(line, line, entryRange, 'assessment');
+              if (entry) entries.push(entry);
+            } else {
+              unmatched++;
+            }
+          } else if (/^(?:materials?\s*(?:from|in)?\s*textbooks?|readings?|read|textbooks?)\s*[:：]?/i.test(line)) {
+            const content = line.replace(/^(?:materials?\s*(?:from|in)?\s*textbooks?|readings?|read|textbooks?)\s*[:：]?\s*/i, '').trim();
+            if (content) readingLines.push(content);
+          } else {
+            topicLines.push(line);
+          }
+        }
+
+        if (readingLines.length > 0 && weekRange && weekRange.start <= weekRange.end) {
+          const readText = readingLines.join('; ');
+          const entry = makeEntry(readText, readingLines.join('\n'), weekRange, 'reading');
+          if (entry) entries.push(entry);
+        }
+
+        if (weekRange && weekRange.start <= weekRange.end) {
+          const combinedTopic = [block.headerRest, ...topicLines].filter(Boolean).join(' ').trim();
+          if (combinedTopic) {
+            const sentences = combinedTopic.split(/(?<=[.!?])\s+|;\s*/).map((s) => s.trim().replace(/\.$/, '')).filter(Boolean);
+            const title = block.headerRest || sentences[0] || combinedTopic.slice(0, 300);
+            const customTopics = sentences.filter((s) => s.length <= 200).slice(0, 20);
+            const entry = makeEntry(title, [block.headerLine, ...topicLines].join('\n'), weekRange, 'topic', customTopics.length ? customTopics : [title.slice(0, 200)]);
+            if (entry) entries.push(entry);
+          }
+        }
+      }
+    } else {
+      for (const line of lines) {
+        if (/^(?:last\s+)?(?:updated|revised|printed|downloaded|posted|copyright)\b/i.test(line.replace(/^#+\s*/, ''))) continue;
+        const range = dateRange(line, context);
+        if (range?.needsAnchor) { needsAnchor = true; continue; }
+        if (range?.invalid || (range && (!SyllabusDate.safeParse(range.start).success || !SyllabusDate.safeParse(range.end).success || range.start > range.end))) { invalid++; continue; }
+        if (!range) { if (/\b(?:quiz|assignment|project|chapter|week|topic|reading|exam)\b/i.test(line)) unmatched++; continue; }
+        const entry = makeEntry(line, line, range);
+        if (entry) entries.push(entry);
+      }
+    }
   }
+
   if (needsAnchor) warnings.push('Week numbers were left unscheduled. Set the first day of Week 1 to map them to dates.');
   if (invalid) warnings.push(`${invalid} schedule row(s) had an invalid date, missing year, or reversed date range and were left unscheduled.`);
   if (unmatched) warnings.push(`${unmatched} undated or unrecognized row(s) were left unscheduled. Review the original syllabus for missing items.`);
   if (entries.some((entry) => entry.start_date !== entry.end_date)) warnings.push('Date ranges describe coverage during that period; they do not assign a topic to a particular lecture day.');
   if (entries.some((entry) => entry.kind === 'assessment' && entry.due_at == null)) warnings.push('Assessments without an explicit time have no exact deadline. Confirm their due time in LEARN.');
-  if (entries.length > 200) warnings.push('Only the first 200 scheduled entries were imported.');
   return { entries: [...new Map(entries.map((entry) => [entry.id, entry])).values()].slice(0, 200), warnings };
 }
 
@@ -227,6 +399,6 @@ export async function previewSyllabus(store, { course: inputCourse, text: input,
   }
   if (!entries.length) warnings.push('No dated course content could be mapped. Paste the weekly schedule and supply its year or Week 1 start date.');
   warnings.push('Review these entries before saving. Syllabus plans can change; LEARN deadlines remain the live source.');
-  const syllabus = CourseSyllabus.parse({ course, title: `${course} syllabus`, term_start, entries, warnings: warnings.slice(0, 30), updated_at: now });
+  const syllabus = CourseSyllabus.parse({ course, title: `${course} syllabus`, term_start: context.term_start || term_start, entries, warnings: warnings.slice(0, 30), updated_at: now });
   return { syllabus, method, warnings: syllabus.warnings };
 }
