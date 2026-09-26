@@ -241,14 +241,27 @@ export class D1Store {
       .run();
   }
 
-  async recordJobResult(sourceId, { startedAt, finishedAt, outcome, httpStatus = null, cadenceMs, now }) {
+  async recordJobResult(sourceId, {
+    startedAt,
+    finishedAt,
+    outcome,
+    httpStatus = null,
+    retryAfterMs = 0,
+    cadenceMs,
+    rateLimitMinMs = 30 * 60_000,
+    rateLimitMaxMs = 48 * 60 * 60_000,
+    now,
+  }) {
     const prev = await this.db.prepare('SELECT * FROM job WHERE source_id=?').bind(sourceId).first();
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
     const circuit = failures >= 5 ? 'open' : 'closed';
     const backoff = httpStatus === 429
-      ? Math.max(cadenceMs, 30 * 60_000)
+      ? Math.max(
+        retryAfterMs || 0,
+        Math.min(rateLimitMaxMs, Math.max(cadenceMs, rateLimitMinMs) * 2 ** Math.max(0, failures - 1)),
+      )
       : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)

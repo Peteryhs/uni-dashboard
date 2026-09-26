@@ -8,6 +8,17 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-25 — Trial fixes and mobile polish
+
+The day-one trial led to six fixes. Dining taste is now one free-text profile that saves automatically after edits; the preset taste buttons and Save action are gone. The #1 dining outlet shows a sentence explaining its ranking, including beside the outlet in the menu. Class detail no longer repeats the course description.
+
+Source health now treats a calendar response with zero rows as a failure when saved future events for that source remain, preserving those rows and surfacing the failure instead of claiming an empty healthy feed. Google Calendar subscriptions poll every six hours, back off for at least twelve hours after a 429 (longer for repeated failures or Retry-After), and duplicate URLs are fetched once per scheduler. The local relay serves saved data without automatic polling unless RELAY_POLL_ENABLED=1, so it does not compete with the deployed Worker by default. Replacing the expired LEARN token was a trial-time credential action, not a code change in this fix pass.
+
+Mobile polish places the dining reason directly below the café name, keeps Refresh and Settings together with 44px touch targets, and gives expanded campus notice titles full width on narrow phones.
+
+Verification: 227/227 tests passed; the web production build and Worker dry run passed. The local preview was checked at widths from 320px to 1440px with no page overflow. The preview serves a local database copy with automatic polling disabled. The Cloudflare deploy was attempted but did not complete because the configured API token has no access to the specified service; production remains on the previous build.
+
+---
 ## 2026-09-23 — Unified calendar, course guidance, and recommendation preview
 
 The backend now serves one calendar for classes, LEARN deadlines and exams, office hours, custom events, and reviewed syllabus content. It deduplicates events, handles Toronto dates and recurring ICS changes, and keeps source freshness visible. The existing UI continues to work and has a unified calendar view.

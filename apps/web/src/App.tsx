@@ -73,6 +73,14 @@ function calendarKind(event: CalendarEvent): string {
   if (event.category === 'deadline') return /quiz/i.test(event.title) ? 'Quiz due' : 'Due';
   return event.category.replace('_', ' ');
 }
+function distinctCalendarSubtitle(event: CalendarEvent): string {
+  const subtitle = event.subtitle.trim();
+  const description = event.description.trim();
+  // Portal class feeds copy their description into the short subtitle field.
+  // Keep one readable description and preserve the room as its own line.
+  if (!subtitle || subtitle === description || description.startsWith(subtitle)) return '';
+  return event.subtitle;
+}
 function useReveal() {
   useEffect(() => {
     const sections = document.querySelectorAll<HTMLElement>('[data-reveal]');
@@ -147,7 +155,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
           <summary><span className="calendar-time">{calendarTime(event)}</span><span className="calendar-event-title"><strong>{cleanTitle(event.title)}</strong><span className="course-tag">{event.course || 'Course not identified'}</span><span className={'event-tag event-' + event.category}>{calendarKind(event)}</span></span><ChevronRight className="calendar-item-chevron" size={14} /></summary>
           <div className="calendar-event-detail">
             {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
-            {event.subtitle && <p>{event.subtitle}</p>}
+            {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
             {event.location && <p>{event.location}</p>}
             {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
             {event.description && <p>{event.description}</p>}
@@ -340,7 +348,17 @@ export default function App() {
   };
   return <div className="dashboard-app"><main className="dashboard-frame">
     <section className="today-content" aria-label="Today">
-      <div className="day-context"><span>{formatDay(now)} · {formatTime(now)}</span>{weather.data?.temp_c !== null && weather.data?.temp_c !== undefined && <span>{weather.data.temp_c}°C</span>}{alert && alert.count > 0 && !alert.dismissed && <button className="context-alert" onClick={() => setAlertOpen(value => !value)} aria-expanded={alertOpen}>{alert.notices?.[0]?.title || alert.summary || 'Campus service issue'}{alert.count > 1 ? ' · ' + alert.count + ' notices' : ''}</button>}{alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}{(offline || recs.isError || isOld) && <span className="saved-context"><WifiOff size={13} /> Saved information</span>}<button className="top-refresh" onClick={() => void refreshAll()} disabled={syncing} aria-label="Refresh all sources" title="Refresh all sources"><RefreshCw size={16} className={syncing ? 'spinning' : ''} /></button><button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button></div>
+      <div className="day-context">
+        <span>{formatDay(now)} · {formatTime(now)}</span>
+        {weather.data?.temp_c !== null && weather.data?.temp_c !== undefined && <span>{weather.data.temp_c}°C</span>}
+        {alert && alert.count > 0 && !alert.dismissed && <button className="context-alert" onClick={() => setAlertOpen(value => !value)} aria-expanded={alertOpen}>{alert.notices?.[0]?.title || alert.summary || 'Campus service issue'}{alert.count > 1 ? ' · ' + alert.count + ' notices' : ''}</button>}
+        {alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}
+        {(offline || recs.isError || isOld) && <span className="saved-context"><WifiOff size={13} /> Saved information</span>}
+        <div className="day-context-actions">
+          <button className="top-refresh" onClick={() => void refreshAll()} disabled={syncing} aria-label="Refresh all sources" title="Refresh all sources"><RefreshCw size={16} className={syncing ? 'spinning' : ''} /></button>
+          <button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button>
+        </div>
+      </div>
       {alertOpen && alert && !alert.dismissed && <section className="alert-detail" aria-label="Campus alert details"><div className="alert-list">{alert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{alert.checked_at && <small>Checked {shortAge(alert.checked_at, now)} ago</small>}</div><div className="alert-actions">{alert.key && <button onClick={async () => { try { await dismissAlert(alert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</section>}
       {syncError && <p className="action-error" role="alert">{syncError}</p>}
       {recs.isPending && <div className="state-panel hero-loading" aria-busy="true">Finding your next move…</div>}

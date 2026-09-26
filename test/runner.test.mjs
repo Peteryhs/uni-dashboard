@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { runSource } from '../apps/relay/src/runner.mjs';
 
-function source({ id = 'fake', rows = [], plausible = { ok: true, reason: '' }, parseThrows = null, bytes = 10, status = 200, contentType = 'text/calendar' } = {}) {
+function source({ id = 'fake', rows = [], plausible = { ok: true, reason: '' }, parseThrows = null, bytes = 10, status = 200, contentType = 'text/calendar', failOnEmptyWhenFutureRows = false } = {}) {
   return {
     id,
     shape: 'timeline_event',
     cadenceMs: 60_000,
+    failOnEmptyWhenFutureRows,
     async fetchRaw() {
       return { status, contentType, body: 'x'.repeat(bytes), bytes };
     },
@@ -79,6 +80,37 @@ test('a valid-empty run does not tombstone either', async () => {
   const empty = await runSource(source({ rows: [] }), store, { now: Date.UTC(2026, 8, 21, 13) });
   assert.equal(empty.outcome, 'empty');
   assert.equal(store.rows('timeline_event').length, 1, 'tomorrow menu not being posted must not delete today');
+});
+
+test('a calendar empty run fails and preserves future rows', async () => {
+  const store = new SqliteStore(':memory:');
+  const now = Date.UTC(2026, 8, 21, 12);
+  await runSource(source({ rows: [row(1)], failOnEmptyWhenFutureRows: true }), store, { now });
+
+  const empty = await runSource(
+    source({ rows: [], failOnEmptyWhenFutureRows: true }),
+    store,
+    { now: now + 60 * 60 * 1000 },
+  );
+
+  assert.equal(empty.outcome, 'failed');
+  assert.match(empty.error, /saved future calendar events remain/);
+  assert.equal(empty.meta.empty_feed, 'unexpected');
+  assert.equal(store.rows('timeline_event').length, 1, 'an empty calendar response must not clear saved events');
+});
+
+test('a calendar empty run remains valid after all saved events have passed', async () => {
+  const store = new SqliteStore(':memory:');
+  const now = Date.UTC(2026, 8, 21, 12);
+  await runSource(source({ rows: [row(1, 20)], failOnEmptyWhenFutureRows: true }), store, { now });
+
+  const empty = await runSource(
+    source({ rows: [], failOnEmptyWhenFutureRows: true }),
+    store,
+    { now: now + 60 * 60 * 1000 },
+  );
+
+  assert.equal(empty.outcome, 'empty', 'term exhaustion is a valid empty calendar');
 });
 
 test('a page that is fine but has nothing for this date is empty, not failed', async () => {

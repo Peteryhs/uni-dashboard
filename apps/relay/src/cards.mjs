@@ -101,7 +101,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
   const next = schedule[0] ?? deadlines[0];
 
   if (!next) {
-    const health = await sourceHealth(store, SCHEDULE_SOURCE, 15 * MIN, now);
+    const health = await sourceHealth(store, SCHEDULE_SOURCE, 6 * HOUR, now);
     if (!health.ok) {
       return {
         id: 'next_commitment',
@@ -164,7 +164,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
     id: 'next_commitment',
     type: 'next_commitment',
     priority: 100,
-    ...envelope(source.length ? source : [next], { now, cadenceMs: 15 * MIN }),
+    ...envelope(source.length ? source : [next], { now, cadenceMs: 6 * HOUR }),
     source_id: next.source_id,
     data: {
       title: next.title,

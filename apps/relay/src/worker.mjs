@@ -14,7 +14,7 @@
 import { D1Store } from './d1-store.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
 import { runSource } from './runner.mjs';
-import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
+import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
@@ -130,10 +130,10 @@ const MAX_SOURCES_PER_TICK = 2;
 export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TICK, sources = SOURCES) {
   const receipts = [];
   const jobs = await store.jobs();
-  const ready = jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
+  const ready = dedupeGoogleSources(jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
     .map((j) => sourceById(j.source_id, sources))
     .filter(Boolean)
-    .filter(scheduleFor);
+    .filter(scheduleFor));
   const due = ready.slice(0, cap);
   const deferred = ready.slice(cap).map((s) => s.id);
 
@@ -146,7 +146,10 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
       finishedAt: receipt.finished_at,
       outcome: receipt.outcome,
       httpStatus: receipt.http_status,
+      retryAfterMs: receipt.retry_after_ms,
       cadenceMs: source.cadenceMs,
+      rateLimitMinMs: source.rateLimitMinMs,
+      rateLimitMaxMs: source.rateLimitMaxMs,
       now: Date.now(),
     });
   }
@@ -283,7 +286,10 @@ async function handleFetch(request, env) {
         finishedAt: receipt.finished_at,
         outcome: receipt.outcome,
         httpStatus: receipt.http_status,
+        retryAfterMs: receipt.retry_after_ms,
         cadenceMs: source.cadenceMs,
+        rateLimitMinMs: source.rateLimitMinMs,
+        rateLimitMaxMs: source.rateLimitMaxMs,
         now: Date.now(),
       });
       return json({ receipts: [receipt], deferred: [] });

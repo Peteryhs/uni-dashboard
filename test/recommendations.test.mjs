@@ -195,7 +195,9 @@ test('backend engine builds from persisted facts with no network and a bounded n
 
 test('time preview changes the decision clock without ageing newly synced source data', async () => {
   const store = new SqliteStore(':memory:');
-  const actualNow = at(DATE, '08:00');
+  // The Google schedule now refreshes every six hours. Preview beyond that
+  // window to prove the decision clock does not age the real source state.
+  const actualNow = at(DATE, '05:00');
   const selectedTime = at(DATE, '12:10');
   store.upsertRows('timeline_event', [{
     source_id: 'uw-portal-ics', external_id: 'math-class', kind: 'class', title: 'MATH 117 LEC',

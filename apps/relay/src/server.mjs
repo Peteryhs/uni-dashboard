@@ -1,6 +1,7 @@
 /**
- * The relay: one process that both polls and serves, mirroring the single-Worker Cloudflare
- * target (cron handler + fetch handler in one deployable). Locally the "cron" is an interval.
+ * The relay: one process that both serves and can poll, mirroring the single-Worker Cloudflare
+ * target (cron handler + fetch handler in one deployable). Automatic local polling is opt-in so a
+ * deployed Worker and a laptop do not both fetch a private Google Calendar subscription.
  *
  * Auth: a bearer token per device when RELAY_TOKEN is set. Without it the server refuses to start
  * unless DEV_ALLOW_OPEN=1, so an unauthenticated instance is a decision, not an accident.
@@ -12,7 +13,7 @@ try {
 import http from 'node:http';
 import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
-import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
+import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
@@ -29,7 +30,15 @@ import { getCachedWeather, syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { buildRecommendations } from './recommendations.mjs';
 
-export function createServer({ store, sources = SOURCES, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true }) {
+export function createServer({
+  store,
+  sources = SOURCES,
+  token = process.env.RELAY_TOKEN ?? '',
+  log = console.log,
+  webRoot = WEB_ROOT,
+  serveWeb = true,
+  automaticPolling = true,
+}) {
   const started = Date.now();
   let polling = false;
 
@@ -39,10 +48,10 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
     const receipts = [];
     try {
       const jobs = store.jobs();
-      const due = jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
+      const due = dedupeGoogleSources(jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
         .map((j) => sourceById(j.source_id, sources))
         .filter(Boolean)
-        .filter((s) => !s.needsSecret || (typeof s.url === 'function' ? s.url() : s.url));
+        .filter((s) => !s.needsSecret || (typeof s.url === 'function' ? s.url() : s.url)));
       for (const source of due) {
         const startedAt = Date.now();
         const receipt = await runSource(source, store, { now: startedAt });
@@ -52,7 +61,10 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           finishedAt: receipt.finished_at,
           outcome: receipt.outcome,
           httpStatus: receipt.http_status,
+          retryAfterMs: receipt.retry_after_ms,
           cadenceMs: source.cadenceMs,
+          rateLimitMinMs: source.rateLimitMinMs,
+          rateLimitMaxMs: source.rateLimitMaxMs,
           now: Date.now(),
         });
         log(
@@ -225,11 +237,23 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
       }
       if (url.pathname === '/v1/poll' && req.method === 'POST') {
         const id = url.searchParams.get('source');
-        const targets = id ? [sourceById(id, sources)].filter(Boolean) : enabledSources(sources);
+        const targets = id
+          ? [sourceById(id, sources)].filter(Boolean)
+          : dedupeGoogleSources(enabledSources(sources));
         const receipts = [];
         for (const s of targets) {
           const r = await runSource(s, store, { now: Date.now() });
-          store.recordJobResult(s.id, { startedAt: r.started_at, finishedAt: r.finished_at, outcome: r.outcome, httpStatus: r.http_status, cadenceMs: s.cadenceMs, now: Date.now() });
+          store.recordJobResult(s.id, {
+            startedAt: r.started_at,
+            finishedAt: r.finished_at,
+            outcome: r.outcome,
+            httpStatus: r.http_status,
+            retryAfterMs: r.retry_after_ms,
+            cadenceMs: s.cadenceMs,
+            rateLimitMinMs: s.rateLimitMinMs,
+            rateLimitMaxMs: s.rateLimitMaxMs,
+            now: Date.now(),
+          });
           receipts.push(r);
         }
         return send(200, { receipts });
@@ -539,7 +563,7 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
           }
 
           // Schedule and trigger immediate poll if calendar URLs changed
-          if (changed) {
+          if (changed && automaticPolling) {
             setTimeout(() => {
               pollDue(Date.now()).catch((e) => log(`[poll] post-credential poll error: ${e.message}`));
             }, 50);
@@ -566,9 +590,19 @@ export function createServer({ store, sources = SOURCES, token = process.env.REL
   return { server, pollDue, store };
 }
 
-export async function start({ port = 8787, host = '127.0.0.1', dbPath = 'relay.db', intervalMs = 30 * 1000, token = process.env.RELAY_TOKEN ?? '', log = console.log, webRoot = WEB_ROOT, serveWeb = true } = {}) {
+export async function start({
+  port = 8787,
+  host = '127.0.0.1',
+  dbPath = 'relay.db',
+  intervalMs = 30 * 1000,
+  token = process.env.RELAY_TOKEN ?? '',
+  log = console.log,
+  webRoot = WEB_ROOT,
+  serveWeb = true,
+  pollEnabled = /^(1|true|yes)$/i.test(process.env.RELAY_POLL_ENABLED ?? ''),
+} = {}) {
   const store = new SqliteStore(dbPath);
-  const { server, pollDue } = createServer({ store, token, log, webRoot, serveWeb });
+  const { server, pollDue } = createServer({ store, token, log, webRoot, serveWeb, automaticPolling: pollEnabled });
 
   log('sources:');
   for (const r of readiness(enabledSources())) {
@@ -580,15 +614,18 @@ export async function start({ port = 8787, host = '127.0.0.1', dbPath = 'relay.d
     log(`web client not built: run "npm --prefix apps/web run build" to serve the dashboard at /`);
   }
 
-  await pollDue(Date.now());
-  const timer = setInterval(() => {
-    pollDue(Date.now()).catch((e) => log(`[poll] error: ${e.message}`));
-  }, intervalMs);
-  timer.unref?.();
+  if (pollEnabled) await pollDue(Date.now());
+  const timer = pollEnabled
+    ? setInterval(() => {
+      pollDue(Date.now()).catch((e) => log(`[poll] error: ${e.message}`));
+    }, intervalMs)
+    : null;
+  timer?.unref?.();
 
   await new Promise((resolve) => server.listen(port, host, resolve));
   log(`relay listening on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}${token ? ' (bearer auth on)' : ' (OPEN, no token set)'}`);
+  if (!pollEnabled) log('automatic polling disabled; the deployed Worker cron is the canonical poller (set RELAY_POLL_ENABLED=1 for a standalone local relay)');
   if (host === '0.0.0.0') log(`reachable from another device on this network at http://<this-box-ip>:${port}/`);
   if (hasWeb) log(`dashboard at  http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`);
-  return { server, store, pollDue, close: () => { clearInterval(timer); server.close(); store.close(); } };
+  return { server, store, pollDue, close: () => { if (timer) clearInterval(timer); server.close(); store.close(); } };
 }

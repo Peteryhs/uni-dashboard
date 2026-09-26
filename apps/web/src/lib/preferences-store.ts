@@ -14,11 +14,32 @@ export interface TasteProfile {
 
 export const DEFAULT_TASTE_PROFILE: TasteProfile = {
   bio: '',
-  spiceLevel: 'medium',
-  dietaryGoals: ['high-protein'],
+  spiceLevel: 'none',
+  dietaryGoals: [],
   selectedAiModel: '@cf/google/gemma-4-26b-a4b-it',
   sortByAiRank: true,
 };
+
+/**
+ * Taste used to be split across preset spice and goal buttons. Keep those
+ * preferences when an existing user upgrades, but move them into the single
+ * freeform profile so they cannot keep influencing ranking invisibly.
+ */
+export function migrateTasteProfile(profile: Partial<TasteProfile> | null | undefined): TasteProfile {
+  const merged = { ...DEFAULT_TASTE_PROFILE, ...(profile ?? {}) };
+  const legacyGoals = Array.isArray(merged.dietaryGoals) ? merged.dietaryGoals : [];
+  const legacyNotes = [
+    typeof merged.spiceLevel === 'string' && merged.spiceLevel !== 'none' ? `${merged.spiceLevel.replace('-', ' ')} spice` : '',
+    ...legacyGoals.map((goal) => String(goal).replace(/[-_]+/g, ' ')),
+  ].filter(Boolean);
+  const bio = String(merged.bio ?? '').trim();
+  return {
+    ...merged,
+    bio: legacyNotes.length ? [bio, legacyNotes.join(', ')].filter(Boolean).join('; ') : bio,
+    spiceLevel: 'none',
+    dietaryGoals: [],
+  };
+}
 
 export interface UserPreferences {
   density: LayoutDensity;
@@ -62,13 +83,12 @@ function readPreferences(): UserPreferences {
       dismissedTasks: Array.isArray(parsed.dismissedTasks) ? parsed.dismissedTasks : [],
       section: typeof parsed.section === 'number' ? parsed.section : null,
       groupNumber: typeof parsed.groupNumber === 'number' ? parsed.groupNumber : null,
-      tasteProfile: {
-        ...DEFAULT_TASTE_PROFILE,
+      tasteProfile: migrateTasteProfile({
         ...(parsed.tasteProfile || {}),
         selectedAiModel: parsed.tasteProfile?.selectedAiModel === '@cf/zhipu/glm-4.7-flash'
           ? '@cf/zai-org/glm-4.7-flash'
           : parsed.tasteProfile?.selectedAiModel || DEFAULT_TASTE_PROFILE.selectedAiModel,
-      },
+      }),
     };
   } catch {
     return DEFAULT_PREFERENCES;

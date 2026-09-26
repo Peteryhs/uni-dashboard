@@ -21,17 +21,28 @@ function menuSignatureRows(menuItems) {
 
 /** Keep manual and background recommendation cache keys byte-for-byte compatible. */
 export function foodRecommendationSignature(serviceDate, profile, menuItems) {
-  return JSON.stringify({ serviceDate, model: profile.selectedAiModel, profile, menu: menuSignatureRows(menuItems) });
+  return JSON.stringify({
+    serviceDate,
+    model: profile.selectedAiModel,
+    profile: { bio: profile.bio, dietaryFilter: profile.dietaryFilter },
+    menu: menuSignatureRows(menuItems),
+  });
 }
 
 export function cleanFoodProfile(input = {}) {
   const profile = input && typeof input === 'object' ? input : {};
   const model = typeof profile.selectedAiModel === 'string' && POPULAR_MODELS.some((item) => item.id === profile.selectedAiModel)
     ? profile.selectedAiModel : DEFAULT_AI_MODEL;
+  const legacySpice = typeof profile.spiceLevel === 'string' && profile.spiceLevel !== 'none' ? `${profile.spiceLevel.replace('-', ' ')} spice` : '';
+  const legacyGoals = Array.isArray(profile.dietaryGoals)
+    ? profile.dietaryGoals.filter((goal) => typeof goal === 'string').slice(0, 12).map((goal) => goal.slice(0, 80).replace(/[-_]+/g, ' '))
+    : [];
+  const bio = [typeof profile.bio === 'string' ? profile.bio.trim().slice(0, 1000) : '', [legacySpice, ...legacyGoals].filter(Boolean).join(', ')]
+    .filter(Boolean).join('; ');
   return {
-    bio: typeof profile.bio === 'string' ? profile.bio.slice(0, 1000) : '',
-    spiceLevel: ['none', 'mild', 'medium', 'hot', 'extra-hot'].includes(profile.spiceLevel) ? profile.spiceLevel : 'medium',
-    dietaryGoals: Array.isArray(profile.dietaryGoals) ? profile.dietaryGoals.filter((goal) => typeof goal === 'string').slice(0, 12).map((goal) => goal.slice(0, 80)) : [],
+    bio,
+    spiceLevel: 'none',
+    dietaryGoals: [],
     dietaryFilter: typeof profile.dietaryFilter === 'string' ? profile.dietaryFilter.slice(0, 30) : 'all',
     selectedAiModel: model,
   };

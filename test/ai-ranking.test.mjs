@@ -62,6 +62,10 @@ test('buildPrompt formats prompt for compact token consumption', () => {
   assert.ok(prompt.systemMessage.includes('JSON'));
   assert.ok(prompt.userMessage.includes('2026-09-21'));
   assert.ok(prompt.userMessage.includes('Jerk Chicken Drumsticks'));
+  const parsed = JSON.parse(prompt.userMessage);
+  assert.equal(parsed.student_profile.tastes_and_cravings, 'Spicy food and high protein');
+  assert.equal('preferred_spice_level' in parsed.student_profile, false);
+  assert.equal('dietary_goals' in parsed.student_profile, false);
 });
 
 test('AI JSON parser accepts fenced, nested-string, and prose-wrapped objects without changing fields', () => {

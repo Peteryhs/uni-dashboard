@@ -9,6 +9,12 @@ function displayDate(serviceDate: string): string {
   return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(date);
 }
 
+function rankingReason(verdict: string | undefined): string {
+  const reason = verdict?.trim();
+  if (!reason) return 'No explanation was saved for this ranking. Rank again to get one.';
+  return reason.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? reason;
+}
+
 export function AiMenuSummary({
   service_date,
   state,
@@ -63,8 +69,15 @@ export function AiMenuSummary({
   return (
     <section className="ai-menu-summary" aria-label={`AI dining recommendation for ${displayDate(service_date)}`} aria-busy={isReranking}>
       <div className="ai-menu-summary__heading">
-        <strong className="ai-menu-summary__restaurant">{bestOutlet?.outlet ? getOutletLocation(bestOutlet.outlet).name : 'No outlet recommendation saved'}</strong>
         {rankAgainButton}
+        <div className="ai-menu-summary__copy">
+          <strong className="ai-menu-summary__restaurant">{bestOutlet?.outlet ? getOutletLocation(bestOutlet.outlet).name : 'No outlet recommendation saved'}</strong>
+          {bestOutlet && (
+            <p className="ai-menu-summary__reason">
+              {rankingReason(bestOutlet.verdict)}
+            </p>
+          )}
+        </div>
       </div>
 
       {rerankError && <p className="ai-menu-summary__rerank-error" role="alert">Ranking failed: {rerankError}</p>}

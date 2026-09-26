@@ -14,7 +14,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 31;
 const MAX_EVENTS = 2000;
 const PORTAL_ASSESSMENT_TITLE_RE = /\b(?:due|deadline|submit|submission|assignment|quiz|midterm|exam|test|lab report)\b/i;
-const CADENCE = { 'uw-portal-ics': 15 * 60_000, 'uw-learn-ics': 15 * 60_000, 'user-office-hours': 6 * 60 * 60_000 };
+const CADENCE = { 'uw-portal-ics': 6 * 60 * 60_000, 'uw-learn-ics': 15 * 60_000, 'user-office-hours': 6 * 60 * 60_000 };
 const dateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
 });

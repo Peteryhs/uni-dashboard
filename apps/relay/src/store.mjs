@@ -204,15 +204,29 @@ export class SqliteStore {
       .run(sourceId, nextDueAt);
   }
 
-  recordJobResult(sourceId, { startedAt, finishedAt, outcome, httpStatus = null, cadenceMs, now }) {
+  recordJobResult(sourceId, {
+    startedAt,
+    finishedAt,
+    outcome,
+    httpStatus = null,
+    retryAfterMs = 0,
+    cadenceMs,
+    rateLimitMinMs = 30 * 60_000,
+    rateLimitMaxMs = 48 * 60 * 60_000,
+    now,
+  }) {
     const prev = this.db.prepare('SELECT * FROM job WHERE source_id=?').get(sourceId);
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
     const circuit = failures >= 5 ? 'open' : 'closed';
-    // Exponential backoff with jitter, capped at 15 minutes; circuit state flags repeated failures.
+    // Rate limits deserve a long quiet period. Repeated 429s double it, while Retry-After always
+    // wins over our cap because the upstream explicitly told us when to try again.
     const backoff = httpStatus === 429
-      ? Math.max(cadenceMs, 30 * 60_000)
+      ? Math.max(
+        retryAfterMs || 0,
+        Math.min(rateLimitMaxMs, Math.max(cadenceMs, rateLimitMinMs) * 2 ** Math.max(0, failures - 1)),
+      )
       : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Sliders,
@@ -44,8 +44,8 @@ import {
 import {
   usePreferences,
   DEFAULT_TASTE_PROFILE,
+  migrateTasteProfile,
   type DietaryPreference,
-  type SpiceLevel,
   type TasteProfile,
   type UserPreferences,
 } from '@/lib/preferences-store';
@@ -63,28 +63,6 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'vegetarian', label: 'Vegetarian' },
   { id: 'dairy', label: 'Dairy-free' },
   { id: 'gluten', label: 'Gluten-free' },
-];
-
-interface TasteChip {
-  id: string;
-  label: string;
-  type: 'goal' | 'spice';
-  value: string;
-}
-
-const DEFAULT_TASTE_CHIPS: TasteChip[] = [
-  { id: 'high-protein', label: 'High Protein', type: 'goal', value: 'high-protein' },
-  { id: 'mild-spice', label: 'Mild Spice', type: 'spice', value: 'mild' },
-  { id: 'medium-spice', label: 'Medium Spice', type: 'spice', value: 'medium' },
-  { id: 'hot-spice', label: 'Hot Spice', type: 'spice', value: 'hot' },
-  { id: 'extra-hot-spice', label: 'Extra Hot Spice', type: 'spice', value: 'extra-hot' },
-  { id: 'comfort', label: 'Comfort Food', type: 'goal', value: 'comfort' },
-  { id: 'low-carb', label: 'Low Carb', type: 'goal', value: 'low-carb' },
-  { id: 'plant-forward', label: 'Plant-Forward', type: 'goal', value: 'plant-forward' },
-  { id: 'budget', label: 'Budget Friendly', type: 'goal', value: 'budget' },
-  { id: 'halal', label: 'Halal', type: 'goal', value: 'halal' },
-  { id: 'vegetarian', label: 'Vegetarian', type: 'goal', value: 'vegetarian' },
-  { id: 'vegan', label: 'Vegan', type: 'goal', value: 'vegan' },
 ];
 
 const AI_MODEL_OPTIONS = [
@@ -145,11 +123,11 @@ export function CustomizationSheet({
 }) {
   const { undismissTask } = usePreferences();
   const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule'>('taste');
-  const [showMoreTaste, setShowMoreTaste] = useState(false);
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
   const [aiUsage, setAiUsage] = useState<AiUsageStatus | null>(null);
   const [savingTasteProfile, setSavingTasteProfile] = useState(false);
+  const [tasteProfileSyncReady, setTasteProfileSyncReady] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const relayTasteProfile = {
     bio: preferences.tasteProfile.bio,
@@ -158,28 +136,144 @@ export function CustomizationSheet({
     selectedAiModel: preferences.tasteProfile.selectedAiModel,
     dietaryFilter: preferences.dietaryFilter,
   };
+  const latestTasteProfileKey = useRef('');
+  const latestTasteProfile = useRef(relayTasteProfile);
+  const tasteProfileSyncReadyRef = useRef(false);
+  const savedTasteProfileKeyRef = useRef('');
+  const pendingTasteSave = useRef<{ key: string; profile: typeof relayTasteProfile } | null>(null);
+  const activeTasteSaveKey = useRef<string | null>(null);
+  const tasteSaveQueueRunning = useRef(false);
+  const tasteSaveTimer = useRef<number | null>(null);
+  const tasteSaveRetryTimer = useRef<number | null>(null);
+  const tasteSaveRetry = useRef({ key: '', count: 0 });
   const relayTasteProfileKey = JSON.stringify(relayTasteProfile);
   const tasteProfileIsSaved = Boolean(relayTasteProfileKey && savedTasteProfileKey === relayTasteProfileKey);
+  latestTasteProfileKey.current = relayTasteProfileKey;
+  latestTasteProfile.current = relayTasteProfile;
+  tasteProfileSyncReadyRef.current = tasteProfileSyncReady;
+  savedTasteProfileKeyRef.current = savedTasteProfileKey;
+
+  const drainTasteSaveQueue = async () => {
+    if (tasteSaveQueueRunning.current) return;
+    tasteSaveQueueRunning.current = true;
+    try {
+      while (pendingTasteSave.current) {
+        const next = pendingTasteSave.current;
+        pendingTasteSave.current = null;
+        activeTasteSaveKey.current = next.key;
+        setSavingTasteProfile(true);
+        try {
+          await saveFoodTasteProfile(next.profile);
+          if (latestTasteProfileKey.current === next.key) {
+            try {
+              localStorage.setItem('uni-dashboard:food-profile-synced:v1', next.key);
+            } catch {
+              // The relay remains authoritative if local storage is unavailable.
+            }
+            tasteSaveRetry.current = { key: '', count: 0 };
+            setSavedTasteProfileKey(next.key);
+            setTasteProfileError('');
+          }
+        } catch (error) {
+          if (latestTasteProfileKey.current === next.key) {
+            setTasteProfileError(error instanceof Error ? error.message : 'Could not save the dining profile.');
+            if (tasteSaveRetry.current.key !== next.key) tasteSaveRetry.current = { key: next.key, count: 0 };
+            if (tasteSaveRetry.current.count < 2) {
+              tasteSaveRetry.current.count += 1;
+              if (tasteSaveRetryTimer.current !== null) window.clearTimeout(tasteSaveRetryTimer.current);
+              tasteSaveRetryTimer.current = window.setTimeout(() => {
+                tasteSaveRetryTimer.current = null;
+                pendingTasteSave.current = { key: latestTasteProfileKey.current, profile: latestTasteProfile.current };
+                void drainTasteSaveQueue();
+              }, 2_000);
+            }
+          }
+        }
+        activeTasteSaveKey.current = null;
+      }
+    } finally {
+      tasteSaveQueueRunning.current = false;
+      setSavingTasteProfile(false);
+    }
+  };
+
+  const enqueueTasteSave = (profile: typeof relayTasteProfile, key: string) => {
+    if (activeTasteSaveKey.current === key || pendingTasteSave.current?.key === key) return;
+    pendingTasteSave.current = { profile, key };
+    void drainTasteSaveQueue();
+  };
+
+  const flushTasteProfileSave = () => {
+    if (!tasteProfileSyncReadyRef.current || latestTasteProfileKey.current === savedTasteProfileKeyRef.current) return;
+    if (activeTasteSaveKey.current === latestTasteProfileKey.current || pendingTasteSave.current?.key === latestTasteProfileKey.current) return;
+    if (tasteSaveTimer.current !== null) {
+      window.clearTimeout(tasteSaveTimer.current);
+      tasteSaveTimer.current = null;
+    }
+    if (tasteSaveRetryTimer.current !== null) {
+      window.clearTimeout(tasteSaveRetryTimer.current);
+      tasteSaveRetryTimer.current = null;
+    }
+    enqueueTasteSave({ ...latestTasteProfile.current, dietaryGoals: [...latestTasteProfile.current.dietaryGoals] }, latestTasteProfileKey.current);
+  };
 
   useEffect(() => {
     if (open && focusCourse) setActiveTab('courses');
   }, [open, focusCourse]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setTasteProfileSyncReady(false);
+      return;
+    }
     let active = true;
+    const initialTasteProfileKey = latestTasteProfileKey.current;
+    setTasteProfileSyncReady(false);
+    setTasteProfileError('');
     getFoodTasteProfile().then(({ profile }) => {
       if (!active) return;
-      setSavedTasteProfileKey(profile ? JSON.stringify({
-        bio: profile.bio ?? '',
-        spiceLevel: profile.spiceLevel ?? 'medium',
-        dietaryGoals: profile.dietaryGoals ?? [],
-        selectedAiModel: profile.selectedAiModel ?? DEFAULT_TASTE_PROFILE.selectedAiModel,
-        dietaryFilter: profile.dietaryFilter ?? 'all',
-      }) : '');
-    }).catch(() => { if (active) setSavedTasteProfileKey(''); });
+      const serverProfile = profile ? (() => {
+        const taste = migrateTasteProfile({
+          bio: typeof profile.bio === 'string' ? profile.bio : '',
+          spiceLevel: typeof profile.spiceLevel === 'string' ? profile.spiceLevel as TasteProfile['spiceLevel'] : 'none',
+          dietaryGoals: Array.isArray(profile.dietaryGoals) ? profile.dietaryGoals.filter((goal): goal is string => typeof goal === 'string') : [],
+          selectedAiModel: typeof profile.selectedAiModel === 'string' ? profile.selectedAiModel : DEFAULT_TASTE_PROFILE.selectedAiModel,
+        });
+        return {
+          bio: taste.bio,
+          spiceLevel: taste.spiceLevel,
+          dietaryGoals: taste.dietaryGoals,
+          selectedAiModel: taste.selectedAiModel,
+          dietaryFilter: typeof profile.dietaryFilter === 'string' ? profile.dietaryFilter : 'all',
+        };
+      })() : null;
+      const serverKey = serverProfile ? JSON.stringify(serverProfile) : '';
+      let lastSyncedKey: string | null = null;
+      try {
+        lastSyncedKey = localStorage.getItem('uni-dashboard:food-profile-synced:v1');
+      } catch {
+        // The relay remains authoritative if local storage is unavailable.
+      }
+
+      // A changed local profile is an intentional edit. Keep it and let the
+      // autosave send it; otherwise hydrate an existing relay profile here.
+      const localProfileChangedWhileLoading = latestTasteProfileKey.current !== initialTasteProfileKey;
+      if (serverProfile && !localProfileChangedWhileLoading && (!lastSyncedKey || lastSyncedKey === initialTasteProfileKey) && serverKey !== initialTasteProfileKey) {
+        const { dietaryFilter, ...taste } = serverProfile;
+        updateTasteProfile(taste as Partial<TasteProfile>);
+        if (typeof dietaryFilter === 'string') setDietaryFilter(dietaryFilter as DietaryPreference);
+      }
+      setSavedTasteProfileKey(serverKey);
+      setTasteProfileSyncReady(true);
+    }).catch(() => {
+      if (!active) return;
+      // A failed read should not block local edits from being saved. The next
+      // profile change will retry the write, and the write itself reports errors.
+      setSavedTasteProfileKey('');
+      setTasteProfileSyncReady(true);
+    });
     return () => { active = false; };
-  }, [open]);
+  }, [open, setDietaryFilter, updateTasteProfile]);
 
   useEffect(() => {
     if (!open) return;
@@ -188,23 +282,36 @@ export function CustomizationSheet({
     return () => controller.abort();
   }, [open]);
 
-  const handleSaveTasteProfile = async () => {
-    setSavingTasteProfile(true);
-    setTasteProfileError('');
-    try {
-      await saveFoodTasteProfile(relayTasteProfile);
-      try {
-        localStorage.setItem('uni-dashboard:food-profile-synced:v1', relayTasteProfileKey);
-      } catch {
-        // The relay remains authoritative if local storage is unavailable.
-      }
-      setSavedTasteProfileKey(relayTasteProfileKey);
-    } catch (error) {
-      setTasteProfileError(error instanceof Error ? error.message : 'Could not save the dining profile.');
-    } finally {
-      setSavingTasteProfile(false);
+  useEffect(() => {
+    if (!open || !tasteProfileSyncReady) return;
+    if (tasteProfileIsSaved) {
+      setTasteProfileError('');
+      return;
     }
-  };
+
+    const profileToSave = { ...relayTasteProfile, dietaryGoals: [...relayTasteProfile.dietaryGoals] };
+    const saveKey = relayTasteProfileKey;
+    if (tasteSaveRetryTimer.current !== null) {
+      window.clearTimeout(tasteSaveRetryTimer.current);
+      tasteSaveRetryTimer.current = null;
+    }
+    if (tasteSaveTimer.current !== null) window.clearTimeout(tasteSaveTimer.current);
+    tasteSaveTimer.current = window.setTimeout(() => {
+      tasteSaveTimer.current = null;
+      enqueueTasteSave(profileToSave, saveKey);
+    }, 450);
+    return () => {
+      if (tasteSaveTimer.current !== null) {
+        window.clearTimeout(tasteSaveTimer.current);
+        tasteSaveTimer.current = null;
+      }
+    };
+  }, [open, relayTasteProfileKey, tasteProfileIsSaved, tasteProfileSyncReady]);
+
+  useEffect(() => () => {
+    if (tasteSaveRetryTimer.current !== null) window.clearTimeout(tasteSaveRetryTimer.current);
+    flushTasteProfileSave();
+  }, []);
 
   const handleResetPreferences = async () => {
     resetPreferences();
@@ -215,29 +322,21 @@ export function CustomizationSheet({
       spiceLevel: DEFAULT_TASTE_PROFILE.spiceLevel,
       dietaryGoals: DEFAULT_TASTE_PROFILE.dietaryGoals,
       selectedAiModel: DEFAULT_TASTE_PROFILE.selectedAiModel,
-      dietaryFilter: 'all',
+      dietaryFilter: 'all' as DietaryPreference,
     };
     const defaultKey = JSON.stringify(defaultRelayProfile);
-    try {
-      await saveFoodTasteProfile(defaultRelayProfile);
-      try {
-        localStorage.setItem('uni-dashboard:food-profile-synced:v1', defaultKey);
-      } catch {
-        // The relay remains authoritative if local storage is unavailable.
-      }
-      setSavedTasteProfileKey(defaultKey);
-      setResetStatus({ type: 'success', message: 'Preferences reset.' });
-    } catch (error) {
-      setSavedTasteProfileKey('');
-      setResetStatus({
-        type: 'error',
-        message: error instanceof Error ? `Local preferences reset; dining profile was not saved: ${error.message}` : 'Local preferences reset; dining profile was not saved.',
-      });
-    }
+    latestTasteProfileKey.current = defaultKey;
+    latestTasteProfile.current = defaultRelayProfile;
+    pendingTasteSave.current = { key: defaultKey, profile: defaultRelayProfile };
+    setResetStatus({ type: 'success', message: 'Preferences reset. Saving automatically.' });
+    void drainTasteSaveQueue();
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen) flushTasteProfileSave();
+      onOpenChange?.(nextOpen);
+    }}>
       {!hideTrigger && <SheetTrigger asChild>
         <Button
           variant="outline"
@@ -248,7 +347,7 @@ export function CustomizationSheet({
           <span className="hidden sm:inline">Settings</span>
         </Button>
       </SheetTrigger>}
-      <SheetContent showCloseButton={false} className="settings-sheet border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
+      <SheetContent showCloseButton={false} className="settings-sheet w-full sm:max-w-[44rem] border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
         <SheetHeader className="settings-heading p-0 text-left">
           <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
         </SheetHeader>
@@ -289,7 +388,7 @@ export function CustomizationSheet({
           {/* Tab 1: AI Taste Profile */}
           <TabsContent value="taste" className="settings-panel mt-5 space-y-4">
 
-            {/* Bio / Freeform prompt with default labels directly below */}
+            {/* One freeform prompt keeps the dining profile in the user’s own words. */}
             <div>
               <div className="flex items-center justify-between">
                 <Label htmlFor="taste-bio" className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
@@ -303,51 +402,6 @@ export function CustomizationSheet({
                 placeholder="Spicy food, chicken, noodle bowls; no celery or pork"
                 className="settings-input mt-2 min-h-20 text-xs bg-secondary/30 border-border/80 text-foreground placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:outline-none resize-none"
               />
-
-              {/* Default labels right below the box - unified, no separate sections */}
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {DEFAULT_TASTE_CHIPS.filter((chip, index) => index < 4 || showMoreTaste || (chip.type === 'spice' ? preferences.tasteProfile.spiceLevel === chip.value : preferences.tasteProfile.dietaryGoals.includes(chip.value))).map((chip) => {
-                  const active =
-                    chip.type === 'spice'
-                      ? preferences.tasteProfile.spiceLevel === chip.value
-                      : preferences.tasteProfile.dietaryGoals.includes(chip.value);
-
-                  return (
-                    <button
-                      key={chip.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => {
-                        if (chip.type === 'spice') {
-                          const nextSpice =
-                            preferences.tasteProfile.spiceLevel === chip.value
-                              ? 'none'
-                              : (chip.value as SpiceLevel);
-                          updateTasteProfile({ spiceLevel: nextSpice });
-                        } else {
-                          const current = preferences.tasteProfile.dietaryGoals;
-                          const next = current.includes(chip.value)
-                            ? current.filter((g) => g !== chip.value)
-                            : [...current, chip.value];
-                          updateTasteProfile({ dietaryGoals: next });
-                        }
-                      }}
-                      className={cn(
-                        'settings-chip rounded-md px-2.5 py-1 text-xs font-medium transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-                        active
-                          ? 'border-white/30 bg-white/10 text-white font-semibold'
-                          : 'border-border/60 bg-secondary/30 text-zinc-400 hover:border-white/20 hover:text-foreground',
-                      )}
-                    >
-                      {active && <Check aria-hidden="true" className="mr-1 inline size-3" />}
-                      {chip.label}
-                    </button>
-                  );
-                })}
-                <button type="button" onClick={() => setShowMoreTaste((value) => !value)} className="settings-chip rounded-md border border-border/60 px-2.5 py-1 text-xs text-zinc-300 hover:bg-secondary/40">
-                  {showMoreTaste ? 'Fewer' : 'More'}
-                </button>
-              </div>
             </div>
 
             {/* Workers AI Engine Selection */}
@@ -382,23 +436,11 @@ export function CustomizationSheet({
               </div>
             </details>
 
-            <div className="settings-profile-save">
-              <Button
-                type="button"
-                onClick={() => void handleSaveTasteProfile()}
-                disabled={savingTasteProfile || tasteProfileIsSaved}
-                className="settings-ai-action h-9 px-3 text-xs font-medium disabled:opacity-60"
-              >
-                {savingTasteProfile ? <RefreshCw className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
-                {savingTasteProfile ? 'Saving profile…' : tasteProfileIsSaved ? 'Saved to relay' : 'Save dining profile'}
-              </Button>
-              {tasteProfileError ? (
-                <p className="settings-profile-message settings-profile-message--error" role="alert">{tasteProfileError}</p>
-              ) : tasteProfileIsSaved ? (
-                <p className="settings-profile-message">Saved. The relay will recalculate dining picks.</p>
-              ) : (
-                <p className="settings-profile-message">Profile changes stay local until saved.</p>
-              )}
+            <div className="settings-profile-save" aria-live="polite">
+              <span className="settings-profile-status">
+                {savingTasteProfile ? 'Saving profile…' : tasteProfileIsSaved ? 'Saved automatically' : 'Changes save automatically'}
+              </span>
+              {tasteProfileError && <p className="settings-profile-message settings-profile-message--error" role="alert">{tasteProfileError} Edit the profile to retry.</p>}
             </div>
 
             {aiUsage && <p className="settings-ai-usage">Shared AI allowance: {aiUsage.remaining_neurons.toLocaleString()} of {aiUsage.budget_neurons.toLocaleString()} neurons remaining <span>(relay reservation)</span></p>}

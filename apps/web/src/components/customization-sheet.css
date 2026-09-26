@@ -202,6 +202,15 @@
   color: #fda4af;
 }
 
+.settings-profile-status {
+  display: inline-flex;
+  min-height: 1.8rem;
+  align-items: center;
+  color: #9cbff6;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
 .settings-schedule {
   --live: #3478eb;
 }

@@ -43,26 +43,45 @@ const savedRecommendation = {
   generated_at: Date.now(),
 };
 
+test('legacy taste presets are folded into free text before ranking', () => {
+  const profile = cleanFoodProfile({ bio: 'likes noodles', spiceLevel: 'hot', dietaryGoals: ['high-protein'] });
+  assert.equal(profile.spiceLevel, 'none');
+  assert.deepEqual(profile.dietaryGoals, []);
+  assert.match(profile.bio, /likes noodles; hot spice, high protein/);
+});
+
 test('automatic ranking retries back off, cap repeated failures, and retain the last error', async () => {
   const store = makeStore();
-  const now = Date.now();
+  // Keep the 37-minute retry sequence within one UTC day.
+  const now = Date.parse(`${SERVICE_DATE}T12:00:00Z`);
+  const originalDateNow = Date.now;
+  let simulatedNow = now;
+  Date.now = () => simulatedNow;
+  const syncAt = (at) => {
+    simulatedNow = at;
+    return syncFoodRecommendation(store, { cfEnv, now: at });
+  };
   let modelCalls = 0;
   const cfEnv = { AI: { run: async () => { modelCalls++; throw new Error('simulated provider outage'); } } };
 
-  assert.equal((await syncFoodRecommendation(store, { cfEnv, now })).status, 'failed');
-  assert.equal((await syncFoodRecommendation(store, { cfEnv, now: now + 4 * 60_000 })).cached, true);
-  assert.equal(modelCalls, 1);
-  assert.equal((await syncFoodRecommendation(store, { cfEnv, now: now + 6 * 60_000 })).status, 'failed');
-  assert.equal((await syncFoodRecommendation(store, { cfEnv, now: now + 37 * 60_000 })).status, 'attempt_limited');
-  assert.equal(modelCalls, 3);
+  try {
+    assert.equal((await syncAt(now)).status, 'failed');
+    assert.equal((await syncAt(now + 4 * 60_000)).cached, true);
+    assert.equal(modelCalls, 1);
+    assert.equal((await syncAt(now + 6 * 60_000)).status, 'failed');
+    assert.equal((await syncAt(now + 37 * 60_000)).status, 'attempt_limited');
+    assert.equal(modelCalls, 3);
 
-  const result = JSON.parse(store.settings.get(RESULT_KEY));
-  assert.equal(result.failure_count, 3);
-  assert.match(result.error, /simulated provider outage/);
-  assert.equal(result.limit_reason, 'repeated_failures');
-  assert.equal(JSON.parse(store.settings.get(USAGE_KEY)).automatic_count, 3);
-  assert.equal((await syncFoodRecommendation(store, { cfEnv, now: now + 86_400_000 })).status, 'attempt_limited');
-  assert.equal(modelCalls, 3, 'a signature with three failures is capped across days');
+    const result = JSON.parse(store.settings.get(RESULT_KEY));
+    assert.equal(result.failure_count, 3);
+    assert.match(result.error, /simulated provider outage/);
+    assert.equal(result.limit_reason, 'repeated_failures');
+    assert.equal(JSON.parse(store.settings.get(USAGE_KEY)).automatic_count, 3);
+    assert.equal((await syncAt(now + 86_400_000)).status, 'attempt_limited');
+    assert.equal(modelCalls, 3, 'a signature with three failures is capped across days');
+  } finally {
+    Date.now = originalDateNow;
+  }
 });
 
 test('unreadable dining output stores safe diagnostics without persisting provider text', async () => {

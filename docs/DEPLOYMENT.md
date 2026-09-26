@@ -110,7 +110,9 @@ Two more, from the storage side: the run receipt log is pruned to 7 days and ind
 lookups, and unreferenced snapshots older than 7 days are deleted. A body already in `raw_snapshot`
 is never gzipped again (compression is CPU, and the menu page is 290 KB).
 
-An upstream HTTP 429 delays the next poll by at least 30 minutes. Raw HTML snapshots are downloaded
+Google Calendar is polled every six hours. An HTTP 429 from that source delays the next poll by at
+least 12 hours, doubles the quiet period on repeated failures, and honors a longer `Retry-After`
+value. Raw HTML snapshots are downloaded
 as plain text so archived third-party markup cannot run on the dashboard origin.
 
 Measurements come from `test/worker.test.mjs`, which counts prepared statements against a mocked D1
@@ -136,6 +138,12 @@ Three rules, all enforced in `worker.mjs` and all tested:
 
 An empty string clears a setting, matching the local `.env` behaviour. Worker secrets still work and
 are the fallback when nothing was saved from the app, so both paths are live at once.
+
+The deployed Worker is the canonical automatic poller. The local relay serves the dashboard with
+automatic polling disabled by default (`RELAY_POLL_ENABLED=0`), which prevents a laptop and the
+Worker from fetching the same Google Calendar subscription. Set `RELAY_POLL_ENABLED=1` only when
+running the relay as a standalone local deployment; the relay still supports explicit manual polls
+through its API and CLI.
 
 Schema changes are picked up by an existing database: `D1Store.init()` compares the expected table
 list against `sqlite_master` and runs the (idempotent) DDL when any table is missing. Probing for one

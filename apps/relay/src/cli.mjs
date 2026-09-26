@@ -16,7 +16,7 @@ try {
 
 import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
-import { SOURCES, enabledSources, readiness, sourceById } from '#sources/registry.mjs';
+import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
 import { buildDashboard } from './cards.mjs';
 
 const [, , cmd = 'help', ...rest] = process.argv;
@@ -64,7 +64,9 @@ switch (cmd) {
 
   case 'poll': {
     const store = new SqliteStore(dbPath);
-    const targets = positional.length ? [sourceById(positional[0])].filter(Boolean) : enabledSources();
+    const targets = positional.length
+      ? [sourceById(positional[0])].filter(Boolean)
+      : dedupeGoogleSources(enabledSources());
     if (!targets.length) {
       out(`no such source: ${positional[0]}`);
       process.exit(2);
@@ -134,6 +136,9 @@ switch (cmd) {
       port: numberFlag('port', 8787, { min: 1, max: 65535 }),
       dbPath,
       intervalMs: numberFlag('interval', 30000, { min: 1000 }),
+      pollEnabled: flags.poll === true || /^(1|true|yes)$/i.test(String(flags.poll ?? ''))
+        ? true
+        : /^(0|false|no)$/i.test(String(flags.poll ?? '')) ? false : undefined,
       // 127.0.0.1 by default. --host 0.0.0.0 is for the case where the relay runs on one machine and
       // you want to click it from another, which is the normal case here: the box has the fixtures
       // and the browser is on a different device.

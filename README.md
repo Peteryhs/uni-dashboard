@@ -27,7 +27,7 @@ Two targets, one codebase:
 
 | | Local / VPS | Cloudflare |
 |---|---|---|
-| process | `apps/relay/src/server.mjs`, polls on an interval | `apps/relay/src/worker.mjs`, polls on a cron |
+| process | `apps/relay/src/server.mjs`, serves locally; interval polling is opt-in | `apps/relay/src/worker.mjs`, polls on a cron |
 | storage | `store.mjs` (node:sqlite) | `d1-store.mjs` (D1), same contract |
 | client | `apps/web/dist` read from disk | `apps/web/dist` uploaded as static assets |
 | secrets | `.env` | Worker secrets |
@@ -48,6 +48,10 @@ node apps/relay/src/cli.mjs serve                  # http://127.0.0.1:8787/v1/da
 node tools/inspect-db.mjs                         # what is actually stored, per shape
 node tools/menu-parse-bench.mjs                   # the CPU budget check
 ```
+
+The local relay serves saved data without polling by default, so it cannot double-fetch a
+Google Calendar URL alongside the deployed Worker. Set `RELAY_POLL_ENABLED=1` only when running
+the local relay as the sole poller.
 
 Cloudflare, without an account:
 

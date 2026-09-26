@@ -15,6 +15,11 @@ function shiftDate(date: string, days: number) {
 const dateLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' });
 const shortDate = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
 function dateAtNoon(date: string) { return new Date(`${date}T12:00:00Z`); }
+function distinctSubtitle(event: CalendarEvent) {
+  const subtitle = event.subtitle.trim();
+  const description = event.description.trim();
+  return subtitle && subtitle !== description && !description.startsWith(subtitle) ? event.subtitle : '';
+}
 
 const categoryLabel: Record<CalendarEvent['category'], string> = {
   class: 'Class', deadline: 'Due', opens: 'Opens', exam: 'Exam', office_hours: 'Office hours', event: 'Event',
@@ -45,7 +50,7 @@ function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelec
         <p className="mt-1 text-sm font-medium leading-snug text-foreground">{event.title}</p>
         {(event.subtitle || event.location || event.description) && (
           <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-zinc-400">
-            {event.subtitle && <>{event.subtitle}{event.location || event.description ? ' · ' : ''}</>}
+            {distinctSubtitle(event) && <>{distinctSubtitle(event)}{event.location || event.description ? ' · ' : ''}</>}
             {event.location && <><MapPin className="mr-1 inline size-3" />{event.location}{event.description ? ' · ' : ''}</>}
             {event.description}
           </p>

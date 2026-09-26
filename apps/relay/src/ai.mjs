@@ -122,8 +122,6 @@ export function cacheKey(serviceDate, model, tasteProfile) {
     d: serviceDate,
     m: model,
     bio: tasteProfile?.bio?.trim().toLowerCase() ?? '',
-    spice: tasteProfile?.spiceLevel ?? 'medium',
-    goals: (tasteProfile?.dietaryGoals ?? []).slice().sort(),
     diet: tasteProfile?.dietaryFilter ?? 'all',
   });
   return hashKey(payload);
@@ -482,8 +480,6 @@ export function buildPrompt({ serviceDate, tasteProfile, outlets }) {
     date: serviceDate,
     student_profile: {
       tastes_and_cravings: tasteProfile.bio || 'Open to all variety',
-      preferred_spice_level: tasteProfile.spiceLevel || 'medium',
-      dietary_goals: tasteProfile.dietaryGoals || [],
       strict_dietary_filter: tasteProfile.dietaryFilter || 'all',
     },
     campus_menus: outlets.map((o) => ({

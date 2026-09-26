@@ -27,9 +27,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { mutedIfStale } from '@/components/freshness';
-import { usePreferences, type DietaryPreference, type TasteProfile } from '@/lib/preferences-store';
+import { migrateTasteProfile, usePreferences, type DietaryPreference, type TasteProfile } from '@/lib/preferences-store';
 import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned, FoodAiRecommendation } from '@/lib/contract';
-import { fetchFoodRecommendation, getFoodTasteProfile, rankFoodWithAi, saveFoodTasteProfile } from '@/lib/api';
+import { fetchFoodRecommendation, getFoodTasteProfile, rankFoodWithAi } from '@/lib/api';
 import { dayOffset, dietLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
@@ -339,9 +339,15 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
       // Local edits since the last successful sync win; otherwise another device's saved profile wins.
       if (!lastSynced || lastSynced === local) {
         if (saved) {
+          const serverTaste = migrateTasteProfile({
+            bio: typeof saved.bio === 'string' ? saved.bio : '',
+            spiceLevel: typeof saved.spiceLevel === 'string' ? saved.spiceLevel as TasteProfile['spiceLevel'] : 'none',
+            dietaryGoals: Array.isArray(saved.dietaryGoals) ? saved.dietaryGoals.filter((goal): goal is string => typeof goal === 'string') : [],
+            selectedAiModel: typeof saved.selectedAiModel === 'string' ? saved.selectedAiModel : undefined,
+          });
           const serverProfile = {
-            bio: saved.bio, spiceLevel: saved.spiceLevel, dietaryGoals: saved.dietaryGoals,
-            selectedAiModel: saved.selectedAiModel, dietaryFilter: saved.dietaryFilter,
+            bio: serverTaste.bio, spiceLevel: serverTaste.spiceLevel, dietaryGoals: serverTaste.dietaryGoals,
+            selectedAiModel: serverTaste.selectedAiModel, dietaryFilter: saved.dietaryFilter,
           };
           const serverKey = JSON.stringify(serverProfile);
           if (serverKey !== local) {
@@ -356,8 +362,9 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
           return;
         }
       }
-      await saveFoodTasteProfile(profile);
-      try { localStorage.setItem(syncKey, local); } catch {}
+      // Profile writes are owned by the settings drawer. The dining card still
+      // hydrates a saved profile and refreshes recommendations, but it must not
+      // issue one write per keystroke while someone is editing the drawer.
       await refresh();
     };
     prepare().catch((error: unknown) => {

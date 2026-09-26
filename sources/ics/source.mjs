@@ -8,6 +8,7 @@
  */
 import { parseIcs, expandRecurrence, DEFAULT_TZ } from './parse.mjs';
 import { classifyLearnEvent } from './learn-classification.mjs';
+import { parseRetryAfter } from '../../apps/relay/src/retry.mjs';
 
 export const shape = 'timeline_event';
 export const cadenceMs = 15 * 60 * 1000;
@@ -29,16 +30,31 @@ const FETCH_TIMEOUT_MS = 10_000;
 const DEADLINE_RE = /\b(due|deadline|submit|submission|assignment|quiz|midterm|exam|test|lab report)\b/i;
 const EXAM_RE = /\b(midterm|final exam|exam)\b/i;
 
-export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEFAULT_TZ, windowDays = 60 }) {
+export function makeIcsSource({
+  id,
+  role,
+  envVar,
+  fallbackEnvVars = [],
+  tz = DEFAULT_TZ,
+  windowDays = 60,
+  cadenceMs: sourceCadenceMs = cadenceMs,
+  rateLimitMinMs = 30 * 60 * 1000,
+  rateLimitMaxMs = 48 * 60 * 60 * 1000,
+}) {
   return {
     id,
     shape,
     role, // 'portal' -> class|exam, 'learn' -> deadline
-    cadenceMs,
+    cadenceMs: sourceCadenceMs,
+    rateLimitMinMs,
+    rateLimitMaxMs,
     needsSecret: true,
     envVar,
     tz,
     windowDays,
+    // A calendar with no upcoming rows is normal after a term ends. It is a failed/implausible
+    // response when rows saved from an earlier good fetch still lie in the future, though.
+    failOnEmptyWhenFutureRows: true,
     // A nonempty feed that resolves to no upcoming rows may contain explicit cancellations.
     // A suddenly empty feed is less trustworthy, so keep the last good rows in that case.
     tombstoneOnEmpty: (parsed) => parsed.meta.events > 0,
@@ -72,6 +88,7 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
         contentType: res.headers.get('content-type') ?? '',
         body,
         bytes: body.length,
+        retryAfterMs: parseRetryAfter(res.headers.get('retry-after')),
       };
     },
     plausible(raw) {
@@ -155,6 +172,7 @@ export function makeIcsSource({ id, role, envVar, fallbackEnvVars = [], tz = DEF
         meta: {
           calendar: raw.body.match(/X-WR-CALNAME:(.*)/)?.[1]?.trim() ?? '',
           events: events.length,
+          cancelled: events.filter((event) => event.status.toUpperCase() === 'CANCELLED').length,
           expanded: rows.length,
         },
       };
@@ -167,5 +185,11 @@ export const portalIcs = makeIcsSource({
   role: 'portal',
   envVar: 'PORTAL_ICS_URL',
   fallbackEnvVars: ['GOOGLE_CALENDAR_ICS_URL', 'SCHEDULE_ICS_URL'],
+  // Google Calendar subscriptions change slowly. Polling every 15 minutes triggered Google's
+  // per-IP throttle during normal use, so the Worker now checks this source at most four times a
+  // day and gives repeated 429s progressively longer quiet periods.
+  cadenceMs: 6 * 60 * 60 * 1000,
+  rateLimitMinMs: 12 * 60 * 60 * 1000,
+  rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,
 });
 export const learnIcs = makeIcsSource({ id: 'uw-learn-ics', role: 'learn', envVar: 'LEARN_ICS_URL' });
