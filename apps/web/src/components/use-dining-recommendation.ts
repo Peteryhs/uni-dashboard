@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { fetchFoodRecommendation, getFoodTasteProfile, rankFoodWithAi } from '@/lib/api';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { fetchFoodRecommendation, requestFoodRanking } from '@/lib/api';
 import type { FoodAiRankedOutlet, FoodAiRecommendation } from '@/lib/contract';
 
 export type RecommendationState =
   | { status: 'loading' }
+  | { status: 'processing' }
   | { status: 'ready'; recommendation: FoodAiRecommendation; stale: boolean; sourceStatus: string; limitReason?: string }
   | { status: 'attempt_limited'; reason?: string }
   | { status: 'budget_limited' }
@@ -74,81 +76,47 @@ export function matchDiningDish(
 }
 
 export function useDiningRecommendation(serviceDate: string | undefined): DiningRecommendationController {
-  const [state, setState] = useState<RecommendationState>({ status: 'loading' });
-  const [isReranking, setIsReranking] = useState(false);
-  const [rerankError, setRerankError] = useState('');
-  const manualResultRef = useRef<FoodAiRecommendation | null>(null);
-  const manualAbortRef = useRef<AbortController | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [requestError, setRequestError] = useState('');
+  const query = useQuery({
+    queryKey: ['food-recommendation', serviceDate],
+    queryFn: () => fetchFoodRecommendation(serviceDate!),
+    enabled: Boolean(serviceDate),
+    refetchInterval: (current) => current.state.data?.ranking_job?.status === 'processing' ? 3_000 : 60_000,
+  });
+  const data = query.data;
+  const job = data?.ranking_job;
+  const isReranking = starting || job?.status === 'processing';
+  const jobError = job?.status === 'failed' && (!data?.recommendation || data.recommendation.generated_at <= (job.updated_at || 0))
+    ? job.error || 'Manual dining ranking failed.' : '';
+  const rerankError = requestError || jobError;
 
-  useEffect(() => {
-    let active = true;
-    manualResultRef.current = null;
-    setIsReranking(false);
-    setRerankError('');
-    if (!serviceDate) {
-      setState({ status: 'empty' });
-      return () => { active = false; };
-    }
-    setState({ status: 'loading' });
-
-    const load = () => fetchFoodRecommendation(serviceDate)
-      .then(({ recommendation, status, stale, limit_reason, error }) => {
-        if (!active || manualResultRef.current?.service_date === serviceDate) return;
-        // The endpoint may return a saved result for another day; never attach it to this menu.
-        if (recommendation && recommendation.service_date === serviceDate) {
-          setState({ status: 'ready', recommendation, stale: Boolean(stale || status !== 'ready'), sourceStatus: status, limitReason: limit_reason });
-          return;
-        }
-
-        if (status === 'attempt_limited' || status === 'limited') {
-          setState({ status: 'attempt_limited', reason: limit_reason || (status === 'limited' ? 'daily_attempt_cap' : undefined) });
-          return;
-        }
-        if (status === 'budget_limited') {
-          setState({ status: 'budget_limited' });
-          return;
-        }
-        if (status === 'failed') {
-          setState({ status: 'failed', reason: error });
-          return;
-        }
-        if (!recommendation || recommendation.service_date !== serviceDate) setState({ status: 'empty' });
-      })
-      .catch(() => {
-        if (active && manualResultRef.current?.service_date !== serviceDate) setState({ status: 'failed' });
-      });
-
-    void load();
-    const interval = window.setInterval(() => void load(), 60_000);
-    return () => {
-      active = false;
-      manualAbortRef.current?.abort();
-      manualAbortRef.current = null;
-      window.clearInterval(interval);
+  let state: RecommendationState;
+  if (!serviceDate) state = { status: 'empty' };
+  else if (!data) state = query.isError ? { status: 'failed' } : { status: 'loading' };
+  else if (data.recommendation?.service_date === serviceDate) {
+    const sourceStatus = job?.status === 'processing' ? 'processing' : data.status;
+    state = {
+      status: 'ready', recommendation: data.recommendation,
+      stale: Boolean(data.stale || sourceStatus !== 'ready'), sourceStatus, limitReason: data.limit_reason,
     };
-  }, [serviceDate]);
+  } else if (job?.status === 'processing' || data.status === 'processing') state = { status: 'processing' };
+  else if (data.status === 'attempt_limited' || data.status === 'limited') state = { status: 'attempt_limited', reason: data.limit_reason };
+  else if (data.status === 'budget_limited') state = { status: 'budget_limited' };
+  else if (data.status === 'failed') state = { status: 'failed', reason: data.error };
+  else state = { status: 'empty' };
 
   const rerank = async () => {
-    if (!serviceDate || manualAbortRef.current || state.status === 'budget_limited') return;
-    const controller = new AbortController();
-    manualAbortRef.current = controller;
-    setIsReranking(true);
-    setRerankError('');
-
+    if (!serviceDate || isReranking || state.status === 'budget_limited') return;
+    setStarting(true);
+    setRequestError('');
     try {
-      const { profile } = await getFoodTasteProfile();
-      if (controller.signal.aborted) return;
-      const model = typeof profile?.selectedAiModel === 'string' ? profile.selectedAiModel : undefined;
-      const recommendation = await rankFoodWithAi({ tasteProfile: profile ?? {}, model, date: serviceDate, force: true }, controller.signal);
-      if (controller.signal.aborted) return;
-      if (recommendation.service_date !== serviceDate) throw new Error('Ranking returned a different menu date.');
-      manualResultRef.current = recommendation;
-      setState({ status: 'ready', recommendation, stale: false, sourceStatus: 'ready' });
+      await requestFoodRanking(serviceDate);
+      await query.refetch();
     } catch (error: unknown) {
-      if (!controller.signal.aborted) setRerankError(error instanceof Error ? error.message : 'Manual dining ranking failed.');
+      setRequestError(error instanceof Error ? error.message : 'Could not start dining ranking.');
     } finally {
-      if (manualAbortRef.current === controller) manualAbortRef.current = null;
-      if (!controller.signal.aborted) setIsReranking(false);
+      setStarting(false);
     }
   };
 

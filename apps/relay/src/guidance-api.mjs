@@ -3,6 +3,7 @@ import { calendarOptions } from './calendar.mjs';
 import { buildRecommendations, saveRecommendationAction } from './recommendations.mjs';
 import { getCourseSyllabus, previewSyllabus, saveCourseSyllabus } from './syllabus.mjs';
 import { aiBudgetGuard, aiBudgetStatus } from './ai-budget.mjs';
+import { processAiJob, publicAiJob, queueAiJob } from './ai-jobs.mjs';
 import { getCachedWeather } from './weather-cache.mjs';
 
 export function isGuidanceRoute(path) {
@@ -34,7 +35,7 @@ export async function readGuidanceJson(stream) {
   } catch { throw new RangeError('Body must be a JSON object'); }
 }
 
-export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, now = Date.now() }) {
+export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, startAiJob = null, now = Date.now() }) {
   try {
     if (url.pathname === '/v1/menu' && method === 'GET') {
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
@@ -71,6 +72,16 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
       const course = decodeURIComponent(match[1]);
       if (match[2] && method === 'POST') {
         const input = await readBody();
+        if (input.use_ai === true) {
+          // Validate the full import before accepting a background job. Rules previews remain immediate.
+          await previewSyllabus(store, { ...input, course, use_ai: false }, { now });
+          const queued = await queueAiJob(store, { kind: 'syllabus', scope: course, input: { ...input, use_ai: true }, now });
+          if (queued.started) {
+            if (startAiJob) startAiJob(queued.job);
+            else void processAiJob(store, queued.job, { cfEnv });
+          }
+          return { status: 202, body: publicAiJob(queued.job) };
+        }
         return { status: 200, body: await previewSyllabus(store, { ...input, course }, { cfEnv, now, beforeAiCall: aiBudgetGuard(store) }) };
       }
       if (!match[2] && method === 'GET') return { status: 200, body: { syllabus: await getCourseSyllabus(store, course) } };

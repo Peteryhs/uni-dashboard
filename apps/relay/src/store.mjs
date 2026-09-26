@@ -283,6 +283,13 @@ export class SqliteStore {
     return { name, updated_at: now };
   }
 
+  compareAndSetSetting(name, expected, value, now = Date.now()) {
+    if (expected == null) {
+      return this.db.prepare('INSERT OR IGNORE INTO setting (name, value, updated_at) VALUES (?,?,?)').run(name, value, now).changes > 0;
+    }
+    return this.db.prepare('UPDATE setting SET value=?, updated_at=? WHERE name=? AND value=?').run(value, now, name, expected).changes > 0;
+  }
+
   deleteSetting(name) {
     return this.db.prepare('DELETE FROM setting WHERE name=?').run(name).changes;
   }

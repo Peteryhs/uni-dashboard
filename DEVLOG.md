@@ -8,6 +8,15 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-25 — AI work survives page refresh
+
+Dining Rank again, office-hours extraction, and optional AI syllabus review now create server-owned jobs. The browser receives a job ID immediately and reads progress and results from persistent storage, so closing or refreshing the page does not cancel the model call or lose its draft. The Worker runs each job after the response and the scheduled tick can retry a job left processing by an interrupted Worker. The local relay has the same recovery path. Automatic dining and alert AI already run on the server.
+
+Dining ranking now uses the saved server-side taste profile and menu. It preserves the previous pick while a new ranking runs and avoids a duplicate automatic ranking for the same menu. Office-hours and syllabus results remain drafts until explicitly saved; their request inputs are removed from the stored job after completion.
+
+Verification: 229/229 tests passed; the web production build and Worker dry run passed. The local preview was refreshed at 127.0.0.1:8788 from the new build, using a database copy with live fetching disabled. This change has not been deployed to Cloudflare.
+
+---
 ## 2026-09-25 — Trial fixes and mobile polish
 
 The day-one trial led to six fixes. Dining taste is now one free-text profile that saves automatically after edits; the preset taste buttons and Save action are gone. The #1 dining outlet shows a sentence explaining its ranking, including beside the outlet in the menu. Class detail no longer repeats the course description.

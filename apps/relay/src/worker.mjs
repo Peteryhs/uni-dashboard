@@ -18,13 +18,12 @@ import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } f
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
-import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
+import { DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
-import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
-import { claimFoodAiRun, cleanFoodProfile, getFoodProfile, getFoodRecommendation, persistManualFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { clearAiJob, getAiJob, processAiJob, publicAiJob, queueAiJob, restartStalledAiJob } from './ai-jobs.mjs';
 import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
-import { aiBudgetGuard } from './ai-budget.mjs';
 import { syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 
@@ -71,8 +70,8 @@ const SETTING_KEYS = Object.keys(WRITABLE_SETTINGS);
  * their configuration. Returns which keys came from the database, so the credentials route can say
  * where a value it is reporting actually lives.
  */
-async function applySettings(store) {
-  const rows = await store.settings();
+async function applySettings(store, rows = null) {
+  rows ||= await store.settings();
   const fromDb = [];
   for (const row of rows) {
     if (!SETTING_KEYS.includes(row.name) || !row.value) continue;
@@ -169,7 +168,7 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
   return { receipts, deferred, pruned, prunedSnapshots };
 }
 
-async function handleFetch(request, env) {
+async function handleFetch(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -193,6 +192,11 @@ async function handleFetch(request, env) {
    * saved from the app wins over a Worker secret, because it is the more recent explicit choice.
    */
   const saved = await applySettings(store);
+  const startAiJob = (job) => {
+    const task = processAiJob(store, job, { cfEnv: env });
+    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
+    else void task.catch((error) => console.error(`[ai-job] ${job.kind} ${error.message}`));
+  };
 
   const token = process.env.RELAY_TOKEN || env.RELAY_TOKEN || '';
   if (token && request.headers.get('authorization') !== `Bearer ${token}`) {
@@ -200,7 +204,7 @@ async function handleFetch(request, env) {
   }
 
   if (isGuidanceRoute(path)) {
-    const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env });
+    const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob });
     return json(result.body, result.status);
   }
 
@@ -225,7 +229,9 @@ async function handleFetch(request, env) {
   }
 
   if (path === '/v1/food/recommendation' && request.method === 'GET') {
-    return json(await getFoodRecommendation(store, url.searchParams.get('date') || ''));
+    const date = url.searchParams.get('date') || '';
+    const result = await getFoodRecommendation(store, date);
+    return json({ ...result, ranking_job: date ? await getAiJob(store, 'food', date) : { status: 'idle' } });
   }
   if (path === '/v1/food/profile' && request.method === 'GET') return json({ profile: await getFoodProfile(store) });
   if (path === '/v1/food/profile' && request.method === 'PUT') {
@@ -307,6 +313,17 @@ async function handleFetch(request, env) {
     return json({ default_model: DEFAULT_AI_MODEL, models: POPULAR_MODELS });
   }
 
+  if (path === '/v1/ai/jobs' && request.method === 'GET') {
+    try { return json(await getAiJob(store, url.searchParams.get('kind'), url.searchParams.get('scope') || '')); }
+    catch (error) { return json({ error: error.message }, 400); }
+  }
+  if (path === '/v1/ai/jobs' && request.method === 'DELETE') {
+    try {
+      await clearAiJob(store, url.searchParams.get('kind'), url.searchParams.get('scope') || '');
+      return json({ ok: true });
+    } catch (error) { return json({ error: error.message }, 400); }
+  }
+
   if (path === '/v1/ai/rank-food' && request.method === 'POST') {
     let body;
     try {
@@ -314,47 +331,12 @@ async function handleFetch(request, env) {
     } catch {
       return json({ error: 'invalid json' }, 400);
     }
-    const tasteProfile = body.tasteProfile || {};
-    const model = body.model || cleanFoodProfile(tasteProfile).selectedAiModel || DEFAULT_AI_MODEL;
-    const now = Date.now();
-    const requestedDate = body.date || todayInToronto(now);
-    const serviceDate = requestedDate;
-
-    let menuRows = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
-    if (!menuRows.length) {
-      const recent = await store.rows('menu_item', { limit: 100 });
-      if (recent.length > 0) {
-        menuRows = await store.rows('menu_item', { where: 'service_date = ?', params: [recent[0].service_date], limit: 500 });
-      }
-    }
-    if (!menuRows.length) {
-      return json({ error: 'No dining menu items available to evaluate for this date.' }, 404);
-    }
-    if (!await claimFoodAiRun(store, now)) return json({ error: 'Daily manual dining ranking cap reached; try again after UTC midnight.' }, 429);
-    try {
-      const recommendation = await rankDailyMenu({
-        menuItems: menuRows,
-        serviceDate: menuRows[0]?.service_date || serviceDate,
-        tasteProfile,
-        model,
-        force: Boolean(body.force),
-        now,
-        cfEnv: env, // native env.AI binding: no API key, no REST round trip
-        beforeAiCall: aiBudgetGuard(store),
-      });
-      await persistManualFoodRecommendation(store, {
-        recommendation,
-        tasteProfile,
-        model,
-        requestedDate,
-        serviceDate: menuRows[0]?.service_date || serviceDate,
-        menuItems: menuRows,
-        startedAt: now,
-      });
-      return json(recommendation);
-    } catch (err) {
-      return json({ error: err.message }, err.status || 502);
-    }
+    const date = body.date || todayInToronto(Date.now());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'invalid menu date' }, 400);
+    if (!(await store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: 1 })).length) return json({ error: 'No dining menu items available for this date.' }, 404);
+    const queued = await queueAiJob(store, { kind: 'food', scope: date, input: { date } });
+    if (queued.started) startAiJob(queued.job);
+    return json(publicAiJob(queued.job), 202);
   }
 
   if (path === '/v1/ai/parse-office-hours' && request.method === 'POST') {
@@ -365,32 +347,13 @@ async function handleFetch(request, env) {
       return json({ error: 'invalid json' }, 400);
     }
     const text = typeof body.text === 'string' ? body.text.trim() : '';
-    if (!text) {
-      return json({ error: 'Office hours text cannot be empty' }, 400);
-    }
+    if (!text || text.length > 100_000) return json({ error: 'Office hours text must contain 1 to 100,000 characters.' }, 400);
     const course = typeof body.course === 'string' ? body.course.trim() : '';
     const model = body.model || DEFAULT_AI_MODEL;
     const force = Boolean(body.force);
-    const now = Date.now();
-
-    try {
-      const draft = await parseOfficeHoursWithAi({
-        text,
-        course,
-        model,
-        force,
-        now,
-        cfEnv: env,
-        beforeAiCall: aiBudgetGuard(store),
-      });
-      const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
-      return json({ draft, preview, model });
-    } catch (err) {
-      const status = err.status || 502;
-      const payload = { error: err.message };
-      if (err.raw) payload.raw = err.raw;
-      return json(payload, status);
-    }
+    const queued = await queueAiJob(store, { kind: 'office_hours', scope: 'latest', input: { text, course, model, force } });
+    if (queued.started) startAiJob(queued.job);
+    return json(publicAiJob(queued.job), 202);
   }
 
   if (path === '/v1/office-hours' && request.method === 'GET') {
@@ -547,7 +510,7 @@ export default {
   async fetch(request, env, ctx) {
     bridgeEnv(env);
     try {
-      return await handleFetch(request, env);
+      return await handleFetch(request, env, ctx);
     } catch (e) {
       return json({ error: e.message }, 500);
     }
@@ -562,7 +525,14 @@ export default {
     const store = storeFor(env);
     await store.init();
     // settings saved from the app first: the cron polls the feeds the app was configured with
-    await applySettings(store);
+    const settings = await store.settings();
+    await applySettings(store, settings);
+    const stalled = await restartStalledAiJob(store, settings);
+    if (stalled) {
+      const result = await processAiJob(store, stalled, { cfEnv: env });
+      console.log(`[cron] resumed ${stalled.kind} AI job -> ${result.status}`);
+      return;
+    }
     const { receipts, deferred, pruned } = await pollDue(store, Date.now());
     // Keep the expensive AI cache check on a lighter tick to preserve the D1 query budget.
     const alerts = receipts.length < MAX_SOURCES_PER_TICK

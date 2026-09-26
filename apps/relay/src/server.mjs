@@ -19,13 +19,12 @@ import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
-import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, parseOfficeHoursWithAi } from './ai.mjs';
+import { DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
-import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
-import { claimFoodAiRun, cleanFoodProfile, getFoodProfile, getFoodRecommendation, persistManualFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
+import { clearAiJob, getAiJob, processAiJob, publicAiJob, queueAiJob, restartStalledAiJob } from './ai-jobs.mjs';
 import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
-import { aiBudgetGuard } from './ai-budget.mjs';
 import { getCachedWeather, syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { buildRecommendations } from './recommendations.mjs';
@@ -41,6 +40,14 @@ export function createServer({
 }) {
   const started = Date.now();
   let polling = false;
+  const startAiJob = (job) => {
+    void processAiJob(store, job).catch((error) => log(`[ai-job] ${job.kind} ${error.message}`));
+  };
+  const resumeAiJobs = async () => {
+    const job = await restartStalledAiJob(store, await store.settings());
+    if (job) startAiJob(job);
+    return job;
+  };
 
   async function pollDue(now = Date.now()) {
     if (polling) return [];
@@ -150,7 +157,7 @@ export function createServer({
         return send(200, { ...feed, preview: { selected_at: selectedAt, evaluated_at: evaluatedAt, uses_current_saved_data: true } });
       }
       if (isGuidanceRoute(url.pathname)) {
-        const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store });
+        const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store, startAiJob });
         return send(result.status, result.body);
       }
       if (url.pathname === '/v1/dashboard') {
@@ -176,7 +183,9 @@ export function createServer({
         return send(200, await buildCalendar(store, { ...options, now }));
       }
       if (url.pathname === '/v1/food/recommendation' && req.method === 'GET') {
-        return send(200, await getFoodRecommendation(store, url.searchParams.get('date') || ''));
+        const date = url.searchParams.get('date') || '';
+        const result = await getFoodRecommendation(store, date);
+        return send(200, { ...result, ranking_job: date ? await getAiJob(store, 'food', date) : { status: 'idle' } });
       }
       if (url.pathname === '/v1/food/profile' && req.method === 'GET') return send(200, { profile: await getFoodProfile(store) });
       if (url.pathname === '/v1/food/profile' && req.method === 'PUT') {
@@ -266,6 +275,17 @@ export function createServer({
         });
       }
 
+      if (url.pathname === '/v1/ai/jobs' && req.method === 'GET') {
+        try { return send(200, await getAiJob(store, url.searchParams.get('kind'), url.searchParams.get('scope') || '')); }
+        catch (error) { return send(400, { error: error.message }); }
+      }
+      if (url.pathname === '/v1/ai/jobs' && req.method === 'DELETE') {
+        try {
+          await clearAiJob(store, url.searchParams.get('kind'), url.searchParams.get('scope') || '');
+          return send(200, { ok: true });
+        } catch (error) { return send(400, { error: error.message }); }
+      }
+
       if (url.pathname === '/v1/ai/rank-food' && req.method === 'POST') {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
@@ -275,60 +295,12 @@ export function createServer({
         } catch {
           return send(400, { error: 'invalid json' });
         }
-        const tasteProfile = body.tasteProfile || {};
-        const model = body.model || cleanFoodProfile(tasteProfile).selectedAiModel || DEFAULT_AI_MODEL;
-        const force = Boolean(body.force);
-        const now = Date.now();
-        const requestedDate = body.date || todayInToronto(now);
-        const serviceDate = requestedDate;
-
-        let menuRows = store.rows('menu_item', {
-          where: 'service_date = ?',
-          params: [serviceDate],
-          limit: 500,
-        });
-
-        // If today has no rows yet in DB, check latest available service_date in store
-        if (!menuRows.length) {
-          const recent = store.rows('menu_item', { limit: 100 });
-          if (recent.length > 0) {
-            const latestDate = recent[0].service_date;
-            menuRows = store.rows('menu_item', {
-              where: 'service_date = ?',
-              params: [latestDate],
-              limit: 500,
-            });
-          }
-        }
-
-        if (!menuRows.length) {
-          return send(404, { error: 'No dining menu items available to evaluate for this date.' });
-        }
-        if (!await claimFoodAiRun(store, now)) return send(429, { error: 'Daily manual dining ranking cap reached; try again after UTC midnight.' });
-
-        try {
-          const recommendation = await rankDailyMenu({
-            menuItems: menuRows,
-            serviceDate: menuRows[0]?.service_date || serviceDate,
-            tasteProfile,
-            model,
-            force,
-            now,
-            beforeAiCall: aiBudgetGuard(store),
-          });
-          await persistManualFoodRecommendation(store, {
-            recommendation,
-            tasteProfile,
-            model,
-            requestedDate,
-            serviceDate: menuRows[0]?.service_date || serviceDate,
-            menuItems: menuRows,
-            startedAt: now,
-          });
-          return send(200, recommendation);
-        } catch (err) {
-          return send(err.status || 502, { error: err.message });
-        }
+        const date = body.date || todayInToronto(Date.now());
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return send(400, { error: 'invalid menu date' });
+        if (!store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: 1 }).length) return send(404, { error: 'No dining menu items available for this date.' });
+        const queued = await queueAiJob(store, { kind: 'food', scope: date, input: { date } });
+        if (queued.started) startAiJob(queued.job);
+        return send(202, publicAiJob(queued.job));
       }
 
       if (url.pathname === '/v1/ai/parse-office-hours' && req.method === 'POST') {
@@ -341,31 +313,13 @@ export function createServer({
           return send(400, { error: 'invalid json' });
         }
         const text = typeof body.text === 'string' ? body.text.trim() : '';
-        if (!text) {
-          return send(400, { error: 'Office hours text cannot be empty' });
-        }
+        if (!text || text.length > 100_000) return send(400, { error: 'Office hours text must contain 1 to 100,000 characters.' });
         const course = typeof body.course === 'string' ? body.course.trim() : '';
         const model = body.model || DEFAULT_AI_MODEL;
         const force = Boolean(body.force);
-        const now = Date.now();
-
-        try {
-          const draft = await parseOfficeHoursWithAi({
-            text,
-            course,
-            model,
-            force,
-            now,
-            beforeAiCall: aiBudgetGuard(store),
-          });
-          const preview = buildPreviewOccurrences(draft.rules, { now, count: 6 });
-          return send(200, { draft, preview, model });
-        } catch (err) {
-          const status = err.status || 502;
-          const payload = { error: err.message };
-          if (err.raw) payload.raw = err.raw;
-          return send(status, payload);
-        }
+        const queued = await queueAiJob(store, { kind: 'office_hours', scope: 'latest', input: { text, course, model, force } });
+        if (queued.started) startAiJob(queued.job);
+        return send(202, publicAiJob(queued.job));
       }
 
       if (url.pathname === '/v1/office-hours' && req.method === 'GET') {
@@ -587,7 +541,7 @@ export function createServer({
     }
   });
 
-  return { server, pollDue, store };
+  return { server, pollDue, resumeAiJobs, store };
 }
 
 export async function start({
@@ -602,7 +556,7 @@ export async function start({
   pollEnabled = /^(1|true|yes)$/i.test(process.env.RELAY_POLL_ENABLED ?? ''),
 } = {}) {
   const store = new SqliteStore(dbPath);
-  const { server, pollDue } = createServer({ store, token, log, webRoot, serveWeb, automaticPolling: pollEnabled });
+  const { server, pollDue, resumeAiJobs } = createServer({ store, token, log, webRoot, serveWeb, automaticPolling: pollEnabled });
 
   log('sources:');
   for (const r of readiness(enabledSources())) {
@@ -621,11 +575,15 @@ export async function start({
     }, intervalMs)
     : null;
   timer?.unref?.();
+  const aiRecoveryTimer = setInterval(() => {
+    resumeAiJobs().catch((error) => log(`[ai-job] recovery error: ${error.message}`));
+  }, 60_000);
+  aiRecoveryTimer.unref?.();
 
   await new Promise((resolve) => server.listen(port, host, resolve));
   log(`relay listening on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}${token ? ' (bearer auth on)' : ' (OPEN, no token set)'}`);
   if (!pollEnabled) log('automatic polling disabled; the deployed Worker cron is the canonical poller (set RELAY_POLL_ENABLED=1 for a standalone local relay)');
   if (host === '0.0.0.0') log(`reachable from another device on this network at http://<this-box-ip>:${port}/`);
   if (hasWeb) log(`dashboard at  http://${host === '0.0.0.0' ? 'localhost' : host}:${port}/`);
-  return { server, store, pollDue, close: () => { if (timer) clearInterval(timer); server.close(); store.close(); } };
+  return { server, store, pollDue, close: () => { if (timer) clearInterval(timer); clearInterval(aiRecoveryTimer); server.close(); store.close(); } };
 }

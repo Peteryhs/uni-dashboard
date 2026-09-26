@@ -375,13 +375,17 @@ test('the AI route fails loudly when there is no binding and no REST credentials
   ]);
   const env = { DB: api };
 
+  const tasks = [];
   const res = await worker.fetch(
     new Request('https://dash.test/v1/ai/rank-food', { method: 'POST', body: JSON.stringify({ date: '2026-09-22' }) }),
     env,
-    {},
+    { waitUntil: (task) => tasks.push(task) },
   );
-  assert.equal(res.status, 502);
-  assert.match((await res.json()).error, /credentials not configured/i);
+  assert.equal(res.status, 202);
+  await Promise.all(tasks);
+  const job = await (await worker.fetch(new Request('https://dash.test/v1/ai/jobs?kind=food&scope=2026-09-22'), env, {})).json();
+  assert.equal(job.status, 'failed');
+  assert.match(job.error, /credentials not configured/i);
 });
 
 test('Worker manual food ranking persists matching results for the automatic recommendation reader', async () => {
@@ -396,8 +400,11 @@ test('Worker manual food ranking persists matching results for the automatic rec
   }]);
   const profile = await saveFoodProfile(store, { bio: 'soup fan' });
   let aiCalls = 0;
+  let releaseAi;
+  const aiGate = new Promise((resolve) => { releaseAi = resolve; });
   const env = { DB: api, AI: { run: async () => {
     aiCalls++;
+    await aiGate;
     return { response: JSON.stringify({
       headline: 'Manual soup pick.',
       top_outlet: 'REV',
@@ -406,20 +413,62 @@ test('Worker manual food ranking persists matching results for the automatic rec
     }) };
   } } };
 
+  const tasks = [];
+  const context = { waitUntil: (task) => tasks.push(task) };
   const response = await worker.fetch(new Request('https://dash.test/v1/ai/rank-food', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tasteProfile: profile, model: profile.selectedAiModel, date: serviceDate, force: true }),
-  }), env, {});
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).headline, 'Manual soup pick.');
+    body: JSON.stringify({ tasteProfile: { bio: 'ignored client input' }, model: profile.selectedAiModel, date: serviceDate, force: true }),
+  }), env, context);
+  assert.equal(response.status, 202);
+  const queued = await response.json();
+  assert.equal(queued.status, 'processing');
+
+  // A fresh request after a page reload reads the job; a second click does not spend AI twice.
+  const during = await (await worker.fetch(new Request(`https://dash.test/v1/food/recommendation?date=${serviceDate}`), env, {})).json();
+  assert.equal(during.ranking_job.status, 'processing');
+  assert.equal((await syncFoodRecommendation(store, { cfEnv: env, now: Date.now() })).cached, true, 'cron leaves a manual ranking in progress alone');
+  const duplicate = await worker.fetch(new Request('https://dash.test/v1/ai/rank-food', {
+    method: 'POST', body: JSON.stringify({ date: serviceDate }),
+  }), env, context);
+  assert.equal((await duplicate.json()).id, queued.id);
+  assert.equal(tasks.length, 1);
+
+  releaseAi();
+  await Promise.all(tasks);
 
   const savedResponse = await worker.fetch(new Request(`https://dash.test/v1/food/recommendation?date=${serviceDate}`), env, {});
   const saved = await savedResponse.json();
   assert.equal(saved.status, 'ready');
+  assert.equal(saved.ranking_job.status, 'ready');
   assert.equal(saved.recommendation.headline, 'Manual soup pick.');
   assert.equal((await syncFoodRecommendation(store, { cfEnv: env, now })).cached, true);
   assert.equal(aiCalls, 1, 'background ranking reuses the manual result under the shared signature');
+});
+
+test('AI syllabus review continues after its request and is readable on a fresh page', async () => {
+  const { api } = createMockD1();
+  let releaseAi;
+  const aiGate = new Promise((resolve) => { releaseAi = resolve; });
+  const env = { DB: api, AI: { run: async () => {
+    await aiGate;
+    return { response: JSON.stringify({ entries: [] }) };
+  } } };
+  const tasks = [];
+  const response = await worker.fetch(new Request('https://dash.test/v1/courses/ECE%20150/syllabus/preview', {
+    method: 'POST', body: JSON.stringify({ text: 'Sep 24, 2026: Quiz 1 covers loops', use_ai: true }),
+  }), env, { waitUntil: (task) => tasks.push(task) });
+  assert.equal(response.status, 202);
+  const accepted = await response.json();
+  assert.equal(accepted.status, 'processing');
+  const jobUrl = 'https://dash.test/v1/ai/jobs?kind=syllabus&scope=ECE%20150';
+  assert.equal((await (await worker.fetch(new Request(jobUrl), env, {})).json()).status, 'processing');
+  releaseAi();
+  await Promise.all(tasks);
+  const completed = await (await worker.fetch(new Request(jobUrl), env, {})).json();
+  assert.equal(completed.status, 'ready');
+  assert.equal(completed.result.method, 'ai');
+  assert.equal(completed.result.syllabus.entries.length, 1);
 });
 
 test('raw HTML snapshots download as text rather than execute on the dashboard origin', async () => {

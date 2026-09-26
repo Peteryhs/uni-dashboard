@@ -645,6 +645,7 @@ test('Worker endpoints: GET/PUT /v1/office-hours, POST /v1/ai/parse-office-hours
     }),
   };
 
+  const tasks = [];
   const parseRes = await worker.fetch(
     new Request('https://dash.test/v1/ai/parse-office-hours', {
       method: 'POST',
@@ -652,12 +653,17 @@ test('Worker endpoints: GET/PUT /v1/office-hours, POST /v1/ai/parse-office-hours
       body: JSON.stringify({ text: 'TA session Thursdays 10:30-11:20 in DC 2568' }),
     }),
     { ...env, AI: mockAi },
-    {}
+    { waitUntil: (task) => tasks.push(task) }
   );
-  assert.equal(parseRes.status, 200);
-  const parseJson = await parseRes.json();
-  assert.equal(parseJson.draft.rules.length, 1);
-  assert.ok(parseJson.preview.length > 0);
+  assert.equal(parseRes.status, 202);
+  assert.equal((await parseRes.json()).status, 'processing');
+  await Promise.all(tasks);
+  const parseJob = await worker.fetch(new Request('https://dash.test/v1/ai/jobs?kind=office_hours&scope=latest'), env, {});
+  assert.equal(parseJob.status, 200);
+  const parseJson = await parseJob.json();
+  assert.equal(parseJson.status, 'ready');
+  assert.equal(parseJson.result.draft.rules.length, 1);
+  assert.ok(parseJson.result.preview.length > 0);
 
   // 5. AC 11: OFFICE_HOURS_JSON is never written through the credentials path
   const prevEnvVal = process.env.OFFICE_HOURS_JSON;

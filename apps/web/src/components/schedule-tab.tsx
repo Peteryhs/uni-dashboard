@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useId } from 'react';
+import { useState, useEffect, useCallback, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bot,
@@ -21,8 +21,10 @@ import {
   putOfficeHours,
   parseOfficeHours,
   fetchAiModels,
+  clearAiJob,
   type AiModelInfo,
 } from '@/lib/api';
+import { useAiJob } from '@/hooks/use-ai-job';
 import type {
   OfficeHourRule,
   OfficeHoursConfig,
@@ -31,6 +33,7 @@ import type {
   PreviewOccurrence,
   WeekdayCode,
   OfficeHourKind,
+  ParseOfficeHoursResponse,
 } from '@/lib/contract';
 import { cn } from '@/lib/utils';
 
@@ -322,6 +325,28 @@ export function ScheduleTab() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [rawError, setRawError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
+  const parseJob = useAiJob<ParseOfficeHoursResponse>('office_hours', 'latest');
+  const handledJobId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const job = parseJob.data;
+    if (!job) return;
+    setParsing(job.status === 'processing');
+    if (!job.id || handledJobId.current === job.id || job.status === 'processing') return;
+    handledJobId.current = job.id;
+    if (job.status === 'ready' && job.result) {
+      setDraft(job.result.draft);
+      setPreviewOccurrences(job.result.preview || []);
+      const count = job.result.draft.rules.length;
+      setStatusMessage(count === 0
+        ? 'Parsing complete: No recurring office hours found in text.'
+        : `Parsing complete: Generated ${count} recurrence ${count === 1 ? 'rule' : 'rules'}.`);
+      setParseError(null);
+    } else if (job.status === 'failed') {
+      setParseError(job.error || 'Failed to parse office hours text');
+      setStatusMessage(`Parse error: ${job.error || 'Unknown error'}`);
+    }
+  }, [parseJob.data]);
 
   // Draft review state
   const [draft, setDraft] = useState<OfficeHoursDraft | null>(null);
@@ -386,27 +411,19 @@ export function ScheduleTab() {
     setStatusMessage('Parsing office hours text with AI...');
 
     try {
-      const result = await parseOfficeHours(pastedText, {
+      await parseOfficeHours(pastedText, {
         course: courseCode.trim() || undefined,
         model: selectedModel,
         force,
       });
-
-      setDraft(result.draft);
-      setPreviewOccurrences(result.preview || []);
-      const count = result.draft.rules.length;
-      setStatusMessage(
-        count === 0
-          ? 'Parsing complete: No recurring office hours found in text.'
-          : `Parsing complete: Generated ${count} recurrence ${count === 1 ? 'rule' : 'rules'}.`
-      );
+      setStatusMessage('Parsing in the background. You can refresh this page.');
+      await parseJob.refetch();
     } catch (err: any) {
       setParseError(err.message || 'Failed to parse office hours text');
       if (err.raw) {
         setRawError(typeof err.raw === 'string' ? err.raw : JSON.stringify(err.raw, null, 2));
       }
       setStatusMessage(`Parse error: ${err.message}`);
-    } finally {
       setParsing(false);
     }
   };
@@ -433,6 +450,7 @@ export function ScheduleTab() {
       setDraft(null);
       setPreviewOccurrences([]);
       setPastedText('');
+      try { await clearAiJob('office_hours', 'latest'); await parseJob.refetch(); } catch { /* Saved rules remain authoritative. */ }
       setCourseCode('');
       setStatusMessage('Office hours saved successfully and schedule updated.');
     } catch (err: any) {
@@ -443,12 +461,13 @@ export function ScheduleTab() {
     }
   };
 
-  const handleDiscardDraft = () => {
+  const handleDiscardDraft = async () => {
     setDraft(null);
     setPreviewOccurrences([]);
     setParseError(null);
     setRawError(null);
     setStatusMessage('Draft discarded.');
+    try { await clearAiJob('office_hours', 'latest'); await parseJob.refetch(); } catch { /* The draft is still discarded locally. */ }
   };
 
   const handleStartEditSavedRule = (rule: OfficeHourRule) => {

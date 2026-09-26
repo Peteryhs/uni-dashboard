@@ -258,25 +258,44 @@ export async function updateCredentials(
   return res.json();
 }
 
-export async function rankFoodWithAi(
-  params: { tasteProfile: unknown; model?: string; date?: string; force?: boolean },
-  signal?: AbortSignal,
-): Promise<FoodAiRecommendation> {
+export interface AiJob<Result> {
+  id?: string;
+  kind?: 'food' | 'office_hours' | 'syllabus';
+  scope?: string;
+  status: 'idle' | 'processing' | 'ready' | 'failed';
+  created_at?: number;
+  updated_at?: number;
+  result?: Result;
+  error?: string;
+}
+
+export async function fetchAiJob<Result>(kind: 'office_hours' | 'syllabus', scope: string): Promise<AiJob<Result>> {
+  return getJson<AiJob<Result>>(`/v1/ai/jobs?kind=${encodeURIComponent(kind)}&scope=${encodeURIComponent(scope)}`);
+}
+
+export async function clearAiJob(kind: 'office_hours' | 'syllabus', scope: string): Promise<void> {
+  const res = await fetch(`/v1/ai/jobs?kind=${encodeURIComponent(kind)}&scope=${encodeURIComponent(scope)}`, {
+    method: 'DELETE', headers: authHeaders(),
+  });
+  if (!res.ok) throw new RelayError(`could not clear AI draft: ${res.status}`, res.status);
+}
+
+export async function requestFoodRanking(date: string): Promise<AiJob<FoodAiRecommendation>> {
   const res = await fetch('/v1/ai/rank-food', {
     method: 'POST',
-    signal,
+    keepalive: true,
     headers: {
       'content-type': 'application/json',
       accept: 'application/json',
       ...authHeaders(),
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify({ date }),
   });
   if (!res.ok) {
     const errJson = await res.json().catch(() => ({}));
     throw new RelayError(errJson.error || `AI ranking failed with ${res.status}`, res.status);
   }
-  return res.json() as Promise<FoodAiRecommendation>;
+  return res.json() as Promise<AiJob<FoodAiRecommendation>>;
 }
 
 export async function saveFoodTasteProfile(profile: unknown): Promise<void> {
@@ -297,6 +316,7 @@ export async function getFoodTasteProfile(): Promise<{ profile: (Record<string, 
 export async function fetchFoodRecommendation(date: string): Promise<{
   status: string;
   recommendation: FoodAiRecommendation | null;
+  ranking_job?: AiJob<FoodAiRecommendation>;
   stale?: boolean;
   limit_reason?: string;
   error?: string;
@@ -346,18 +366,20 @@ export async function previewCourseSyllabus(
   course: string,
   input: CourseSyllabusPreviewRequest,
   signal?: AbortSignal,
-): Promise<CourseSyllabusPreview> {
+): Promise<CourseSyllabusPreview | AiJob<CourseSyllabusPreview>> {
+  const body = JSON.stringify(input);
   const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/syllabus/preview`, {
     method: 'POST',
-    signal,
+    signal: input.use_ai ? undefined : signal,
+    keepalive: input.use_ai === true && body.length <= 60_000,
     headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
-    body: JSON.stringify(input),
+    body,
   });
   if (!res.ok) {
     const payload = await res.json().catch(() => ({})) as { error?: string };
     throw new RelayError(payload.error || `could not preview syllabus: ${res.status}`, res.status);
   }
-  return res.json() as Promise<CourseSyllabusPreview>;
+  return res.json() as Promise<CourseSyllabusPreview | AiJob<CourseSyllabusPreview>>;
 }
 
 export async function saveCourseSyllabus(course: string, syllabus: CourseSyllabus): Promise<CourseSyllabus> {
@@ -392,17 +414,17 @@ export async function fetchAiModels(signal?: AbortSignal): Promise<AiModelsRespo
 export async function parseOfficeHours(
   text: string,
   opts: { course?: string; model?: string; force?: boolean } = {},
-  signal?: AbortSignal,
-): Promise<ParseOfficeHoursResponse> {
+): Promise<AiJob<ParseOfficeHoursResponse>> {
+  const body = JSON.stringify({ text, ...opts });
   const res = await fetch('/v1/ai/parse-office-hours', {
     method: 'POST',
-    signal,
+    keepalive: body.length <= 60_000,
     headers: {
       'content-type': 'application/json',
       accept: 'application/json',
       ...authHeaders(),
     },
-    body: JSON.stringify({ text, ...opts }),
+    body,
   });
   if (!res.ok) {
     const errJson = await res.json().catch(() => ({}));
@@ -413,7 +435,7 @@ export async function parseOfficeHours(
     }
     throw err;
   }
-  return res.json() as Promise<ParseOfficeHoursResponse>;
+  return res.json() as Promise<AiJob<ParseOfficeHoursResponse>>;
 }
 
 export async function getOfficeHours(signal?: AbortSignal): Promise<OfficeHoursConfig> {

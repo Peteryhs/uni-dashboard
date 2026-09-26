@@ -128,6 +128,28 @@ export async function getFoodRecommendation(store, serviceDate = '') {
   };
 }
 
+/** Manual work owns the current signature while it runs, so cron does not spend AI on the same menu. */
+export async function markManualFoodRanking(store, { jobId, serviceDate, now = Date.now() }) {
+  const profile = cleanFoodProfile(await getFoodProfile(store) || await saveFoodProfile(store, {}));
+  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
+  const signature = foodRecommendationSignature(serviceDate, profile, menuItems);
+  const previous = parseJson(await store.getSetting(RESULT_KEY), null);
+  const recommendation = previous?.recommendation?.service_date === serviceDate ? previous.recommendation : null;
+  await store.setSetting(RESULT_KEY, JSON.stringify({
+    signature, service_date: serviceDate, status: 'processing', manual_job_id: jobId,
+    ...(recommendation ? { recommendation, stale: true } : {}), updated_at: now,
+  }), now);
+}
+
+export async function failManualFoodRanking(store, { jobId, error, now = Date.now() }) {
+  const current = parseJson(await store.getSetting(RESULT_KEY), null);
+  if (current?.status !== 'processing' || current.manual_job_id !== jobId) return;
+  await store.setSetting(RESULT_KEY, JSON.stringify({
+    ...current, status: 'failed', error,
+    stale: Boolean(current.recommendation), updated_at: now,
+  }), now);
+}
+
 /** Keep cron rankings and user-triggered rankings on separate daily attempt budgets. */
 export async function claimFoodAiRun(store, now = Date.now(), source = 'manual') {
   const date = new Date(now).toISOString().slice(0, 10);

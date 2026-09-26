@@ -322,6 +322,13 @@ export class D1Store {
     return { name, updated_at: now };
   }
 
+  async compareAndSetSetting(name, expected, value, now = Date.now()) {
+    const result = expected == null
+      ? await this.db.prepare('INSERT OR IGNORE INTO setting (name, value, updated_at) VALUES (?,?,?)').bind(name, value, now).run()
+      : await this.db.prepare('UPDATE setting SET value=?, updated_at=? WHERE name=? AND value=?').bind(value, now, name, expected).run();
+    return (result?.meta?.changes ?? 0) > 0;
+  }
+
   async deleteSetting(name) {
     const res = await this.db.prepare('DELETE FROM setting WHERE name=?').bind(name).run();
     return res?.meta?.changes ?? 0;

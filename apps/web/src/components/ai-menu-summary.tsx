@@ -38,6 +38,8 @@ export function AiMenuSummary({
   if (state.status !== 'ready') {
     const statusText = state.status === 'loading'
       ? 'Loading dining picks'
+      : state.status === 'processing'
+        ? 'Ranking dining picks… You can refresh this page.'
       : state.status === 'empty'
         ? 'No saved dining picks for this menu.'
         : state.status === 'attempt_limited'
@@ -57,7 +59,7 @@ export function AiMenuSummary({
     return (
       <div className="ai-menu-summary ai-menu-summary--quiet" aria-live="polite" role={state.status === 'loading' ? undefined : 'status'}>
         <span>{statusText}</span>
-        {state.status !== 'loading' && rankAgainButton}
+        {state.status !== 'loading' && state.status !== 'processing' && rankAgainButton}
         {rerankError && <span className="ai-menu-summary__rerank-error" role="alert">{rerankError}</span>}
       </div>
     );
@@ -84,7 +86,9 @@ export function AiMenuSummary({
 
       {state.stale && (
         <p className="ai-menu-summary__limited" role="status">
-          {state.sourceStatus === 'budget_limited'
+          {state.sourceStatus === 'processing'
+            ? 'Showing saved picks while the new ranking runs. You can refresh this page.'
+            : state.sourceStatus === 'budget_limited'
             ? 'Showing saved picks. New rankings paused because the shared AI allowance is fully reserved today.'
             : state.sourceStatus === 'attempt_limited' && state.limitReason === 'automatic_attempt_cap'
               ? 'Showing saved picks. Automatic ranking reached its daily cap; manual rankings have a separate allowance.'

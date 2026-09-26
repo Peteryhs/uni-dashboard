@@ -1,10 +1,12 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, BookOpen, Bot, CalendarDays, ExternalLink, LoaderCircle, Save } from 'lucide-react';
 import {
   fetchCourseSyllabus,
+  clearAiJob,
   previewCourseSyllabus,
   saveCourseSyllabus,
 } from '@/lib/api';
+import { useAiJob } from '@/hooks/use-ai-job';
 import type { CourseSyllabus, CourseSyllabusPreview } from '@/lib/contract';
 import './course-syllabus-panel.css';
 
@@ -70,6 +72,7 @@ export function CourseSyllabusPanel({
 }) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [saved, setSaved] = useState<CourseSyllabus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -82,6 +85,27 @@ export function CourseSyllabusPanel({
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const aiJob = useAiJob<CourseSyllabusPreview>('syllabus', course);
+  const handledJobId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const job = aiJob.data;
+    if (!job) return;
+    if (job.status === 'processing') {
+      setPreviewing('ai');
+      return;
+    }
+    setPreviewing(null);
+    if (!job.id || handledJobId.current === job.id) return;
+    handledJobId.current = job.id;
+    if (job.status === 'ready' && job.result) {
+      setPreview(job.result);
+      setImportOpen(true);
+      setActionError('');
+    } else if (job.status === 'failed') {
+      setActionError(job.error || 'Could not review this syllabus with AI.');
+    }
+  }, [aiJob.data]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -115,10 +139,15 @@ export function CourseSyllabusPanel({
         ...(year ? { year: Number(year) } : {}),
         use_ai: useAi,
       });
-      setPreview(result);
+      if ('status' in result) {
+        setSavedMessage('AI review is running in the background. You can refresh this page.');
+        await aiJob.refetch();
+      } else {
+        setPreview(result);
+        setPreviewing(null);
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Could not preview this syllabus.');
-    } finally {
       setPreviewing(null);
     }
   };
@@ -133,6 +162,8 @@ export function CourseSyllabusPanel({
       setSaved(result);
       setPreview(null);
       setText('');
+      setImportOpen(false);
+      try { await clearAiJob('syllabus', course); await aiJob.refetch(); } catch { /* The saved syllabus remains authoritative. */ }
       setSavedMessage(`Saved ${result.entries.length} entries for ${course}.`);
       onSaved?.(result);
     } catch (error) {
@@ -162,8 +193,8 @@ export function CourseSyllabusPanel({
       </div>}
       {!loading && !loadError && !saved && <p className="syllabus-state">No syllabus schedule is saved for this course yet.</p>}
 
-      <details className="syllabus-import">
-        <summary>{saved ? 'Replace syllabus schedule' : 'Add syllabus schedule'}</summary>
+      <details className="syllabus-import" open={importOpen} onToggle={(event) => setImportOpen(event.currentTarget.open)}>
+        <summary>{preview?.method === 'ai' ? 'AI review ready — open to save' : previewing === 'ai' ? 'AI review in progress' : saved ? 'Replace syllabus schedule' : 'Add syllabus schedule'}</summary>
         <div className="syllabus-import-body">
           <label htmlFor={`${panelId}-text`}>Paste syllabus or weekly schedule</label>
           <textarea id={`${panelId}-text`} maxLength={100000} rows={5} value={text} onChange={(event) => updateInput(() => setText(event.target.value))} placeholder={'Paste the dated or weekly course schedule. For example:\nWeek 1 | Introductory material | Chapter 1\nSep 25 | Quiz 2: covers chapters 1–2'} />

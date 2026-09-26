@@ -299,8 +299,17 @@ test('local relay manual rank route saves matching output for background recomme
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ tasteProfile: profile, model: profile.selectedAiModel, date: SERVICE_DATE, force: true }),
   });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).headline, 'Manual ranking saved.');
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).status, 'processing');
+
+  let job;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    job = await (await originalFetch(`${root}/v1/ai/jobs?kind=food&scope=${SERVICE_DATE}`)).json();
+    if (job.status !== 'processing') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(job.status, 'ready');
+  assert.equal(job.result.headline, 'Manual ranking saved.');
 
   const saved = await getFoodRecommendation(store, SERVICE_DATE);
   assert.equal(saved.status, 'ready');

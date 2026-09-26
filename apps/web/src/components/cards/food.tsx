@@ -29,7 +29,7 @@ import { Input } from '@/components/ui/input';
 import { mutedIfStale } from '@/components/freshness';
 import { migrateTasteProfile, usePreferences, type DietaryPreference, type TasteProfile } from '@/lib/preferences-store';
 import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned, FoodAiRecommendation } from '@/lib/contract';
-import { fetchFoodRecommendation, getFoodTasteProfile, rankFoodWithAi } from '@/lib/api';
+import { fetchFoodRecommendation, getFoodTasteProfile, requestFoodRanking } from '@/lib/api';
 import { dayOffset, dietLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
@@ -279,18 +279,15 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
       try {
         setAiLoading(true);
         setAiError(null);
-        const res = await rankFoodWithAi({
-          tasteProfile: preferences.tasteProfile,
-          model: currentModel,
-          date: d.service_date,
-          force,
-        });
-        setAiRec(res);
-        saveCachedAiRec(d.service_date, preferences.tasteProfile, currentModel, res);
-        lastKeyRef.current = key;
+        const job = await requestFoodRanking(d.service_date);
+        if (job.status === 'ready' && job.result) {
+          setAiRec(job.result);
+          saveCachedAiRec(d.service_date, preferences.tasteProfile, currentModel, job.result);
+          lastKeyRef.current = key;
+        }
+        setAiLoading(job.status === 'processing');
       } catch (err: unknown) {
         setAiError(err instanceof Error ? err.message : 'AI ranking unavailable');
-      } finally {
         setAiLoading(false);
       }
     },
@@ -320,6 +317,9 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
           saveCachedAiRec(d.service_date, preferences.tasteProfile, currentModel, result.recommendation);
           lastKeyRef.current = key;
           setAiError(null);
+          setAiLoading(result.ranking_job?.status === 'processing');
+        } else if (result.ranking_job?.status === 'failed') {
+          setAiError(result.ranking_job.error || 'Background ranking failed');
           setAiLoading(false);
         } else if (result.status === 'failed') {
           setAiError(result.error || 'Background ranking failed');
