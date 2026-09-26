@@ -277,3 +277,54 @@ test('ongoing exams stay ahead of lunch and all-day assessments never acquire mi
   assert.match(allDay.body, /no exact time/);
   assert.ok(!allDay.title.includes('Confirm'));
 });
+
+test('recommendation engine creates active task for description-derived due date and resolves conflicts', () => {
+  const data = syntheticDay();
+  const opensAt = at(DATE, '08:30');
+  const dueAt = at(DATE, '18:00'); // Due today at 6pm
+
+  data.calendar.days[0].events.push({
+    id: 'tut3-open',
+    category: 'deadline',
+    title: 'TUTORIAL ASSIGNMENT 3 - Available',
+    course: 'MATH 117',
+    starts_at: opensAt,
+    ends_at: opensAt,
+    due_at: dueAt,
+    all_day: false,
+    source_label: 'Waterloo LEARN',
+    source_id: 'uw-learn-ics',
+    links: [{ label: 'Open in Crowdmark', url: 'https://crowdmark.com/submit', kind: 'submit' }],
+  });
+
+  data.calendar.days[0].events.push({
+    id: 'tut3-due',
+    category: 'deadline',
+    title: 'MATH 117 - TUTORIAL ASSIGNMENT 3 - Due',
+    course: 'MATH 117',
+    starts_at: dueAt,
+    ends_at: dueAt,
+    all_day: false,
+    source_label: 'Waterloo LEARN',
+    source_id: 'uw-learn-ics',
+    links: [{ label: 'Open in Crowdmark', url: 'https://crowdmark.com/submit', kind: 'submit' }],
+  });
+
+  const feed = recommendationsFromData({ ...data, now: at(DATE, '10:00') });
+  const tutTasks = feed.tasks.large.filter(task => task.title.includes('TUTORIAL ASSIGNMENT 3'));
+
+  assert.equal(tutTasks.length, 1);
+  const task = tutTasks[0];
+  assert.equal(task.title, 'TUTORIAL ASSIGNMENT 3');
+  assert.equal(task.due_at, dueAt);
+  assert.equal(task.can_complete, true);
+  assert.equal(task.action.label, 'Open submission');
+
+  const completedFeed = recommendationsFromData({
+    ...data,
+    actions: { [task.id]: { action: 'done' } },
+    now: at(DATE, '10:00'),
+  });
+  assert.ok(!completedFeed.tasks.large.some(t => t.id === task.id));
+});
+

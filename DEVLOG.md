@@ -8,6 +8,21 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-26 — Dynamic AI model discovery, course details, and calendar refinements
+
+Cloudflare Workers AI models are now discovered dynamically instead of relying on a hardcoded list. Both the Node.js relay and Cloudflare Worker query `GET https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search?task=Text%20Generation` with credentials, filter out paid-only models (`require_workers_paid: true`), raw LoRA fine-tuning adapters, and moderation classifiers, and sort active free models by cost per token ascending. The cheapest free models (IBM Granite 4.0 Micro at $0.02/M, Meta Llama 3.2 1B at $0.03/M, 3B at $0.05/M, Qwen3 MoE at $0.05/M, and GLM-4.7 Flash at $0.06/M) appear at the top alongside the recommended Google Gemma 4 26B-A4B MoE. Discovered models and calculated neuron rates are cached for 12 hours and registered into `ai-budget.mjs`, falling back cleanly to curated models if offline or unauthenticated. The Settings Dining tab loads these models dynamically into an unboxed dropdown with pricing/efficiency badges.
+
+In the upcoming task details panel (`RecommendationDetail`), the course code (e.g. `ECE 190`, `MATH 117`) is now displayed directly below the task title, restoring missing course visibility and mirroring the typography hierarchy of the hero task card.
+
+The unified calendar defaults to a 3-day compact preview with a centered "Show 7 days" action button. Weekend days (Saturday & Sunday) compress into a single grouped row when carrying fewer than 5 events, formatted with a stacked month and date range (`September\n26 – 27 · Weekend · X events`). Closing animations (`detail-exit`) were added across all expandable cards to prevent abrupt disappearance.
+
+Assessment due dates embedded inside Crowdmark and LEARN event descriptions are now parsed and synthesized as confirmed deadline events in the calendar, deduplicating duplicate available and due entries.
+
+The Settings modal was redesigned following anti-slop guidelines: container boxes and borders were removed in favor of clean whitespace and typographic hierarchy, bullet dots were removed from AI headings, and the About section was updated with streamlined acknowledgements and large version display.
+
+Verification: 242/242 tests passed in `node --test` (including new dynamic model discovery, filtering, and budgeting tests in `test/ai-models.test.mjs`). `npm run web:typecheck` passed with zero errors. Visual verification via browser subagent confirmed dynamic model dropdown hydration and course code rendering in task details.
+
+---
 ## 2026-09-25 — AI work survives page refresh
 
 Dining Rank again, office-hours extraction, and optional AI syllabus review now create server-owned jobs. The browser receives a job ID immediately and reads progress and results from persistent storage, so closing or refreshing the page does not cancel the model call or lose its draft. The Worker runs each job after the response and the scheduled tick can retry a job left processing by an interrupted Worker. The local relay has the same recovery path. Automatic dining and alert AI already run on the server.

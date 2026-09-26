@@ -201,6 +201,15 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
   return getJson<HealthResponse>('/v1/health/sources', signal);
 }
 
+export interface HealthzResponse {
+  ok: boolean;
+  uptime_s: number;
+}
+
+export async function fetchHealthz(signal?: AbortSignal): Promise<HealthzResponse> {
+  return getJson<HealthzResponse>('/healthz', signal);
+}
+
 /** Ask the relay to poll now. Used by the manual refresh control. */
 export async function triggerPoll(sourceId?: string): Promise<void> {
   const qs = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';

@@ -175,6 +175,15 @@ export function DueSoonDetail({
           )}
         </div>
 
+        {item.due_at && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200">
+            <ClipboardCheck className="size-3.5 text-amber-400 shrink-0" />
+            <span>
+              <strong className="font-semibold text-amber-300">Due:</strong> {formatShortDay(item.due_at)} at {formatTime(item.due_at)} (inferred from description)
+            </span>
+          </div>
+        )}
+
         {/* The links the feed carried, best first. This is what a click on the real calendar gives. */}
         {links.length > 0 ? (
           <div className="flex flex-wrap gap-2">

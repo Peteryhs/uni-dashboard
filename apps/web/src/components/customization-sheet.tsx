@@ -3,18 +3,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Sliders,
   Star,
-  Utensils,
   RotateCcw,
   KeyRound,
   Check,
   AlertCircle,
   RefreshCw,
-  Lock,
   Calendar,
-  Clock,
-  Cpu,
   Bot,
   GraduationCap,
+  X,
+  Info,
+  ChevronDown,
 } from 'lucide-react';
 import {
   Sheet,
@@ -36,9 +35,11 @@ import {
   updateCredentials,
   triggerPoll,
   fetchAiUsage,
+  fetchAiModels,
   getFoodTasteProfile,
   saveFoodTasteProfile,
   type AiUsageStatus,
+  type AiModelInfo,
   type CredentialsStatus,
 } from '@/lib/api';
 import {
@@ -53,6 +54,7 @@ import { cn } from '@/lib/utils';
 import { ScheduleTab } from './schedule-tab';
 import { CourseSettingsTab } from './course-settings-tab';
 import { SourcesPanel } from './sources-panel';
+import { useHealth, useHealthz } from '@/hooks/use-dashboard';
 import type { CalendarData } from '@/lib/contract';
 import './customization-sheet.css';
 
@@ -65,26 +67,51 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'gluten', label: 'Gluten-free' },
 ];
 
-const AI_MODEL_OPTIONS = [
+const AI_MODEL_OPTIONS: AiModelInfo[] = [
   {
     id: '@cf/google/gemma-4-26b-a4b-it',
     name: 'Google Gemma 4 (26B-A4B)',
+    tag: 'Recommended · 4B Active MoE',
   },
   {
-    id: '@cf/zai-org/glm-4.7-flash',
-    name: 'GLM-4.7 Flash',
+    id: '@cf/ibm-granite/granite-4.0-h-micro',
+    name: 'IBM Granite 4.0 Micro',
+    tag: 'Cheapest Free · $0.02/M',
   },
   {
-    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
-    name: 'Meta Llama 4 Scout (17B)',
+    id: '@cf/meta/llama-3.2-1b-instruct',
+    name: 'Meta Llama 3.2 (1B)',
+    tag: 'Ultra-Lightweight · $0.03/M',
   },
   {
-    id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
-    name: 'DeepSeek-R1 Distill (32B)',
+    id: '@cf/meta/llama-3.2-3b-instruct',
+    name: 'Meta Llama 3.2 (3B)',
+    tag: 'Fast & Cheap · $0.05/M',
   },
   {
     id: '@cf/qwen/qwen3-30b-a3b-fp8',
     name: 'Qwen3 (30B-A3B)',
+    tag: 'Dense & MoE · $0.05/M',
+  },
+  {
+    id: '@cf/meta/llama-3.1-8b-instruct-fp8',
+    name: 'Meta Llama 3.1 (8B)',
+    tag: 'Standard 8B · Free Tier',
+  },
+  {
+    id: '@cf/zai-org/glm-4.7-flash',
+    name: 'GLM-4.7 Flash',
+    tag: 'Ultra-Fast Flash · $0.06/M',
+  },
+  {
+    id: '@cf/meta/llama-4-scout-17b-16e-instruct',
+    name: 'Meta Llama 4 Scout (17B)',
+    tag: '16-Expert MoE',
+  },
+  {
+    id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
+    name: 'DeepSeek-R1 Distill (32B)',
+    tag: 'Reasoning Specialist',
   },
 ];
 
@@ -122,13 +149,28 @@ export function CustomizationSheet({
   resetPreferences: () => void;
 }) {
   const { undismissTask } = usePreferences();
-  const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule'>('taste');
+  const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule' | 'about'>('taste');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
   const [aiUsage, setAiUsage] = useState<AiUsageStatus | null>(null);
   const [savingTasteProfile, setSavingTasteProfile] = useState(false);
   const [tasteProfileSyncReady, setTasteProfileSyncReady] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [aiModels, setAiModels] = useState<AiModelInfo[]>(AI_MODEL_OPTIONS);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchAiModels()
+      .then((res) => {
+        if (isMounted && res?.models?.length) {
+          setAiModels(res.models);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   const relayTasteProfile = {
     bio: preferences.tasteProfile.bio,
     spiceLevel: preferences.tasteProfile.spiceLevel,
@@ -145,6 +187,7 @@ export function CustomizationSheet({
   const tasteSaveQueueRunning = useRef(false);
   const tasteSaveTimer = useRef<number | null>(null);
   const tasteSaveRetryTimer = useRef<number | null>(null);
+  const modelPickerRef = useRef<HTMLDetailsElement>(null);
   const tasteSaveRetry = useRef({ key: '', count: 0 });
   const relayTasteProfileKey = JSON.stringify(relayTasteProfile);
   const tasteProfileIsSaved = Boolean(relayTasteProfileKey && savedTasteProfileKey === relayTasteProfileKey);
@@ -351,14 +394,16 @@ export function CustomizationSheet({
         <SheetHeader className="settings-heading p-0 text-left">
           <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
         </SheetHeader>
-        <SheetClose className="settings-close" aria-label="Close settings">Close</SheetClose>
+        <SheetClose className="settings-close close-detail" aria-label="Close settings">
+          <X size={17} />
+        </SheetClose>
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule')}
+          onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule' | 'about')}
           className="settings-tabs-wrap mt-5"
         >
-          <TabsList className="settings-tabs grid h-10 w-full grid-cols-4 bg-secondary/50 p-1 border border-border/60 rounded-lg">
+          <TabsList className="settings-tabs grid h-10 w-full grid-cols-5 bg-secondary/50 p-1 border border-border/60 rounded-lg">
             <TabsTrigger
               value="taste"
               className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
@@ -383,99 +428,127 @@ export function CustomizationSheet({
             >
               <KeyRound className="size-3.5 mr-1" /> Connections
             </TabsTrigger>
+            <TabsTrigger
+              value="about"
+              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+            >
+              <Info className="size-3.5 mr-1" /> About
+            </TabsTrigger>
           </TabsList>
 
           {/* Tab 1: AI Taste Profile */}
-          <TabsContent value="taste" className="settings-panel mt-5 space-y-4">
-
-            {/* One freeform prompt keeps the dining profile in the user’s own words. */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="taste-bio" className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
-                  <Bot className="size-3.5 text-[#3478eb]" /> What you like
-                </Label>
+          <TabsContent value="taste" className="settings-panel space-y-6 pt-5">
+            {/* Section 1: AI Taste Profile */}
+            <section className="space-y-3">
+              <div className="space-y-0.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">AI Taste Profile</h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  What you like: personal preferences used by Workers AI to score cafeteria dishes and rank dining halls.
+                </p>
               </div>
+
               <Textarea
                 id="taste-bio"
                 value={preferences.tasteProfile.bio}
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateTasteProfile({ bio: e.target.value })}
                 placeholder="Spicy food, chicken, noodle bowls; no celery or pork"
-                className="settings-input mt-2 min-h-20 text-xs bg-secondary/30 border-border/80 text-foreground placeholder:text-zinc-500 focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:outline-none resize-none"
+                className="mt-1 min-h-20 text-xs bg-white/[0.04] border border-white/10 rounded-md text-zinc-200 placeholder:text-zinc-500 focus-visible:ring-1 focus-visible:ring-[#3478eb] focus-visible:outline-none resize-none"
               />
-            </div>
 
-            {/* Workers AI Engine Selection */}
-            <details className="settings-disclosure settings-model-picker">
-              <summary className="settings-model-summary">
-                <span className="flex items-center gap-1.5 font-medium"><Cpu className="size-3.5 text-[#3478eb]" /> AI model</span>
-                <span className="settings-model-current">{AI_MODEL_OPTIONS.find((model) => model.id === preferences.tasteProfile.selectedAiModel)?.name ?? 'Selected model'}</span>
-              </summary>
-              <div className="settings-model-options">
-                {AI_MODEL_OPTIONS.map((m) => {
-                  const isSelected = preferences.tasteProfile.selectedAiModel === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => updateTasteProfile({ selectedAiModel: m.id })}
-                      className={cn(
-                        'settings-model-option w-full flex items-center justify-between rounded-md p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478eb] focus-visible:ring-offset-1 focus-visible:ring-offset-background',
-                        isSelected
-                        ? 'is-selected text-[#8dbaff]'
-                          : 'text-zinc-400 hover:text-foreground',
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={cn('size-2 rounded-full', isSelected ? 'bg-white' : 'bg-zinc-600')} />
-                        <span className="text-xs font-medium text-foreground">{m.name}</span>
-                      </div>
-                      {isSelected && <Check className="size-3.5 text-[#78adff]" aria-label="Selected" />}
-                    </button>
-                  );
-                })}
+              {/* Workers AI Engine Selection */}
+              <details ref={modelPickerRef} className="settings-disclosure settings-model-picker group">
+                <summary className="settings-model-summary">
+                  <span className="text-xs font-medium text-[#78adff]">AI model</span>
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="settings-model-current text-xs text-zinc-300">
+                      {aiModels.find((model) => model.id === preferences.tasteProfile.selectedAiModel)?.name ??
+                        AI_MODEL_OPTIONS.find((model) => model.id === preferences.tasteProfile.selectedAiModel)?.name ??
+                        'Selected model'}
+                    </span>
+                    <ChevronDown className="size-3.5 text-[#78adff] transition-transform duration-200 group-open:rotate-180 shrink-0" />
+                  </div>
+                </summary>
+                <div className="settings-model-options">
+                  {aiModels.map((m) => {
+                    const isSelected = preferences.tasteProfile.selectedAiModel === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          updateTasteProfile({ selectedAiModel: m.id });
+                          if (modelPickerRef.current) modelPickerRef.current.open = false;
+                        }}
+                        className={cn(
+                          'settings-model-option w-full flex items-center justify-between rounded-md p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#3478eb]',
+                          isSelected ? 'is-selected text-[#8dbaff]' : 'text-zinc-400 hover:text-foreground',
+                        )}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={cn('size-2 rounded-full shrink-0', isSelected ? 'bg-white' : 'bg-zinc-600')} />
+                          <div className="flex flex-col min-w-0">
+                            <span className="settings-model-name text-xs font-medium text-foreground truncate">{m.name}</span>
+                            {m.tag && <span className="text-[10px] text-zinc-400 truncate">{m.tag}</span>}
+                          </div>
+                        </div>
+                        {isSelected && <Check className="size-3.5 text-[#78adff] shrink-0 ml-2" aria-label="Selected" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-500 pt-0.5">
+                <span>
+                  {savingTasteProfile ? 'Saving profile…' : tasteProfileIsSaved ? 'Saved automatically' : 'Changes save automatically'}
+                </span>
+                {aiUsage && (
+                  <span>
+                    Shared AI allowance: {aiUsage.remaining_neurons.toLocaleString()} neurons
+                  </span>
+                )}
               </div>
-            </details>
+              {tasteProfileError && (
+                <p className="text-xs text-rose-300" role="alert">
+                  {tasteProfileError} Edit the profile to retry.
+                </p>
+              )}
+            </section>
 
-            <div className="settings-profile-save" aria-live="polite">
-              <span className="settings-profile-status">
-                {savingTasteProfile ? 'Saving profile…' : tasteProfileIsSaved ? 'Saved automatically' : 'Changes save automatically'}
-              </span>
-              {tasteProfileError && <p className="settings-profile-message settings-profile-message--error" role="alert">{tasteProfileError} Edit the profile to retry.</p>}
-            </div>
-
-            {aiUsage && <p className="settings-ai-usage">Shared AI allowance: {aiUsage.remaining_neurons.toLocaleString()} of {aiUsage.budget_neurons.toLocaleString()} neurons remaining <span>(relay reservation)</span></p>}
-
-            <div>
-              <Label className="flex items-center gap-2 text-xs font-medium text-zinc-200">
-                <Utensils className="size-3.5" /> Menu filter
-              </Label>
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {/* Section 2: Menu Filter */}
+            <section className="space-y-3">
+              <div className="space-y-0.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Menu Filter</h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">Filter visible food items across campus dining halls.</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
                 {DIETARY_OPTIONS.map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
                     aria-pressed={preferences.dietaryFilter === opt.id}
                     onClick={() => setDietaryFilter(opt.id)}
-                    className={`settings-chip rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-live ${
                       preferences.dietaryFilter === opt.id
-                        ? 'border border-white/30 bg-white/10 text-foreground hover:bg-white/15'
-                        : 'border border-border/60 bg-secondary/30 text-zinc-300 hover:border-white/20 hover:text-foreground'
+                        ? 'border border-white/30 bg-white/10 text-foreground'
+                        : 'border border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/20 hover:text-foreground'
                     }`}
                   >
                     {opt.label}
                   </button>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Taste History & Starred Dishes */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-2 text-xs font-medium text-zinc-200">
-                  <Star className="size-3.5 text-zinc-400" /> Favorites
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="fav-toggle" className="text-xs text-zinc-300 cursor-pointer">
+            {/* Section 3: Favorites */}
+            <section className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-0.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Favorites</h3>
+                  <p className="text-xs text-zinc-400 leading-relaxed">Starred dishes prioritize corresponding cafeteria stations.</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                  <Label htmlFor="fav-toggle" className="text-xs text-zinc-400 cursor-pointer">
                     Only favorites
                   </Label>
                   <Switch
@@ -487,7 +560,7 @@ export function CustomizationSheet({
               </div>
 
               {preferences.favoriteDishes.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
                   {preferences.favoriteDishes.map((dish) => (
                     <Badge
                       key={dish}
@@ -499,7 +572,7 @@ export function CustomizationSheet({
                       <button
                         type="button"
                         onClick={() => toggleFavoriteDish(dish)}
-                        className="ml-1 rounded-md p-0.5 text-zinc-400 hover:bg-amber/20 hover:text-amber-foreground focus-visible:ring-2 focus-visible:ring-amber focus-visible:outline-none"
+                        className="ml-1 rounded p-0.5 text-zinc-400 hover:bg-amber/20 hover:text-amber-foreground"
                         title="Remove from favorites"
                       >
                         Remove
@@ -508,13 +581,12 @@ export function CustomizationSheet({
                   ))}
                 </div>
               ) : (
-                <p className="mt-3 text-xs text-zinc-400">No favorites yet.</p>
+                <p className="text-xs text-zinc-500">No favorites yet.</p>
               )}
-            </div>
-
+            </section>
           </TabsContent>
 
-          <TabsContent value="courses" className="settings-panel settings-courses mt-5">
+          <TabsContent value="courses" className="settings-panel settings-courses space-y-6 pt-5">
             <CourseSettingsTab
               data={courseData}
               pending={courseDataPending}
@@ -525,43 +597,61 @@ export function CustomizationSheet({
             />
           </TabsContent>
 
-          <TabsContent value="credentials" className="settings-panel mt-5 space-y-4">
+          <TabsContent value="credentials" className="settings-panel space-y-6 pt-5">
             <CredentialsManager />
-            <div className="settings-subsection">
+            <div className="space-y-3">
+              <div className="space-y-0.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                  Relay Data Sources
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Real-time feed scraper health, latency, and circuit status.
+                </p>
+              </div>
               <SourceStatus />
             </div>
-            <details className="settings-disclosure settings-advanced">
-              <summary className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-                <span className="flex items-center gap-2 font-medium"><Sliders className="size-3.5" /> Advanced</span>
-                <span className="text-zinc-500">Reset preferences</span>
-              </summary>
-              <div className="mt-3 space-y-2">
-                <p className="text-xs leading-relaxed text-zinc-400">Reset local settings and the saved dining profile.</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleResetPreferences()}
-                  className="h-8 w-full justify-start gap-2 text-xs text-zinc-300 hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <RotateCcw className="size-3.5" /> Reset all preferences
-                </Button>
-                {resetStatus && (
-                  <p className={cn('text-xs', resetStatus.type === 'error' ? 'text-rose-300' : 'text-emerald-300')} role={resetStatus.type === 'error' ? 'alert' : 'status'}>
-                    {resetStatus.message}
-                  </p>
-                )}
+            <div className="space-y-3">
+              <div className="space-y-0.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                  Reset Preferences
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Reset local settings, saved courses, and dining taste profile.
+                </p>
               </div>
-            </details>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleResetPreferences()}
+                className="h-8 w-full justify-start gap-2 text-xs text-zinc-400 hover:bg-destructive/10 hover:text-destructive"
+              >
+                <RotateCcw className="size-3.5" /> Reset all preferences
+              </Button>
+              {resetStatus && (
+                <p className={cn('text-xs', resetStatus.type === 'error' ? 'text-rose-300' : 'text-emerald-300')} role={resetStatus.type === 'error' ? 'alert' : 'status'}>
+                  {resetStatus.message}
+                </p>
+              )}
+            </div>
           </TabsContent>
 
-          <TabsContent value="schedule" className="settings-panel settings-schedule mt-5 space-y-4">
+          <TabsContent value="schedule" className="settings-panel settings-schedule space-y-6 pt-5">
             <ScheduleTab />
 
-            <section className="settings-subsection">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-xs font-medium text-zinc-200">Hidden schedule items</h3>
-                <span className="text-[11px] text-zinc-400">{preferences.dismissedTasks.length}</span>
+            <section className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-0.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                    Hidden Schedule Items
+                  </h3>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Tasks and timeline events manually dismissed from Today.
+                  </p>
+                </div>
+                <span className="text-[11px] font-mono text-zinc-500 shrink-0 pt-0.5">
+                  {preferences.dismissedTasks.length} {preferences.dismissedTasks.length === 1 ? 'item' : 'items'}
+                </span>
               </div>
               {preferences.dismissedTasks.length > 0 ? (
                 <div className="mt-2.5 max-h-40 space-y-1.5 overflow-y-auto pr-1">
@@ -574,7 +664,7 @@ export function CustomizationSheet({
                         variant="ghost"
                         size="sm"
                         onClick={() => undismissTask(id)}
-                        className="h-7 shrink-0 gap-1 px-2 text-[10px] text-zinc-300 hover:bg-white/5 hover:text-foreground"
+                        className="h-7 shrink-0 gap-1 px-2 text-[10px] text-zinc-400 hover:bg-white/5 hover:text-foreground"
                       >
                         <RotateCcw className="size-2.5" /> Restore
                       </Button>
@@ -582,9 +672,13 @@ export function CustomizationSheet({
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 text-xs text-zinc-400">No hidden items.</p>
+                <p className="text-xs text-zinc-500">No hidden items.</p>
               )}
             </section>
+          </TabsContent>
+
+          <TabsContent value="about" className="settings-panel settings-about space-y-6 pt-5">
+            <AboutTab />
           </TabsContent>
         </Tabs>
       </SheetContent>
@@ -702,101 +796,82 @@ function CredentialsManager() {
         </div>
       )}
 
-      <form onSubmit={handleSave} className="space-y-3">
-        <div className="settings-connection">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Calendar className="size-4 text-live" />
-              <span className="text-xs font-medium text-foreground">Calendar feed</span>
+      <form onSubmit={handleSave} className="space-y-5">
+        {/* Section 1: Calendar Feeds */}
+        <section className="space-y-3">
+          <div className="space-y-0.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+              Calendar & Timetable Feeds
+            </h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Connect your University of Waterloo timetable and deliverables.
+            </p>
+          </div>
+
+          <div className="space-y-3 pt-1">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="portal-url" className="text-xs text-zinc-300 font-medium">
+                  Google Calendar or Portal URL
+                </Label>
+                {status?.portal.configured ? (
+                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
+                ) : (
+                  <span className="font-mono text-[10px] text-amber">Missing</span>
+                )}
+              </div>
+              <Input
+                id="portal-url"
+                type="text"
+                value={portalUrl}
+                onChange={(e) => setPortalUrl(e.target.value)}
+                placeholder={
+                  status?.portal.configured
+                    ? 'Configured (paste new URL to update)...'
+                    : 'https://calendar.google.com/calendar/ical/.../basic.ics'
+                }
+                className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
+              />
             </div>
-            {status?.portal.configured ? (
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]"
-              >
-                Configured
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="border-amber/40 bg-amber/10 text-amber-foreground text-[10px]"
-              >
-                Missing
-              </Badge>
-            )}
-          </div>
 
-          <div>
-            <Label htmlFor="portal-url" className="text-xs text-zinc-400">
-              Google Calendar or Portal URL
-            </Label>
-            <Input
-              id="portal-url"
-              type="text"
-              value={portalUrl}
-              onChange={(e) => setPortalUrl(e.target.value)}
-              placeholder={
-                status?.portal.configured
-                  ? 'Configured (paste new URL to update)...'
-                  : 'https://calendar.google.com/calendar/ical/.../basic.ics'
-              }
-              className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="settings-connection">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Clock className="size-4 text-cyan-400" />
-              <span className="text-xs font-medium text-foreground">LEARN feed</span>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="learn-url" className="text-xs text-zinc-300 font-medium">
+                  LEARN Deliverables Feed URL
+                </Label>
+                {status?.learn.configured ? (
+                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
+                ) : (
+                  <span className="font-mono text-[10px] text-amber">Missing</span>
+                )}
+              </div>
+              <Input
+                id="learn-url"
+                type="text"
+                value={learnUrl}
+                onChange={(e) => setLearnUrl(e.target.value)}
+                placeholder={
+                  status?.learn.configured
+                    ? 'Configured (paste new URL to update)...'
+                    : 'https://learn.uwaterloo.ca/d2l/le/calendar/feed/user/feed.ics?token=...'
+                }
+                className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
+              />
             </div>
-            {status?.learn.configured ? (
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[10px]"
-              >
-                Configured
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="border-amber/40 bg-amber/10 text-amber-foreground text-[10px]"
-              >
-                Missing
-              </Badge>
-            )}
+          </div>
+        </section>
+
+        {/* Section 2: Workers AI Connection */}
+        <section className="space-y-3 pt-1">
+          <div className="space-y-0.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Workers AI Connection</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Optional Cloudflare API credentials for serverless model inference.
+            </p>
           </div>
 
-          <div>
-            <Label htmlFor="learn-url" className="text-xs text-zinc-400">
-              LEARN URL
-            </Label>
-            <Input
-              id="learn-url"
-              type="text"
-              value={learnUrl}
-              onChange={(e) => setLearnUrl(e.target.value)}
-              placeholder={
-                status?.learn.configured
-                  ? 'Configured (paste new URL to update)...'
-                  : 'https://learn.uwaterloo.ca/d2l/le/calendar/feed/user/feed.ics?token=...'
-              }
-              className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            />
-          </div>
-        </div>
-
-        <details className="settings-connection settings-disclosure">
-          <summary className="flex items-center justify-between gap-2 text-xs text-zinc-300">
-            <span className="flex items-center gap-2 font-medium"><Bot className="size-4 text-[#3478eb]" /> AI service</span>
-            <span className={status?.cloudflare?.configured ? 'text-emerald-300' : 'text-zinc-400'}>
-              {status?.cloudflare?.configured ? 'Connected' : 'Optional'}
-            </span>
-          </summary>
-
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            <div className="space-y-1">
               <Label htmlFor="cf-account" className="text-[11px] text-zinc-400">
                 Account ID
               </Label>
@@ -806,12 +881,12 @@ function CredentialsManager() {
                 value={cfAccountId}
                 onChange={(e) => setCfAccountId(e.target.value)}
                 placeholder={status?.cloudflare?.account_id || 'Account ID...'}
-                className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
               />
             </div>
-            <div>
+            <div className="space-y-1">
               <Label htmlFor="cf-token" className="text-[11px] text-zinc-400">
-                API token
+                API Token
               </Label>
               <Input
                 id="cf-token"
@@ -819,26 +894,24 @@ function CredentialsManager() {
                 value={cfApiToken}
                 onChange={(e) => setCfApiToken(e.target.value)}
                 placeholder={status?.cloudflare?.configured ? '••••••••••••••••' : 'API Token...'}
-                className="mt-1 h-8 text-xs bg-secondary/40 border-border/80 text-foreground font-mono focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+                className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
               />
             </div>
           </div>
-        </details>
+        </section>
 
         {/* Submit button */}
         <Button
           type="submit"
           disabled={saving || (!portalUrl.trim() && !learnUrl.trim() && !cfAccountId.trim() && !cfApiToken.trim())}
-          className="w-full h-9 gap-2 text-xs font-medium bg-zinc-100 text-zinc-950 hover:bg-white focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+          className="w-full h-8 gap-2 text-xs font-medium bg-zinc-100 text-zinc-950 hover:bg-white focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
         >
           {saving ? (
             <>
               <RefreshCw className="size-3.5 animate-spin" /> Saving…
             </>
           ) : (
-            <>
-              <Lock className="size-3.5" /> Save and sync
-            </>
+            'Save connections'
           )}
         </Button>
       </form>
@@ -871,3 +944,166 @@ function SourceStatus() {
     </div>
   );
 }
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return `${hours}h ${remMins}m`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return `${days}d ${remHours}h`;
+}
+
+function AboutTab() {
+  const healthz = useHealthz(true);
+  const health = useHealth(true);
+
+  const uptimeStr = healthz.data?.uptime_s != null ? formatUptime(healthz.data.uptime_s) : null;
+  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const runtimeName = isLocal ? 'Local Relay Engine (Node)' : 'Cloudflare Workers (Edge)';
+  const hostEndpoint = typeof window !== 'undefined' ? window.location.host : 'localhost:5173';
+
+  const sources = health.data?.sources ?? [];
+  const readySources = sources.filter((s) => s.ready && (!s.last_run || s.last_run.outcome === 'ok')).length;
+  const totalSources = sources.length;
+  const snapshotCount = health.data?.snapshots ?? 0;
+  const isConnected = Boolean(healthz.data?.ok);
+
+  return (
+    <div className="settings-about space-y-6">
+      {/* App Identity & Creator */}
+      <div className="settings-about-hero">
+        <div className="settings-about-title-row">
+          <span className="settings-about-title">Uni Dashboard</span>
+          <span className="settings-about-version">v0.1.0</span>
+        </div>
+        <p className="settings-about-tagline">
+          Because the best enggering school in Canada can't build a proper portal. A centralized unidashboard organzing all of your caleners, deadlines and nesseties for uni life.
+        </p>
+        <div className="settings-about-meta">
+          <span>
+            Created by <strong className="font-medium text-zinc-300">Peter</strong> (<a href="https://github.com/Peteryhs" target="_blank" rel="noreferrer">Peteryhs</a>)
+          </span>
+          <span>·</span>
+          <a
+            href="https://github.com/Peteryhs/uni-dashboard"
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono"
+          >
+            github.com/Peteryhs/uni-dashboard
+          </a>
+        </div>
+      </div>
+
+      {/* Instance Telemetry */}
+      <div>
+        <div className="settings-about-section-header">
+          <h3 className="settings-about-section-title">Instance Status</h3>
+          <span className="settings-about-status-indicator">
+            <span className={cn('settings-about-status-dot', !isConnected && 'is-offline')} />
+            {isConnected ? 'Operational' : (healthz.isLoading ? 'Checking…' : 'Unreachable')}
+          </span>
+        </div>
+
+        <div className="settings-about-grid">
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Runtime Target</span>
+            <span className="settings-about-metric-value" title={runtimeName}>{runtimeName}</span>
+          </div>
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Relay Uptime</span>
+            <span className="settings-about-metric-value settings-about-metric-mono">{uptimeStr ?? (healthz.isLoading ? 'Checking…' : 'Unavailable')}</span>
+          </div>
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Feed Health</span>
+            <span className="settings-about-metric-value settings-about-metric-mono">
+              {totalSources > 0 ? `${readySources} / ${totalSources} nominal` : 'Evaluating…'}
+            </span>
+          </div>
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Indexed Snapshots</span>
+            <span className="settings-about-metric-value settings-about-metric-mono">
+              {snapshotCount > 0 ? `${snapshotCount.toLocaleString()} stored` : '0 stored'}
+            </span>
+          </div>
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Host Endpoint</span>
+            <span className="settings-about-metric-value settings-about-metric-mono" title={hostEndpoint}>
+              {hostEndpoint}
+            </span>
+          </div>
+          <div className="settings-about-metric">
+            <span className="settings-about-metric-label">Campus Timezone</span>
+            <span className="settings-about-metric-value settings-about-metric-mono">America/Toronto (EDT)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Compressed Acknowledgements & Sources */}
+      <div>
+        <div className="settings-about-section-header">
+          <h3 className="settings-about-section-title">Acknowledgements & Sources</h3>
+        </div>
+        <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
+          Built on official University of Waterloo campus systems and open telemetry feeds:
+        </p>
+        <div className="settings-about-sources">
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">Waterloo LEARN (D2L)</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">Schedule & deliverables</span>
+            </div>
+            <span className="settings-about-source-tag">iCal / API</span>
+          </div>
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">UW Portal & Open Data</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">Timetable & locations</span>
+            </div>
+            <span className="settings-about-source-tag">iCal / REST</span>
+          </div>
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">UW Food Services</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">Cafeteria daily menus</span>
+            </div>
+            <span className="settings-about-source-tag">Daily HTML</span>
+          </div>
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">UW IST Campus Status</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">IT infrastructure health</span>
+            </div>
+            <span className="settings-about-source-tag">Status API</span>
+          </div>
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">Open-Meteo</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">Campus weather models</span>
+            </div>
+            <span className="settings-about-source-tag">Forecast API</span>
+          </div>
+          <div className="settings-about-source-row">
+            <div className="settings-about-source-left">
+              <span className="settings-about-source-name">Cloudflare</span>
+              <span className="text-zinc-500">·</span>
+              <span className="settings-about-source-desc">Workers, D1 & Workers AI</span>
+            </div>
+            <span className="settings-about-source-tag">Edge Platform</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

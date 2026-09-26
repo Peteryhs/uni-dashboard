@@ -548,14 +548,13 @@ export function ScheduleTab() {
       </div>
 
       {/* SECTION 1: ADD NEW */}
-      <div className="settings-office-hours-create space-y-3.5">
-        <div className="settings-ai-heading flex items-center gap-2">
-          <Bot className="size-4 text-[#78adff]" />
-          <h3 className="text-sm font-semibold text-foreground">Add Office Hours with AI</h3>
+      <div className="space-y-3">
+        <div className="space-y-0.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Add Office Hours with AI</h3>
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Paste text from a course announcement, syllabus, or Piazza post. Workers AI extracts recurring slots into a reviewable draft.
+          </p>
         </div>
-        <p className="text-xs text-zinc-400">
-          Paste text from a course announcement, syllabus, or Piazza post. The AI extracts recurring slots into a reviewable draft.
-        </p>
 
         <div className="space-y-3">
           <div>
@@ -675,7 +674,7 @@ export function ScheduleTab() {
           )}
 
           {draft.rules.length === 0 ? (
-            <div className="p-4 text-center rounded-lg border border-dashed border-border/80 bg-background/40 text-xs text-zinc-400">
+            <div className="py-2.5 text-xs text-zinc-400">
               No recurring office hours detected in this text. If appointment-only, no schedule was created.
             </div>
           ) : (
@@ -696,12 +695,12 @@ export function ScheduleTab() {
 
               {/* Concrete Occurrences Preview */}
               {previewOccurrences.length > 0 && (
-                <div className="mt-3 rounded-lg border border-border/50 bg-background/40 p-3 space-y-2">
+                <div className="mt-3 space-y-2 pt-2">
                   <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Calendar className="size-3.5 text-live" />
                     First Concrete Occurrences Preview
                   </h4>
-                  <div className="divide-y divide-border/40 text-xs">
+                  <div className="space-y-1.5 text-xs">
                     {previewOccurrences.map((occ, idx) => (
                       <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 truncate">
@@ -724,7 +723,7 @@ export function ScheduleTab() {
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-2 border-t border-border/40">
+          <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
               variant="outline"
@@ -772,14 +771,18 @@ export function ScheduleTab() {
 
       {/* SECTION 3: SAVED ENTRIES */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Calendar className="size-4 text-zinc-300" />
-            <h3 className="text-sm font-semibold text-foreground">Saved Office Hours</h3>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+              Active Office Hours
+            </h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Saved recurring timetable slots and custom tutorial schedules.
+            </p>
           </div>
-          <Badge variant="secondary" className="text-xs">
-            {config.rules.length} {config.rules.length === 1 ? 'Rule' : 'Rules'} Active
-          </Badge>
+          <span className="text-[11px] font-mono text-zinc-500 shrink-0 pt-0.5">
+            {config.rules.length} {config.rules.length === 1 ? 'rule' : 'rules'}
+          </span>
         </div>
 
         {configError && (

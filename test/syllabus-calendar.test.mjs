@@ -93,3 +93,65 @@ test('calendar cap and truncated flag include generated syllabus events', async 
   assert.equal(result.truncated, true);
   assert.equal(result.days[0].events[0].source_id, 'syllabus');
 });
+
+test('buildCalendar populates due_at on opens events, synthesizes deadline event, and deduplicates explicit deadlines', async () => {
+  const store = new SqliteStore(':memory:');
+  const calNow = Date.parse('2026-09-25T12:00:00Z');
+  const openTime = Date.parse('2026-09-25T12:30:00Z');
+  const expectedDue = Date.parse('2026-10-02T22:00:00Z');
+
+  store.upsertRows('timeline_event', [
+    {
+      observed_at: calNow,
+      valid_until: calNow + 900_000,
+      source_id: 'uw-learn-ics',
+      external_id: 'tut3-open',
+      kind: 'deadline',
+      title: 'TUTORIAL ASSIGNMENT 3 - Available',
+      location: 'MATH 117 - Fall 2026',
+      description: '8:30amTUTORIAL ASSIGNMENT 3 - AvailableMATH 117opens<p>To be submitted to Crowdmark by 6pm on Friday, Oct 2. Lateness penalty of 1% per minute.</p>',
+      starts_at: openTime,
+      ends_at: openTime,
+    },
+  ]);
+
+  // Request calendar covering 2026-09-25 to 2026-10-03 (9 days)
+  let result = await buildCalendar(store, { start: '2026-09-25', days: 9, now: calNow });
+  const daySept25 = result.days.find((d) => d.date === '2026-09-25');
+  const opensEvent = daySept25.events.find((e) => e.category === 'opens');
+  assert.ok(opensEvent);
+  assert.equal(opensEvent.due_at, expectedDue);
+
+  // Inferred deadline event should appear on 2026-10-02
+  const dayOct2 = result.days.find((d) => d.date === '2026-10-02');
+  assert.ok(dayOct2);
+  const derivedDeadline = dayOct2.events.find((e) => e.category === 'deadline');
+  assert.ok(derivedDeadline);
+  assert.equal(derivedDeadline.starts_at, expectedDue);
+  assert.equal(derivedDeadline.course, 'MATH 117');
+  assert.match(derivedDeadline.title, /TUTORIAL ASSIGNMENT 3/);
+
+  // When explicit due event is present on Oct 2, no duplicate deadline is synthesized
+  store.upsertRows('timeline_event', [
+    {
+      observed_at: calNow + 60_000,
+      valid_until: calNow + 960_000,
+      source_id: 'uw-learn-ics',
+      external_id: 'tut3-due',
+      kind: 'deadline',
+      title: 'TUTORIAL ASSIGNMENT 3 - Due',
+      location: 'MATH 117 - Fall 2026',
+      description: 'Submit to Crowdmark',
+      starts_at: expectedDue,
+      ends_at: expectedDue,
+    },
+  ]);
+
+  result = await buildCalendar(store, { start: '2026-09-25', days: 9, now: calNow + 60_000 });
+  const dayOct2After = result.days.find((d) => d.date === '2026-10-02');
+  const deadlines = dayOct2After.events.filter((e) => e.category === 'deadline');
+  assert.equal(deadlines.length, 1);
+  assert.equal(deadlines[0].id, 'uw-learn-ics:tut3-due');
+
+  store.close();
+});

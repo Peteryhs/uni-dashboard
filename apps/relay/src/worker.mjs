@@ -18,7 +18,7 @@ import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } f
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
-import { DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
+import { DEFAULT_AI_MODEL, POPULAR_MODELS, getAvailableAiModels } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
 import { clearAiJob, getAiJob, processAiJob, publicAiJob, queueAiJob, restartStalledAiJob } from './ai-jobs.mjs';
@@ -310,7 +310,11 @@ async function handleFetch(request, env, ctx) {
   }
 
   if (path === '/v1/ai/models' && request.method === 'GET') {
-    return json({ default_model: DEFAULT_AI_MODEL, models: POPULAR_MODELS });
+    const models = await getAvailableAiModels({
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: env.CLOUDFLARE_API_TOKEN,
+    });
+    return json({ default_model: DEFAULT_AI_MODEL, models });
   }
 
   if (path === '/v1/ai/jobs' && request.method === 'GET') {

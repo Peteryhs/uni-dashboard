@@ -7,7 +7,7 @@
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
 import { config } from './config.mjs';
-import { taskContext, phaseOf, groupScope } from './task-context.mjs';
+import { taskContext, phaseOf, groupScope, cleanDisplayTitle, isSameAssessment } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 import { alertIdentity, alertSummaryFor, ALERT_SUMMARY_SETTING, ALERT_DISMISSED_SETTING } from './alert-summary.mjs';
 
@@ -218,7 +218,7 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
   return maybePromise(
     store.rows('timeline_event', {
       where: 'source_id = ? AND starts_at BETWEEN ? AND ?',
-      params: ['uw-learn-ics', now - 5 * MIN, horizon],
+      params: ['uw-learn-ics', now - 30 * DAY, horizon],
       limit: 500,
       orderBy: 'starts_at',
     }),
@@ -226,7 +226,7 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
       const rows = (rawRows || []).slice().sort((a, b) => a.starts_at - b.starts_at);
 
       const enriched = rows.map((d) => {
-        const ctx = taskContext({ title: d.title, location: d.location, description: d.description });
+        const ctx = taskContext({ title: d.title, location: d.location, description: d.description, starts_at: d.starts_at });
         const course = ctx.course || courseOf(d.title, d.location);
         const phase = phaseOf(d.title);
         const gs = groupScope(d.title);
@@ -248,26 +248,55 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
             all_day: Boolean(d.all_day),
             significant: isSig,
             group_scope: { section: gs.section, groups: gs.groups },
+            ...(ctx.due_at ? { due_at: ctx.due_at } : {}),
           },
         };
       });
 
-      const due = enriched
+      const rawDue = enriched
         .map((e) => e.item)
-        .filter((i) => i.phase === 'due' && i.starts_at <= now + 7 * DAY);
+        .filter((i) => i.phase === 'due' && i.starts_at >= now - 5 * MIN && i.starts_at <= now + 7 * DAY);
+      const inferredDue = enriched
+        .filter((e) => e.item.phase === 'opens' && e.item.due_at && e.item.due_at >= now - 5 * MIN && e.item.due_at <= now + 7 * DAY)
+        .map((e) => {
+          const item = e.item;
+          return {
+            ...item,
+            title: cleanDisplayTitle(item.title),
+            starts_at: item.due_at,
+            phase: 'due',
+            occurrence_id: `${item.occurrence_id}:due`,
+          };
+        })
+        .filter((derived) => !rawDue.some((existing) => isSameAssessment(existing.title, derived.title, existing.course, derived.course)));
+      const due = [...rawDue, ...inferredDue].sort((a, b) => a.starts_at - b.starts_at);
 
       const opens = enriched
         .map((e) => e.item)
-        .filter((i) => i.phase === 'opens' && i.starts_at <= now + 7 * DAY)
+        .filter((i) => i.phase === 'opens' && i.starts_at >= now - 5 * MIN && i.starts_at <= now + 7 * DAY)
         .map((item) => ({
           ...item,
           description: undefined,
           links: [],
         }));
 
-      const candidateMajors = enriched
+      const explicitMajors = enriched
         .map((e) => e.item)
         .filter((i) => i.phase === 'due' && i.significant && i.starts_at > now + 3 * DAY);
+      const inferredMajors = enriched
+        .filter((e) => e.item.phase === 'opens' && e.item.due_at && e.item.significant && e.item.due_at > now + 3 * DAY)
+        .map((e) => {
+          const item = e.item;
+          return {
+            ...item,
+            title: cleanDisplayTitle(item.title),
+            starts_at: item.due_at,
+            phase: 'due',
+            occurrence_id: `${item.occurrence_id}:due`,
+          };
+        })
+        .filter((derived) => !explicitMajors.some((existing) => isSameAssessment(existing.title, derived.title, existing.course, derived.course)));
+      const candidateMajors = [...explicitMajors, ...inferredMajors].sort((a, b) => a.starts_at - b.starts_at);
 
       const nextMajorItem = candidateMajors[0] ?? null;
       const next_major = nextMajorItem

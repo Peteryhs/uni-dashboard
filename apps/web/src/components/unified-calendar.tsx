@@ -46,6 +46,11 @@ function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelec
           </span>
           {event.course && <button type="button" onClick={() => onSelectCourse(event.course!)} className="text-[11px] font-semibold text-live hover:underline">{event.course}</button>}
           <span className="text-[10px] text-zinc-500">{event.source_label}</span>
+          {event.category === 'opens' && event.due_at && (
+            <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+              Due {formatTime(event.due_at)}
+            </span>
+          )}
         </div>
         <p className="mt-1 text-sm font-medium leading-snug text-foreground">{event.title}</p>
         {(event.subtitle || event.location || event.description) && (

@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, Star, WifiOff, X } from 'lucide-react';
 import { CustomizationSheet } from '@/components/customization-sheet';
@@ -13,7 +13,7 @@ import type { AlertData, CalendarData, CalendarEvent, CardState, DueSoonData, Du
 import './dashboard.css';
 
 function cleanTitle(value: string): string {
-  return value.replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').replace(/\s*[-–]\s*Residence Dining Hall\s*$/i, '').trim();
+  return value.replace(/\s+(?:[-–—]\s*)?Available\s*$/i, '').replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').replace(/\s*[-–]\s*Residence Dining Hall\s*$/i, '').trim();
 }
 function heroTitleSize(value: string): number {
   return Math.round(Math.max(28, Math.min(47, 51 - Math.max(0, [...cleanTitle(value)].length - 18) * 0.42)));
@@ -58,6 +58,25 @@ function dateLabel(date: string): string {
 function shortDateLabel(date: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(new Date(date + 'T12:00:00Z'));
 }
+function weekendDateParts(satDate: string, sunDate: string): { month: string; days: string } {
+  const sat = new Date(satDate + 'T12:00:00Z');
+  const sun = new Date(sunDate + 'T12:00:00Z');
+  const satMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', month: 'long' }).format(sat);
+  const sunMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', month: 'long' }).format(sun);
+  const satDay = sat.getUTCDate();
+  const sunDay = sun.getUTCDate();
+
+  if (satMonth === sunMonth) {
+    return {
+      month: satMonth,
+      days: `${satDay} – ${sunDay}`,
+    };
+  }
+  return {
+    month: `${satMonth} ${satDay} –`,
+    days: `${sunMonth} ${sunDay}`,
+  };
+}
 function countLabel(count: number, singular: string, plural = singular + 's'): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -93,9 +112,109 @@ function useReveal() {
   }, []);
 }
 
-function RecommendationDetail({ item, onClose, onAction }: { item: RecommendationItem; onClose: () => void; onAction: (action: 'done' | 'snooze') => void }) {
-  return <section className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '')} aria-label={'Details for ' + cleanTitle(item.title)}>
-    <div className="rec-detail-head"><div>{!isAiFood(item) && <span className="neutral-label">{kindLabel(item)}</span>}<h3>{cleanTitle(item.title)}</h3></div><button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button></div>
+function useExitingPresence<T>(value: T | null | undefined, durationMs = 220): { item: T | null; isClosing: boolean } {
+  const [item, setItem] = useState<T | null>(value ?? null);
+  const [isClosing, setIsClosing] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (value) {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setItem(value);
+      setIsClosing(false);
+    } else if (item && !isClosing) {
+      setIsClosing(true);
+      timerRef.current = window.setTimeout(() => {
+        setItem(null);
+        setIsClosing(false);
+        timerRef.current = null;
+      }, durationMs);
+    }
+  }, [value, item, isClosing, durationMs]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return { item, isClosing };
+}
+
+function AnimatedUndoToast({
+  lastHidden,
+  onUndo,
+  onDismiss,
+}: {
+  lastHidden: { id: string; title: string } | null;
+  onUndo: (id: string) => void;
+  onDismiss: () => void;
+}) {
+  const [closing, setClosing] = useState(false);
+  const [activeItem, setActiveItem] = useState(lastHidden);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (lastHidden) {
+      setActiveItem(lastHidden);
+      setClosing(false);
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => {
+        setClosing(true);
+        timerRef.current = window.setTimeout(() => {
+          setActiveItem(null);
+          setClosing(false);
+          onDismiss();
+        }, 180);
+      }, 7800);
+      return () => {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+      };
+    } else if (activeItem && !closing) {
+      setClosing(true);
+      timerRef.current = window.setTimeout(() => {
+        setActiveItem(null);
+        setClosing(false);
+      }, 180);
+      return () => {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+      };
+    }
+  }, [lastHidden, activeItem, closing, onDismiss]);
+
+  if (!activeItem) return null;
+
+  const handleUndo = () => {
+    setClosing(true);
+    window.setTimeout(() => {
+      onUndo(activeItem.id);
+      setActiveItem(null);
+      setClosing(false);
+    }, 180);
+  };
+
+  return (
+    <div className={'undo-toast' + (closing ? ' is-closing' : '')} role="status">
+      <span>Hidden: {activeItem.title}</span>
+      <button onClick={handleUndo}>Undo</button>
+    </div>
+  );
+}
+
+function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: RecommendationItem; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze') => void }) {
+  const course = item.course;
+  return <section className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} aria-label={'Details for ' + cleanTitle(item.title)}>
+    <div className="rec-detail-head">
+      <div>
+        {!isAiFood(item) && <span className="neutral-label">{kindLabel(item)}</span>}
+        <h3>{cleanTitle(item.title)}</h3>
+        {course && <p className="rec-detail-course">{course}</p>}
+      </div>
+      <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
+    </div>
     <p>{recommendationBody(item)}</p>
     {(item.topics.length > 0 || item.readings.length > 0) && <div className="rec-detail-list">
       {item.topics.length > 0 && <p><strong>Topics</strong> {item.topics.join(', ')}</p>}
@@ -125,11 +244,10 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
   const [view, setView] = useState<'compact' | 'week' | 'full'>('compact');
   const [lastHidden, setLastHidden] = useState<{ id: string; title: string } | null>(null);
   const { preferences, dismissTask, undismissTask } = usePreferences();
-  useEffect(() => { if (!lastHidden) return; const timer = window.setTimeout(() => setLastHidden(null), 8000); return () => window.clearTimeout(timer); }, [lastHidden]);
   const today = campusDate(now);
   const hidden = new Set(preferences.dismissedTasks);
   const visibleDays = data?.days.map(day => ({ ...day, events: day.events.filter(event => !hidden.has(event.occurrence_id) && !(event.uid && hidden.has(event.uid))) })) ?? [];
-  const rangeLength = view === 'compact' ? 2 : view === 'week' ? 7 : 31;
+  const rangeLength = view === 'compact' ? 3 : view === 'week' ? 7 : 31;
   const days = view === 'full' ? visibleDays : visibleDays.slice(0, rangeLength);
   const later = visibleDays.slice(rangeLength);
   const weeks = new Map<string, CalendarEvent[]>();
@@ -141,44 +259,165 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
     if (!weeks.has(key)) weeks.set(key, []);
     weeks.get(key)!.push(event);
   }
+
+  const eventsByDate = new Map<string, CalendarEvent[]>();
+  for (const day of visibleDays) eventsByDate.set(day.date, day.events);
+
+  type CalendarRow =
+    | { kind: 'single'; date: string; events: CalendarEvent[]; isCompressedWeekend?: boolean }
+    | { kind: 'weekend'; satDate: string; sunDate: string; events: Array<CalendarEvent & { dayLabel: 'Sat' | 'Sun' }> };
+
+  const calendarRows: CalendarRow[] = [];
+  for (let i = 0; i < days.length; i++) {
+    const currentDay = days[i];
+    const dayOfWeek = new Date(currentDay.date + 'T12:00:00Z').getUTCDay();
+
+    if (dayOfWeek === 6) {
+      const nextDay = days[i + 1];
+      const isAdjacentSunday = Boolean(nextDay && nextDay.date === shiftDate(currentDay.date, 1));
+      const sunEvents = eventsByDate.get(shiftDate(currentDay.date, 1)) ?? [];
+      const totalWeekendCount = currentDay.events.length + sunEvents.length;
+
+      if (totalWeekendCount < 5) {
+        if (isAdjacentSunday && nextDay) {
+          const satEvents = currentDay.events.map(ev => ({ ...ev, dayLabel: 'Sat' as const }));
+          const sunEventsTagged = nextDay.events.map(ev => ({ ...ev, dayLabel: 'Sun' as const }));
+          calendarRows.push({
+            kind: 'weekend',
+            satDate: currentDay.date,
+            sunDate: nextDay.date,
+            events: [...satEvents, ...sunEventsTagged],
+          });
+          i++;
+          continue;
+        } else {
+          calendarRows.push({
+            kind: 'single',
+            date: currentDay.date,
+            events: currentDay.events,
+            isCompressedWeekend: true,
+          });
+          continue;
+        }
+      }
+    } else if (dayOfWeek === 0) {
+      const prevSatDate = shiftDate(currentDay.date, -1);
+      const satEvents = eventsByDate.get(prevSatDate) ?? [];
+      const totalWeekendCount = satEvents.length + currentDay.events.length;
+
+      if (totalWeekendCount < 5) {
+        calendarRows.push({
+          kind: 'single',
+          date: currentDay.date,
+          events: currentDay.events,
+          isCompressedWeekend: true,
+        });
+        continue;
+      }
+    }
+
+    calendarRows.push({
+      kind: 'single',
+      date: currentDay.date,
+      events: currentDay.events,
+      isCompressedWeekend: false,
+    });
+  }
+
+  const renderCalendarEvent = (event: CalendarEvent, dayBadge?: string) => (
+    <details className="calendar-event" key={event.id}>
+      <summary>
+        <span className="calendar-time">
+          {dayBadge && <span className="calendar-day-badge">{dayBadge}</span>}
+          {calendarTime(event)}
+        </span>
+        <span className="calendar-event-title">
+          <strong>{cleanTitle(event.title)}</strong>
+          <span className="course-tag">{event.course || 'Course not identified'}</span>
+          <span className={'event-tag event-' + event.category}>{calendarKind(event)}</span>
+        </span>
+        <ChevronRight className="calendar-item-chevron" size={14} />
+      </summary>
+      <div className="calendar-event-detail">
+        {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
+        {event.category === 'opens' && event.due_at && <p><strong>Due:</strong> {formatShortDay(event.due_at)} · {formatTime(event.due_at)}</p>}
+        {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
+        {event.location && <p>{event.location}</p>}
+        {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
+        {event.description && <p>{event.description}</p>}
+        {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
+        {event.readings && event.readings.length > 0 && <p><strong>Readings</strong> · {event.readings.join(', ')}</p>}
+        {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <details className="calendar-evidence"><summary>Syllabus source text</summary>{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</details>}
+        <small>{event.source_label}{event.state !== 'live' ? ' · ' + event.state : ''}</small>
+        <div className="calendar-event-actions">
+          {event.links.map((link, index) => <a key={link.url + index} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}
+          {event.url && !event.links.some(link => link.url === event.url) && <a href={event.url} target="_blank" rel="noopener noreferrer">Open event<ExternalLink size={12} /></a>}
+          {!event.url && event.links.length === 0 && data?.courses.find(course => course.course === event.course)?.learn_url && <a href={data.courses.find(course => course.course === event.course)!.learn_url!} target="_blank" rel="noopener noreferrer">Open course<ExternalLink size={12} /></a>}
+          <button onClick={() => { const id = event.occurrence_id || event.uid || event.id; dismissTask(id); setLastHidden({ id, title: cleanTitle(event.title) }); }}>Hide event</button>
+        </div>
+      </div>
+    </details>
+  );
+
   return <section className="content-section" id="calendar" data-reveal>
     <div className="section-head"><h2>Calendar</h2>{view === 'full' && <nav className="calendar-navigation" aria-label="31-day calendar dates"><button onClick={() => setPage(page - 1)} aria-label="Previous 31 days"><ChevronLeft size={15} /></button><span>{shortDateLabel(data?.start ?? today)} – {shortDateLabel(data?.end ? shiftDate(data.end, -1) : shiftDate(today, 30))}</span><button onClick={() => setPage(page + 1)} aria-label="Next 31 days"><ChevronRight size={15} /></button>{page !== 0 && <button onClick={() => setPage(0)}>Today</button>}</nav>}</div>
     <div className={'section-panel calendar-panel' + (view === 'full' ? ' is-full' : '')}>
       {page === 0 && <NextCommitment data={nextCommitment} state={nextCommitmentState} now={now} />}
       {pending && <p className="empty-state">Loading calendar…</p>}
       {error && !data && <p className="empty-state" role="alert">Calendar is unavailable right now.</p>}
-      {data && days.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
+      {data && calendarRows.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
       <div className="calendar-day-list" id="calendar-day-list">
-      {days.map(day => <div className="calendar-day" key={day.date}>
-        <div className="calendar-date"><span>{day.date === today ? 'Today' : dateLabel(day.date)}</span><small>{day.events.length ? day.events.length + (day.events.length === 1 ? ' event' : ' events') : 'Clear'}</small></div>
-        <div className="calendar-events">{day.events.length ? day.events.map(event => <details className="calendar-event" key={event.id}>
-          <summary><span className="calendar-time">{calendarTime(event)}</span><span className="calendar-event-title"><strong>{cleanTitle(event.title)}</strong><span className="course-tag">{event.course || 'Course not identified'}</span><span className={'event-tag event-' + event.category}>{calendarKind(event)}</span></span><ChevronRight className="calendar-item-chevron" size={14} /></summary>
-          <div className="calendar-event-detail">
-            {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
-            {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
-            {event.location && <p>{event.location}</p>}
-            {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
-            {event.description && <p>{event.description}</p>}
-            {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
-            {event.readings && event.readings.length > 0 && <p><strong>Readings</strong> · {event.readings.join(', ')}</p>}
-            {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <details className="calendar-evidence"><summary>Syllabus source text</summary>{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</details>}
-            <small>{event.source_label}{event.state !== 'live' ? ' · ' + event.state : ''}</small>
-            <div className="calendar-event-actions">{event.links.map((link, index) => <a key={link.url + index} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}{event.url && !event.links.some(link => link.url === event.url) && <a href={event.url} target="_blank" rel="noopener noreferrer">Open event<ExternalLink size={12} /></a>}{!event.url && event.links.length === 0 && data?.courses.find(course => course.course === event.course)?.learn_url && <a href={data.courses.find(course => course.course === event.course)!.learn_url!} target="_blank" rel="noopener noreferrer">Open course<ExternalLink size={12} /></a>}<button onClick={() => { const id = event.occurrence_id || event.uid || event.id; dismissTask(id); setLastHidden({ id, title: cleanTitle(event.title) }); }}>Hide event</button></div>
+      {calendarRows.map(row => {
+        if (row.kind === 'weekend') {
+          const weekendDates = weekendDateParts(row.satDate, row.sunDate);
+          return (
+            <div className="calendar-day calendar-day--weekend-compressed" key={row.satDate}>
+              <div className="calendar-date calendar-date--weekend">
+                <span className="calendar-date-split">
+                  <span>{weekendDates.month}</span>
+                  <span className="calendar-date-days">{weekendDates.days}</span>
+                </span>
+                <small>Weekend · {row.events.length ? countLabel(row.events.length, 'event') : 'Clear'}</small>
+              </div>
+              <div className="calendar-events calendar-events--weekend">
+                {row.events.length ? (
+                  row.events.map(event => renderCalendarEvent(event, event.dayLabel))
+                ) : (
+                  <p className="calendar-clear calendar-clear--weekend">Nothing scheduled this weekend.</p>
+                )}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className={'calendar-day' + (row.isCompressedWeekend ? ' calendar-day--weekend-compressed' : '')} key={row.date}>
+            <div className={'calendar-date' + (row.isCompressedWeekend ? ' calendar-date--weekend' : '')}>
+              <span>{row.date === today ? 'Today' : dateLabel(row.date)}</span>
+              <small>{row.isCompressedWeekend ? 'Weekend · ' : ''}{row.events.length ? countLabel(row.events.length, 'event') : 'Clear'}</small>
+            </div>
+            <div className="calendar-events">
+              {row.events.length ? (
+                row.events.map(event => renderCalendarEvent(event))
+              ) : (
+                <p className={'calendar-clear' + (row.isCompressedWeekend ? ' calendar-clear--weekend' : '')}>Nothing scheduled.</p>
+              )}
+            </div>
           </div>
-        </details>) : <p className="calendar-clear">Nothing scheduled.</p>}
-        </div>
-      </div>)}
+        );
+      })}
       </div>
       {view !== 'full' && weeks.size > 0 && <div className="calendar-weeks"><span>Deadlines and exams ahead</span>{[...weeks.entries()].slice(0, 4).map(([date, events]) => <div className="calendar-week" key={date}><strong>Week of {shortDateLabel(date)}</strong><p>{events.slice(0, 2).map(event => cleanTitle(event.title)).join(' · ')}{events.length > 2 ? ' · +' + (events.length - 2) + ' more' : ''}</p></div>)}</div>}
       {data && <div className="calendar-view-controls">
+        <div className="calendar-controls-spacer" aria-hidden="true" />
         {view === 'compact' && <button className="calendar-mode-step" onClick={() => setView('week')} aria-controls="calendar-day-list" aria-expanded={false}>Show 7 days</button>}
-        {view === 'week' && <button className="calendar-mode-step" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to today and tomorrow">Show 2 days</button>}
+        {view === 'week' && <button className="calendar-mode-step" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to next 3 days">Show 3 days</button>}
+        {view === 'full' && <button className="calendar-mode-step" onClick={() => setView('week')} aria-controls="calendar-day-list" aria-expanded={false}>Show 7 days</button>}
         {view !== 'full' && <button className="calendar-expand" onClick={() => setView('full')} aria-controls="calendar-day-list" aria-expanded={false}>Show full calendar<ChevronRight size={16} /></button>}
-        {view === 'full' && <button className="calendar-expand" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to today and tomorrow">Show 2 days<ChevronLeft size={16} /></button>}
+        {view === 'full' && <button className="calendar-expand" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to next 3 days">Show 3 days<ChevronLeft size={16} /></button>}
       </div>}
       {data?.truncated && <p className="calendar-notice">The calendar feed has more events than can be shown in this range.</p>}
       {data?.sources.some(source => source.status !== 'ok') && <p className="calendar-notice">Some calendar sources need attention. The schedule may be incomplete.</p>}
-      {lastHidden && <div className="undo-toast" role="status"><span>Hidden: {lastHidden.title}</span><button onClick={() => { undismissTask(lastHidden.id); setLastHidden(null); }}>Undo</button></div>}
+      <AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} />
     </div>
   </section>;
 }
@@ -186,14 +425,13 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
 function DueWorkSection({ data }: { data?: DueSoonData }) {
   const [lastHidden, setLastHidden] = useState<{ id: string; title: string } | null>(null);
   const { preferences, dismissTask, undismissTask } = usePreferences();
-  useEffect(() => { if (!lastHidden) return; const timer = window.setTimeout(() => setLastHidden(null), 8000); return () => window.clearTimeout(timer); }, [lastHidden]);
   if (!data) return null;
   const hidden = new Set(preferences.dismissedTasks);
   const isVisible = (item: DueSoonItem) => !hidden.has(item.occurrence_id || '') && !hidden.has(item.uid || '');
   const near = [...(data.due ?? data.items ?? []), ...(data.opens ?? [])].filter(isVisible).sort((a, b) => a.starts_at - b.starts_at);
   const ahead = (data.ahead ?? []).map(group => ({ ...group, items: group.items.filter(isVisible) })).filter(group => group.items.length > 0);
-  const renderTask = (item: DueSoonItem) => <details className="work-item" key={(item.occurrence_id || item.uid || item.title) + item.starts_at}><summary><span>{item.all_day ? formatShortDay(item.starts_at) : formatShortDay(item.starts_at) + ' · ' + formatTime(item.starts_at)}</span><strong>{cleanTitle(item.title)}</strong>{item.course && <small>{item.course}</small>}<em>{item.phase === 'opens' ? 'Opens' : 'Due'}</em><ChevronRight size={14} /></summary><div className="work-item-detail">{item.all_day && <p>No exact time was supplied.</p>}{item.description && <p>{item.description}</p>}{item.location && <p>{item.location}</p>}<div>{item.links?.map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}{item.url && !item.links?.some(link => link.url === item.url) && <a href={item.url} target="_blank" rel="noopener noreferrer">Open task<ExternalLink size={12} /></a>}{(item.occurrence_id || item.uid) && <button onClick={() => { const id = item.occurrence_id || item.uid!; dismissTask(id); setLastHidden({ id, title: cleanTitle(item.title) }); }}>Hide</button>}</div></div></details>;
-  return <section className="content-section" id="work" data-reveal><div className="section-head"><h2>Due & opening</h2><span className="section-count">{near.filter(item => item.phase !== 'opens').length} due · {near.filter(item => item.phase === 'opens').length} opens in 7 days</span></div><div className="section-panel work-panel">{data.error && <p className="calendar-notice">{data.error}</p>}{near.length ? near.map(renderTask) : <p className="empty-state">Nothing due or opening in the next seven days.</p>}{ahead.length > 0 && <details className="term-work"><summary>Later this term · {ahead.reduce((sum, group) => sum + group.items.length, 0)} major items<ChevronRight size={15} /></summary>{ahead.map(group => <div className="term-week" key={group.week_start}><h3>{group.label}</h3>{group.items.map(renderTask)}</div>)}</details>}{lastHidden && <div className="undo-toast" role="status"><span>Hidden: {lastHidden.title}</span><button onClick={() => { undismissTask(lastHidden.id); setLastHidden(null); }}>Undo</button></div>}</div></section>;
+  const renderTask = (item: DueSoonItem) => <details className="work-item" key={(item.occurrence_id || item.uid || item.title) + item.starts_at}><summary><span>{item.all_day ? formatShortDay(item.starts_at) : formatShortDay(item.starts_at) + ' · ' + formatTime(item.starts_at)}</span><strong>{cleanTitle(item.title)}</strong>{item.course && <small>{item.course}</small>}<em>{item.phase === 'opens' ? (item.due_at ? `Opens · Due ${formatShortDay(item.due_at)}` : 'Opens') : 'Due'}</em><ChevronRight size={14} /></summary><div className="work-item-detail">{item.all_day && <p>No exact time was supplied.</p>}{item.phase === 'opens' && item.due_at && <p><strong>Due:</strong> {formatShortDay(item.due_at)} · {formatTime(item.due_at)}</p>}{item.description && <p>{item.description}</p>}{item.location && <p>{item.location}</p>}<div>{item.links?.map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}{item.url && !item.links?.some(link => link.url === item.url) && <a href={item.url} target="_blank" rel="noopener noreferrer">Open task<ExternalLink size={12} /></a>}{(item.occurrence_id || item.uid) && <button onClick={() => { const id = item.occurrence_id || item.uid!; dismissTask(id); setLastHidden({ id, title: cleanTitle(item.title) }); }}>Hide</button>}</div></div></details>;
+  return <section className="content-section" id="work" data-reveal><div className="section-head"><h2>Due & opening</h2><span className="section-count">{near.filter(item => item.phase !== 'opens').length} due · {near.filter(item => item.phase === 'opens').length} opens in 7 days</span></div><div className="section-panel work-panel">{data.error && <p className="calendar-notice">{data.error}</p>}{near.length ? near.map(renderTask) : <p className="empty-state">Nothing due or opening in the next seven days.</p>}{ahead.length > 0 && <details className="term-work"><summary>Later this term · {ahead.reduce((sum, group) => sum + group.items.length, 0)} major items<ChevronRight size={15} /></summary>{ahead.map(group => <div className="term-week" key={group.week_start}><h3>{group.label}</h3>{group.items.map(renderTask)}</div>)}</details>}<AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} /></div></section>;
 }
 
 function MenuSection() {
@@ -325,8 +563,10 @@ export default function App() {
   const featured = items[0];
   const nextTwo = items.slice(1, 3);
   const selected = [...items, ...(recs.data?.tasks.large ?? []), ...(recs.data?.tasks.small ?? [])].find(item => item.id === selectedId) ?? null;
+  const { item: activeSelected, isClosing: isDetailClosing } = useExitingPresence(selected, 220);
   const alertCard = cards.find(card => card.type === 'alert');
   const alert = alertCard?.data as AlertData | undefined;
+  const { item: activeAlert, isClosing: isAlertClosing } = useExitingPresence(alertOpen && alert && !alert.dismissed ? alert : null, 200);
   const nextCommitmentCard = cards.find(card => card.type === 'next_commitment');
   const nextCommitment = nextCommitmentCard?.data as NextCommitmentData | undefined;
   const dueWork = cards.find(card => card.type === 'due_soon')?.data as DueSoonData | undefined;
@@ -337,7 +577,8 @@ export default function App() {
   const largestTask = (recs.data?.tasks.large ?? []).find(item => item.id !== nextTask?.id && !items.slice(0, 3).some(visible => visible.id === item.id));
   const act = async (item: RecommendationItem, action: 'done' | 'snooze') => {
     setActionError(null);
-    try { await saveRecommendationAction(item.id, action); setSelectedId(null); await recs.refetch(); }
+    setSelectedId(null);
+    try { await saveRecommendationAction(item.id, action); await recs.refetch(); }
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not update recommendation.'); }
   };
   const refreshAll = async () => {
@@ -359,7 +600,7 @@ export default function App() {
           <button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button>
         </div>
       </div>
-      {alertOpen && alert && !alert.dismissed && <section className="alert-detail" aria-label="Campus alert details"><div className="alert-list">{alert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{alert.checked_at && <small>Checked {shortAge(alert.checked_at, now)} ago</small>}</div><div className="alert-actions">{alert.key && <button onClick={async () => { try { await dismissAlert(alert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</section>}
+      {activeAlert && <section className={'alert-detail' + (isAlertClosing ? ' is-closing' : '')} aria-label="Campus alert details"><div className="alert-list">{activeAlert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{activeAlert.checked_at && <small>Checked {shortAge(activeAlert.checked_at, now)} ago</small>}</div><div className="alert-actions">{activeAlert.key && <button onClick={async () => { try { await dismissAlert(activeAlert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</section>}
       {syncError && <p className="action-error" role="alert">{syncError}</p>}
       {recs.isPending && <div className="state-panel hero-loading" aria-busy="true">Finding your next move…</div>}
       {recs.isError && !recs.data && <div className="state-panel" role="alert">Recommendations are unavailable. <button className="inline-link" onClick={() => void recs.refetch()}>Try again</button></div>}
@@ -378,7 +619,7 @@ export default function App() {
           {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small></button>}
         </section>
       </div>}
-      {selected && <RecommendationDetail item={selected} onClose={() => setSelectedId(null)} onAction={action => void act(selected, action)} />}
+      {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
       {recs.data?.warnings && recs.data.warnings.length > 0 && <details className="warning-strip"><summary>{recs.data.warnings.length} source updates need attention</summary><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></details>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}

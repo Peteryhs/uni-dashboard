@@ -780,6 +780,9 @@ function DueItem({
   } else {
     when = item.all_day ? 'all day' : formatTime(item.starts_at);
   }
+  if (isOpens && item.due_at) {
+    when = `${when} · Due ${formatShortDay(item.due_at)}`;
+  }
 
   const urgent = !isOpens && !isAhead && item.starts_at - now <= 24 * 60 * 60_000 && item.starts_at - now > 0;
   const overdue = !isOpens && !isAhead && item.starts_at - now <= 0;
@@ -1008,6 +1011,12 @@ function DueItem({
       {/* Inline Description & Links (only in detailed view, never nested inside button) */}
       {!compact && isExpanded && isExpandable && (
         <div className="mt-1.5 mb-1 mx-1 rounded-lg border border-white/5 bg-secondary/35 p-3 text-xs space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-150 shadow-inner">
+          {item.due_at && (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2.5 py-1.5">
+              <ClipboardList className="size-3 text-amber-400 shrink-0" />
+              <span>Due {formatShortDay(item.due_at)} at {formatTime(item.due_at)}</span>
+            </div>
+          )}
           {hasDesc && (
             <InlineDescription
               description={item.description!}

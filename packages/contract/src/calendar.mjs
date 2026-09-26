@@ -31,6 +31,7 @@ export const CalendarEvent = z.object({
   readings: z.array(z.string()).default([]),
   syllabus_evidence: z.array(z.string()).default([]),
   syllabus_scope: z.enum(['date', 'period']).nullable().default(null),
+  due_at: EPOCH_MS.nullable().optional().default(null),
 });
 
 export const CalendarLearning = z.object({

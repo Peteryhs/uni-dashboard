@@ -4,7 +4,7 @@ import { ageState } from '#contract/cards.mjs';
 import { CalendarResponse } from '#contract/calendar.mjs';
 import { zonedToEpoch } from '#sources/ics/parse.mjs';
 import { learnEventCategory } from '#sources/ics/learn-classification.mjs';
-import { taskContext, groupScope, unescapeIcsText } from './task-context.mjs';
+import { taskContext, groupScope, unescapeIcsText, cleanDisplayTitle, isSameAssessment } from './task-context.mjs';
 import { courseOf } from './cards.mjs';
 import { SOURCES, readiness } from '#sources/registry.mjs';
 import { courseLibrary, learnHomeFromEvents } from './course-library.mjs';
@@ -105,6 +105,7 @@ function toEvent(row, now) {
     observed_at: row.observed_at,
     state: ageState(row.observed_at, CADENCE[row.source_id] ?? 15 * 60_000, now),
     topics: [], readings: [], syllabus_evidence: [], syllabus_scope: null,
+    due_at: context?.due_at ?? null,
   };
 }
 
@@ -143,8 +144,8 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
   const fromMs = zonedToEpoch(from.year, from.month, from.day, 0, 0, 0, config.timezone);
   const untilMs = zonedToEpoch(until.year, until.month, until.day, 0, 0, 0, config.timezone);
   const rows = await store.rows('timeline_event', {
-    where: 'starts_at < ? AND (COALESCE(ends_at, starts_at) > ? OR starts_at >= ?)',
-    params: [untilMs, fromMs, fromMs],
+    where: '(starts_at < ? AND (COALESCE(ends_at, starts_at) > ? OR starts_at >= ?)) OR (source_id = ? AND starts_at >= ? AND starts_at < ?)',
+    params: [untilMs, fromMs, fromMs, 'uw-learn-ics', fromMs - 30 * 86400000, fromMs],
     limit: MAX_EVENTS + 1,
     orderBy: 'starts_at',
   });
@@ -191,6 +192,57 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
     }
     candidates.push(event);
   }
+  const inferredDeadlines = [];
+  for (const event of candidates) {
+    if (event.source_id === 'uw-learn-ics' && event.category === 'opens' && event.due_at != null) {
+      if (event.due_at >= fromMs && event.due_at < untilMs) {
+        const hasExplicit = candidates.some((other) =>
+          ['deadline', 'exam'].includes(other.category) &&
+          isSameAssessment(other.title, event.title, other.course, event.course)
+        );
+        const hasSyllabus = relevantSyllabi.some((doc) =>
+          sameCourse(doc.course, event.course) &&
+          doc.entries.some((entry) => entry.kind === 'assessment' && isSameAssessment(entry.title, event.title, doc.course, event.course))
+        );
+        if (!hasExplicit && !hasSyllabus) {
+          let derived = {
+            id: `${event.id}:due`,
+            occurrence_id: `${event.occurrence_id}:due`,
+            uid: event.uid,
+            source_id: event.source_id,
+            source_label: event.source_label,
+            kind: 'deadline',
+            category: 'deadline',
+            phase: 'due',
+            title: cleanDisplayTitle(event.title),
+            subtitle: 'Due parsed from instructions · confirm in LEARN',
+            course: event.course,
+            location: event.location,
+            description: event.description,
+            url: event.url,
+            links: event.links,
+            starts_at: event.due_at,
+            ends_at: event.due_at,
+            all_day: false,
+            group_scope: event.group_scope,
+            observed_at: event.observed_at,
+            state: event.state,
+            topics: event.topics,
+            readings: event.readings,
+            syllabus_evidence: event.syllabus_evidence,
+            syllabus_scope: event.syllabus_scope,
+            due_at: event.due_at,
+          };
+          const entries = relevantSyllabi.flatMap((document) =>
+            document.entries.filter((entry) => syllabusAssessmentMatches(entry, document.course, derived))
+          );
+          if (entries.length) derived = attachLearning(derived, entries);
+          inferredDeadlines.push(derived);
+        }
+      }
+    }
+  }
+  candidates.push(...inferredDeadlines);
   for (const document of relevantSyllabi) for (const entry of document.entries) {
     if (entry.kind !== 'assessment' || entry.start_date >= end || entry.end_date < start) continue;
     if (candidates.some((event) => ['deadline', 'exam'].includes(event.category) && event.source_id !== 'syllabus' && syllabusAssessmentMatches(entry, document.course, event))) continue;

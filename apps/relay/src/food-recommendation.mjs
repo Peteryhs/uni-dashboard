@@ -31,8 +31,10 @@ export function foodRecommendationSignature(serviceDate, profile, menuItems) {
 
 export function cleanFoodProfile(input = {}) {
   const profile = input && typeof input === 'object' ? input : {};
-  const model = typeof profile.selectedAiModel === 'string' && POPULAR_MODELS.some((item) => item.id === profile.selectedAiModel)
-    ? profile.selectedAiModel : DEFAULT_AI_MODEL;
+  const model = typeof profile.selectedAiModel === 'string' && (
+    profile.selectedAiModel.startsWith('@cf/') ||
+    POPULAR_MODELS.some((item) => item.id === profile.selectedAiModel)
+  ) ? profile.selectedAiModel : DEFAULT_AI_MODEL;
   const legacySpice = typeof profile.spiceLevel === 'string' && profile.spiceLevel !== 'none' ? `${profile.spiceLevel.replace('-', ' ')} spice` : '';
   const legacyGoals = Array.isArray(profile.dietaryGoals)
     ? profile.dietaryGoals.filter((goal) => typeof goal === 'string').slice(0, 12).map((goal) => goal.slice(0, 80).replace(/[-_]+/g, ' '))

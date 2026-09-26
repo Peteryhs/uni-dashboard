@@ -140,6 +140,7 @@ export interface CalendarEvent {
   group_scope: { section: number | null; groups: [number, number] | null };
   observed_at: number;
   state: 'live' | 'ageing' | 'stale' | 'dead';
+  due_at?: number | null;
 }
 
 export interface CalendarData {
@@ -319,6 +320,7 @@ export interface DueSoonItem {
     section: number | null;
     groups: [number, number] | null;
   };
+  due_at?: number | null;
 }
 
 export interface DueSoonAheadGroup {

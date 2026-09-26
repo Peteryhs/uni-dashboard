@@ -1,6 +1,5 @@
 /** Conservative reservations, shared by every app AI call and safe across Worker isolates. */
 export const DAILY_AI_BUDGET = 7000;
-// Neurons per million input/output tokens, Cloudflare pricing checked 2026-09-23.
 const RATES = {
   '@cf/google/gemma-4-26b-a4b-it': [9091, 27273],
   '@cf/zai-org/glm-4.7-flash': [5500, 36400],
@@ -9,8 +8,16 @@ const RATES = {
   '@cf/qwen/qwen3-30b-a3b-fp8': [4625, 30475],
 };
 
+const DYNAMIC_RATES = new Map();
+
+export function registerDynamicRates(modelId, inRate, outRate) {
+  if (typeof modelId === 'string' && Number.isFinite(inRate) && Number.isFinite(outRate)) {
+    DYNAMIC_RATES.set(modelId, [Math.round(inRate), Math.round(outRate)]);
+  }
+}
+
 export function estimateAiReservation({ model, messages, maxTokens, jsonSchema = null }) {
-  const rate = RATES[model];
+  const rate = RATES[model] || DYNAMIC_RATES.get(model);
   if (!rate) {
     const error = new RangeError('Choose one of the supported AI models so its free allowance can be budgeted.');
     error.status = 400;

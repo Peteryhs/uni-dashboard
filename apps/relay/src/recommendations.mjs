@@ -2,6 +2,7 @@
 import { buildCalendar } from './calendar.mjs';
 import { config } from './config.mjs';
 import { listCourseSyllabi, syllabusAssessmentMatches } from './syllabus.mjs';
+import { isSameAssessment } from './task-context.mjs';
 import { validateRecommendations } from '#contract/recommendations.mjs';
 import { zonedToEpoch } from '#sources/ics/parse.mjs';
 import { ageState } from '#contract/cards.mjs';
@@ -21,7 +22,7 @@ function shortOutletName(value) { return String(value || '').replace(/\s*[-–]\
 function effortFor(title, explicit) { return explicit && explicit !== 'unknown' ? explicit : /\b(project|essay|report|assignment|midterm|final|exam)\b/i.test(title) ? 'large' : /\b(quiz|prework|survey|training)\b/i.test(title) ? 'small' : 'unknown'; }
 function displayTaskTitle(title) {
   // LEARN appends timing/status to some calendar summaries. The due time already has its own field.
-  return String(title || '').replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').trim();
+  return String(title || '').replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+(?:[-–—]\s*)?Available\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').trim();
 }
 function item(kind, key, values) {
   const { revision_seed, ...rest } = values;
@@ -68,7 +69,7 @@ function taskPriority(delta, effort, exam) {
   return effort === 'large' ? 560 : 310;
 }
 function taskItem(event, entry, course, now) {
-  const due = event?.all_day ? null : event?.starts_at ?? entry?.due_at ?? null;
+  const due = event?.all_day ? null : event?.due_at ?? event?.starts_at ?? entry?.due_at ?? null;
   const date = event?.all_day ? day(event.starts_at) : due != null ? day(due) : entry?.start_date;
   if (!date || date < shift(day(now), -1) || date > shift(day(now), 14) || (due != null && due < now - DAY)) return null;
   const rankTime = due ?? clock(date, 23, 59);
@@ -119,8 +120,18 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   const courses = new Map((calendar.courses || []).map(course => [course.course, course]));
   const events = [...new Map(calendar.days.flatMap(date => date.events).map(event => [event.id, event])).values()];
   const tasks = [];
-  const matched = new Set();
-  for (const event of events.filter(event => ['deadline', 'exam'].includes(event.category))) {
+  const matched = new Set(), seenEvents = [];
+  const deadlineEvents = events.filter(event => ['deadline', 'exam'].includes(event.category))
+    .sort((a, b) => {
+      const aDerived = a.id.endsWith(':due') || a.occurrence_id?.endsWith(':due');
+      const bDerived = b.id.endsWith(':due') || b.occurrence_id?.endsWith(':due');
+      if (aDerived && !bDerived) return 1;
+      if (!aDerived && bDerived) return -1;
+      return 0;
+    });
+  for (const event of deadlineEvents) {
+    if (seenEvents.some(prev => isSameAssessment(prev.title, event.title, prev.course, event.course))) continue;
+    seenEvents.push(event);
     const entry = explicitMatch(event, syllabi);
     if (entry) matched.add(`${event.course}:${entry.id}`);
     const task = taskItem(event, entry, courses.get(event.course), now);

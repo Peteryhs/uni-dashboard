@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBundle, fetchHealth, readCachedBundle } from '@/lib/api';
+import { fetchBundle, fetchHealth, fetchHealthz, readCachedBundle } from '@/lib/api';
 import { renderableCards, type Bundle, type Card } from '@/lib/contract';
 
 /** Card types this build knows how to draw. Anything else is skipped and counted, never fatal. */
@@ -88,6 +88,16 @@ export function useHealth(enabled: boolean) {
     queryKey: ['health'],
     queryFn: ({ signal }) => fetchHealth(signal),
     refetchInterval: enabled ? 60_000 : false,
+    enabled,
+    retry: 1,
+  });
+}
+
+export function useHealthz(enabled: boolean) {
+  return useQuery({
+    queryKey: ['healthz'],
+    queryFn: ({ signal }) => fetchHealthz(signal),
+    refetchInterval: enabled ? 10_000 : false,
     enabled,
     retry: 1,
   });

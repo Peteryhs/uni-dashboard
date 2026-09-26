@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { courseFromLocation, extractLinks, descriptionBody, taskContext, unescapeIcsText, phaseOf, groupScope } from '../apps/relay/src/task-context.mjs';
+import {
+  courseFromLocation,
+  extractLinks,
+  descriptionBody,
+  taskContext,
+  unescapeIcsText,
+  phaseOf,
+  groupScope,
+  parseDescriptionDueDate,
+  cleanDisplayTitle,
+  isSameAssessment,
+} from '../apps/relay/src/task-context.mjs';
 
 /**
  * Every string in this file was copied out of the live LEARN and Portal feeds on 2026-09-22, so the
@@ -123,3 +134,85 @@ test('groupScope parses section and group bounds from title brackets', () => {
   assert.equal(g3.groups, null);
   assert.equal(g3.base, 'Quiz #2');
 });
+
+test('parseDescriptionDueDate extracts due dates from event description with HTML and Crowdmark note', () => {
+  const desc =
+    '8:30amTUTORIAL ASSIGNMENT 3 - AvailableMATH 117opens<p>To be submitted to Crowdmark by 6pm on Friday, Oct 2. Lateness penalty of 1% per minute.</p> Materials TUTORIAL ASSIGNMENT 3\\nLEARN[View event](https://learn.uwaterloo.ca/d2l/le/calendar/1288774/event/3846570/detailsview?ou=1288774#3846570)Hide event';
+
+  const refDate = Date.parse('2026-09-25T12:00:00Z');
+  const res = parseDescriptionDueDate(desc, { eventStart: refDate, timezone: 'America/Toronto' });
+  assert.ok(res, 'should successfully parse due date from description');
+
+  // Verify against America/Toronto: Oct 2 2026, 18:00 (EDT = UTC-4) -> 2026-10-02 22:00:00Z
+  const expectedUtc = Date.parse('2026-10-02T22:00:00.000Z');
+  assert.equal(res.due_at, expectedUtc);
+  assert.match(res.text, /6pm on Friday, Oct 2/i);
+});
+
+test('parseDescriptionDueDate handles various syntax variants and ignores non-due dates', () => {
+  const refDate = Date.parse('2026-09-25T12:00:00Z');
+
+  // "Due Friday, Oct 2 at 11:59pm"
+  const r1 = parseDescriptionDueDate('Due Friday, Oct 2 at 11:59pm', { eventStart: refDate });
+  assert.ok(r1);
+  assert.equal(new Date(r1.due_at).toISOString(), '2026-10-03T03:59:00.000Z'); // 23:59 EDT = 03:59 UTC next day
+
+  // ISO date with time: "Must be submitted before 2026-10-05 17:00"
+  const r2 = parseDescriptionDueDate('Must be submitted before 2026-10-05 17:00', { eventStart: refDate });
+  assert.ok(r2);
+  assert.equal(new Date(r2.due_at).toISOString(), '2026-10-05T21:00:00.000Z'); // 17:00 EDT = 21:00 UTC
+
+  // Non-due descriptions should return null
+  assert.equal(parseDescriptionDueDate('Office hours held in MC 4015 every Friday at 2pm', { eventStart: refDate }), null);
+  assert.equal(parseDescriptionDueDate('Read chapter 4 and complete exercises 1 to 5', { eventStart: refDate }), null);
+  assert.equal(parseDescriptionDueDate('', { eventStart: refDate }), null);
+  assert.equal(parseDescriptionDueDate(null, { eventStart: refDate }), null);
+});
+
+test('taskContext automatically populates due_at when parsed from description', () => {
+  const refDate = Date.parse('2026-09-25T12:00:00Z');
+  const ctx = taskContext({
+    title: 'TUTORIAL ASSIGNMENT 3 - Available',
+    location: 'MATH 117 - Fall 2026',
+    description: '<p>To be submitted to Crowdmark by 6pm on Friday, Oct 2.</p>',
+    starts_at: refDate,
+  });
+  assert.equal(ctx.course, 'MATH 117');
+  assert.ok(ctx.due_at);
+  assert.equal(new Date(ctx.due_at).toISOString(), '2026-10-02T22:00:00.000Z');
+});
+
+test('cleanDisplayTitle removes both - Available and - Due tags', () => {
+  assert.equal(cleanDisplayTitle('TUTORIAL ASSIGNMENT 3 - Available'), 'TUTORIAL ASSIGNMENT 3');
+  assert.equal(cleanDisplayTitle('TUTORIAL ASSIGNMENT 3 - Due'), 'TUTORIAL ASSIGNMENT 3');
+  assert.equal(cleanDisplayTitle('Project Milestone 1 Available'), 'Project Milestone 1');
+  assert.equal(cleanDisplayTitle('Quiz 4 Due'), 'Quiz 4');
+});
+
+test('isSameAssessment matches corresponding assessments and avoids merging numbered items', () => {
+  // Matching across available/due variants
+  assert.equal(
+    isSameAssessment('TUTORIAL ASSIGNMENT 3 - Available', 'TUTORIAL ASSIGNMENT 3 - Due', 'MATH 117', 'MATH 117'),
+    true
+  );
+  // Matching with course in title
+  assert.equal(
+    isSameAssessment('TUTORIAL ASSIGNMENT 3 - Available', 'MATH 117 - TUTORIAL ASSIGNMENT 3 - Due', 'MATH 117', 'MATH 117'),
+    true
+  );
+  // Different courses do not match
+  assert.equal(
+    isSameAssessment('Assignment 1', 'Assignment 1', 'MATH 117', 'ECE 105'),
+    false
+  );
+  // Differently numbered quizzes do NOT match
+  assert.equal(
+    isSameAssessment('Quiz 1 - Available', 'Quiz 10 - Due', 'ECE 150', 'ECE 150'),
+    false
+  );
+  assert.equal(
+    isSameAssessment('Assignment 2', 'Assignment 20', 'MATH 117', 'MATH 117'),
+    false
+  );
+});
+

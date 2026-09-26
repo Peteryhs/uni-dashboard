@@ -73,6 +73,7 @@ export const DueSoonItem = z.object({
       groups: z.tuple([z.number(), z.number()]).nullable(),
     })
     .optional(),
+  due_at: EPOCH_MS.nullable().optional(),
 });
 
 export const DueSoonAheadGroup = z.object({

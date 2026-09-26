@@ -19,7 +19,7 @@ import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
 import { createStaticHandler, webRootExists, WEB_ROOT } from './static.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
-import { DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
+import { DEFAULT_AI_MODEL, POPULAR_MODELS, getAvailableAiModels } from './ai.mjs';
 import { OfficeHoursConfig } from '#contract/office-hours.mjs';
 import { getFoodProfile, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from './food-recommendation.mjs';
 import { clearAiJob, getAiJob, processAiJob, publicAiJob, queueAiJob, restartStalledAiJob } from './ai-jobs.mjs';
@@ -269,9 +269,13 @@ export function createServer({
       }
 
       if (url.pathname === '/v1/ai/models' && req.method === 'GET') {
+        const models = await getAvailableAiModels({
+          accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+          apiToken: process.env.CLOUDFLARE_API_TOKEN,
+        });
         return send(200, {
           default_model: DEFAULT_AI_MODEL,
-          models: POPULAR_MODELS,
+          models,
         });
       }
 

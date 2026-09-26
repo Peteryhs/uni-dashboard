@@ -346,4 +346,86 @@ test('when food feed failed and has no recent success, food card reports failed 
   assert.match(card.data.error, /Downstream DNS error/);
 });
 
+test('dueSoonCard parses description due date for opens events, resolves conflicts on update, removal and explicit due dates', () => {
+  const store = new SqliteStore(':memory:');
+  const testNow = Date.parse('2026-09-28T12:00:00Z'); // Sept 28, 4 days before Oct 2
+  const openTime = testNow + 2 * 3600_000;
+  const expectedDueAt = Date.parse('2026-10-02T22:00:00.000Z');
+
+  // 1. Initial opening event with description containing Crowdmark due date
+  store.upsertRows('timeline_event', [
+    {
+      source_id: 'uw-learn-ics',
+      external_id: 'tut3-open',
+      observed_at: testNow,
+      valid_until: testNow + 15 * MIN,
+      kind: 'deadline',
+      title: 'TUTORIAL ASSIGNMENT 3 - Available',
+      location: 'MATH 117 - Fall 2026',
+      description: '8:30amTUTORIAL ASSIGNMENT 3 - AvailableMATH 117opens<p>To be submitted to Crowdmark by 6pm on Friday, Oct 2. Lateness penalty of 1% per minute.</p> Materials TUTORIAL ASSIGNMENT 3',
+      starts_at: openTime,
+      ends_at: openTime,
+    },
+  ]);
+
+  let card = dueSoonCard(store, { now: testNow });
+  assert.equal(card.data.opens.length, 1);
+  const openItem = card.data.opens[0];
+  assert.equal(openItem.due_at, expectedDueAt);
+
+  // Inferred due item should be present in due
+  assert.equal(card.data.due.length, 1);
+  const derivedDue = card.data.due[0];
+  assert.equal(derivedDue.starts_at, expectedDueAt);
+  assert.equal(derivedDue.course, 'MATH 117');
+  assert.match(derivedDue.title, /TUTORIAL ASSIGNMENT 3/);
+
+  // 2. Conflict resolution: if updated with new description/deadline
+  const updatedDueAt = Date.parse('2026-10-03T22:00:00.000Z');
+  store.upsertRows('timeline_event', [
+    {
+      source_id: 'uw-learn-ics',
+      external_id: 'tut3-open',
+      observed_at: testNow + 5 * MIN,
+      valid_until: testNow + 20 * MIN,
+      kind: 'deadline',
+      title: 'TUTORIAL ASSIGNMENT 3 - Available',
+      location: 'MATH 117 - Fall 2026',
+      description: '<p>Deadline extended! To be submitted to Crowdmark by 6pm on Saturday, Oct 3.</p>',
+      starts_at: openTime,
+      ends_at: openTime,
+    },
+  ]);
+
+  card = dueSoonCard(store, { now: testNow + 5 * MIN });
+  assert.equal(card.data.opens[0].due_at, updatedDueAt);
+  assert.equal(card.data.due[0].starts_at, updatedDueAt);
+
+  // 3. Conflict resolution: explicit due event arrives in feed
+  store.upsertRows('timeline_event', [
+    {
+      source_id: 'uw-learn-ics',
+      external_id: 'tut3-explicit-due',
+      observed_at: testNow + 10 * MIN,
+      valid_until: testNow + 25 * MIN,
+      kind: 'deadline',
+      title: 'TUTORIAL ASSIGNMENT 3 - Due',
+      location: 'MATH 117 - Fall 2026',
+      description: 'Submit to Crowdmark',
+      starts_at: updatedDueAt,
+      ends_at: updatedDueAt,
+    },
+  ]);
+
+  card = dueSoonCard(store, { now: testNow + 10 * MIN });
+  // Should deduplicate: exactly 1 due item for TUTORIAL ASSIGNMENT 3, not 2
+  assert.equal(card.data.due.length, 1);
+  assert.equal(card.data.due[0].occurrence_id, 'tut3-explicit-due');
+
+  // 4. Conflict resolution: when opening event is tombstoned/removed
+  store.tombstoneMissing('timeline_event', 'uw-learn-ics', ['tut3-explicit-due'], testNow + 30 * MIN);
+  card = dueSoonCard(store, { now: testNow + 30 * MIN });
+  assert.equal(card.data.opens.length, 0, 'tombstoned opening event is removed');
+});
+
 

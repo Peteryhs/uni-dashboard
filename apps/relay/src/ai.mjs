@@ -10,6 +10,7 @@ import { FoodAiRecommendation } from '#contract/card-data.mjs';
 import { z } from 'zod';
 import { OfficeHoursDraft, OFFICE_HOURS_JSON_SCHEMA } from '#contract/office-hours.mjs';
 import { config } from './config.mjs';
+import { registerDynamicRates } from './ai-budget.mjs';
 
 try {
   process.loadEnvFile?.();
@@ -24,9 +25,34 @@ export const POPULAR_MODELS = [
     tag: 'Recommended · 4B Active MoE',
   },
   {
+    id: '@cf/ibm-granite/granite-4.0-h-micro',
+    name: 'IBM Granite 4.0 Micro',
+    tag: 'Cheapest Free · $0.02/M',
+  },
+  {
+    id: '@cf/meta/llama-3.2-1b-instruct',
+    name: 'Meta Llama 3.2 (1B)',
+    tag: 'Ultra-Lightweight · $0.03/M',
+  },
+  {
+    id: '@cf/meta/llama-3.2-3b-instruct',
+    name: 'Meta Llama 3.2 (3B)',
+    tag: 'Fast & Cheap · $0.05/M',
+  },
+  {
+    id: '@cf/qwen/qwen3-30b-a3b-fp8',
+    name: 'Qwen3 (30B-A3B)',
+    tag: 'Dense & MoE · $0.05/M',
+  },
+  {
+    id: '@cf/meta/llama-3.1-8b-instruct-fp8',
+    name: 'Meta Llama 3.1 (8B)',
+    tag: 'Standard 8B · Free Tier',
+  },
+  {
     id: '@cf/zai-org/glm-4.7-flash',
     name: 'GLM-4.7 Flash',
-    tag: 'Ultra-Fast Flash',
+    tag: 'Ultra-Fast Flash · $0.06/M',
   },
   {
     id: '@cf/meta/llama-4-scout-17b-16e-instruct',
@@ -38,12 +64,205 @@ export const POPULAR_MODELS = [
     name: 'DeepSeek-R1 Distill (32B)',
     tag: 'Reasoning Specialist',
   },
-  {
-    id: '@cf/qwen/qwen3-30b-a3b-fp8',
-    name: 'Qwen3 (30B-A3B)',
-    tag: 'Dense & MoE',
-  },
 ];
+
+export const CURATED_MODEL_METADATA = {
+  '@cf/google/gemma-4-26b-a4b-it': {
+    name: 'Google Gemma 4 (26B-A4B)',
+    tag: 'Recommended · 4B Active MoE',
+  },
+  '@cf/ibm-granite/granite-4.0-h-micro': {
+    name: 'IBM Granite 4.0 Micro',
+    tag: 'Cheapest Free · $0.02/M',
+  },
+  '@cf/meta/llama-3.2-1b-instruct': {
+    name: 'Meta Llama 3.2 (1B)',
+    tag: 'Ultra-Lightweight · $0.03/M',
+  },
+  '@cf/meta/llama-3.2-3b-instruct': {
+    name: 'Meta Llama 3.2 (3B)',
+    tag: 'Fast & Cheap · $0.05/M',
+  },
+  '@cf/qwen/qwen3-30b-a3b-fp8': {
+    name: 'Qwen3 (30B-A3B)',
+    tag: 'Dense & MoE · $0.05/M',
+  },
+  '@cf/meta/llama-3.1-8b-instruct-fp8': {
+    name: 'Meta Llama 3.1 (8B)',
+    tag: 'Standard 8B · Free Tier',
+  },
+  '@cf/zai-org/glm-4.7-flash': {
+    name: 'GLM-4.7 Flash',
+    tag: 'Ultra-Fast Flash · $0.06/M',
+  },
+  '@cf/openai/gpt-oss-20b': {
+    name: 'OpenAI GPT-OSS (20B)',
+    tag: 'Open-Weight Reasoning',
+  },
+  '@cf/meta/llama-4-scout-17b-16e-instruct': {
+    name: 'Meta Llama 4 Scout (17B)',
+    tag: '16-Expert MoE',
+  },
+  '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b': {
+    name: 'DeepSeek-R1 Distill (32B)',
+    tag: 'Reasoning Specialist',
+  },
+};
+
+export function formatModelDisplayName(id) {
+  if (CURATED_MODEL_METADATA[id]?.name) return CURATED_MODEL_METADATA[id].name;
+  const clean = id.replace(/^@cf\//, '');
+  const [vendor, slug] = clean.includes('/') ? clean.split('/') : ['', clean];
+
+  const vendorMap = {
+    'ibm-granite': 'IBM Granite',
+    'meta': 'Meta',
+    'google': 'Google',
+    'zai-org': 'Z.ai',
+    'qwen': 'Qwen',
+    'openai': 'OpenAI',
+    'mistralai': 'Mistral',
+    'mistral': 'Mistral',
+    'deepseek-ai': 'DeepSeek',
+    'nvidia': 'NVIDIA',
+    'aisingapore': 'AI Singapore',
+  };
+
+  const v = vendorMap[vendor] || (vendor ? vendor.charAt(0).toUpperCase() + vendor.slice(1) : '');
+  const s = slug
+    .replace(/-/g, ' ')
+    .replace(/\b([a-z])/g, (_, c) => c.toUpperCase())
+    .replace(/Fp8/g, 'FP8')
+    .replace(/It\b/g, 'Instruct');
+
+  return v ? `${v} ${s}` : s;
+}
+
+export function buildModelTag(id, inputPrice) {
+  if (CURATED_MODEL_METADATA[id]?.tag) return CURATED_MODEL_METADATA[id].tag;
+  if (inputPrice !== null && Number.isFinite(inputPrice)) {
+    return `Free Tier · $${inputPrice.toFixed(2)}/M tokens`;
+  }
+  return 'Free Tier';
+}
+
+let cachedDiscoveredModels = null;
+let modelsCacheExpiresAt = 0;
+const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+export async function getAvailableAiModels({
+  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  force = false,
+  now = Date.now(),
+} = {}) {
+  if (!force && cachedDiscoveredModels && now < modelsCacheExpiresAt) {
+    return cachedDiscoveredModels;
+  }
+
+  const diskKey = 'cf_discovered_models';
+  if (!force && aiCache.has(diskKey)) {
+    const entry = aiCache.get(diskKey);
+    if (entry && now < entry.expiresAt && Array.isArray(entry.data) && entry.data.length > 0) {
+      cachedDiscoveredModels = entry.data;
+      modelsCacheExpiresAt = entry.expiresAt;
+      return entry.data;
+    }
+  }
+
+  if (!accountId || !apiToken) {
+    return POPULAR_MODELS;
+  }
+
+  try {
+    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?task=Text%20Generation`;
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      return POPULAR_MODELS;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    const rawList = Array.isArray(data.result) ? data.result : [];
+    if (!rawList.length) {
+      return POPULAR_MODELS;
+    }
+
+    const eligible = [];
+    for (const m of rawList) {
+      if (!m.name || typeof m.name !== 'string') continue;
+      const props = {};
+      for (const p of m.properties || []) {
+        if (p?.property_id) props[p.property_id] = p.value;
+      }
+
+      // Exclude models that require a paid Workers plan
+      const requirePaid = props.require_workers_paid === 'true' || props.require_workers_paid === true;
+      if (requirePaid) continue;
+
+      // Exclude LoRA adapters and safety/guardrail classifiers
+      if (m.name.endsWith('-lora')) continue;
+      if (m.name.includes('guard') || m.name.includes('moderation')) continue;
+      if (props.beta === 'true' && !props.price) continue;
+
+      let inputPrice = null;
+      let outputPrice = null;
+      if (Array.isArray(props.price)) {
+        for (const pr of props.price) {
+          if (pr.unit?.includes('input') && !pr.unit?.includes('cached')) inputPrice = pr.price;
+          if (pr.unit?.includes('output')) outputPrice = pr.price;
+        }
+      }
+
+      // Calculate neuron rates: 1,000 neurons = $0.011 => ~$90,909 neurons per $1.00 USD
+      if (inputPrice !== null && outputPrice !== null) {
+        registerDynamicRates(m.name, inputPrice * 90909, outputPrice * 90909);
+      }
+
+      const avgPrice = (inputPrice !== null && outputPrice !== null)
+        ? (inputPrice + outputPrice) / 2
+        : (inputPrice ?? 999);
+
+      eligible.push({
+        id: m.name,
+        inputPrice,
+        outputPrice,
+        avgPrice,
+      });
+    }
+
+    // Sort: default recommended model first, then cheapest free models ascending
+    eligible.sort((a, b) => {
+      if (a.id === DEFAULT_AI_MODEL) return -1;
+      if (b.id === DEFAULT_AI_MODEL) return 1;
+      return a.avgPrice - b.avgPrice;
+    });
+
+    const formatted = eligible.map((m) => ({
+      id: m.id,
+      name: formatModelDisplayName(m.id),
+      tag: buildModelTag(m.id, m.inputPrice),
+    }));
+
+    if (formatted.length) {
+      cachedDiscoveredModels = formatted;
+      modelsCacheExpiresAt = now + MODELS_CACHE_TTL_MS;
+      aiCache.set(diskKey, { data: formatted, expiresAt: modelsCacheExpiresAt });
+      savePersistentCache();
+      return formatted;
+    }
+  } catch (err) {
+    // Upstream failure or offline: fall back to POPULAR_MODELS
+  }
+
+  return POPULAR_MODELS;
+}
 
 const FETCH_TIMEOUT_MS = 90_000;
 

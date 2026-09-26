@@ -17,6 +17,7 @@ apps/web/.vite/
 # scratch files
 .tmp-*
 .ai-cache.json
+scratch/
 
 # wrangler: local build output, local secret file (never commit secrets)
 .wrangler/
