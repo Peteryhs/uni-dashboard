@@ -40,6 +40,17 @@ test('plausibility accepts the real menu page', { skip: !haveFixture && 'no capt
   assert.equal(verdict.ok, true, verdict.reason);
 });
 
+test('the captured page carries its own service date, and another day is refused', { skip: !haveFixture && 'no captured fixture' }, () => {
+  const rendered = foodSource.renderedDate(html);
+  assert.match(rendered, /^\d{4}-\d{2}-\d{2}$/, `expected a date off the fixture, got "${rendered}"`);
+  const asked = (requestedDate) =>
+    foodSource.plausible({ status: 200, contentType: 'text/html; charset=UTF-8', body: html, bytes: html.length, requestedDate, renderedDate: rendered });
+  assert.equal(asked(rendered).ok, true, 'the day the page rendered is the day it may be written as');
+  const mismatched = asked('1999-01-01');
+  assert.equal(mismatched.ok, false);
+  assert.equal(mismatched.skipped, true, 'a stale render is skipped, not a source failure');
+});
+
 test('parses outlets, each dish belongs to an outlet', { skip: !haveFixture && 'no captured fixture' }, () => {
   const parsed = parseFoodPage(html);
   assert.ok(parsed.outlets.length >= 1, 'expected at least one outlet');
@@ -145,7 +156,7 @@ test('valid_until covers the service day rather than an arbitrary window', () =>
   assert.match(asLocal, /2026-09-22, 03/, `expected 03:00 the next day, got ${asLocal}`);
 });
 
-test('fetchRaw always includes date parameter for current Toronto date', async () => {
+test('fetchRaw asks for a fresh render and records the day the page rendered', async () => {
   const originalFetch = globalThis.fetch;
   const fetchedUrls = [];
   globalThis.fetch = async (target) => {
@@ -153,20 +164,72 @@ test('fetchRaw always includes date parameter for current Toronto date', async (
     return {
       status: 200,
       headers: { get: () => 'text/html' },
-      text: async () => '<div class="food_header_title">REV</div><div class="food_link">Soup</div>',
+      text: async () =>
+        '<input type="date" name="date" value="2026-09-23" class="form-date" /><div class="food_header_title">REV</div><div class="food_link">Soup</div>',
     };
   };
 
   try {
     // 1. Without explicit date in ctx: defaults to today in Toronto based on now
-    await foodSource.fetchRaw({ now: Date.UTC(2026, 8, 23, 14, 0) });
-    assert.equal(fetchedUrls[0], 'https://uwaterloo.ca/food-services/daily-menu?date=2026-09-23');
+    const first = await foodSource.fetchRaw({ now: Date.UTC(2026, 8, 23, 14, 0) });
+    assert.equal(fetchedUrls[0].startsWith('https://uwaterloo.ca/food-services/daily-menu?date=2026-09-23&_='), true, fetchedUrls[0]);
+    assert.equal(first.requestedDate, '2026-09-23');
+    assert.equal(first.renderedDate, '2026-09-23', 'the page states its own date');
 
     // 2. With explicit date in ctx
-    await foodSource.fetchRaw({ date: '2026-09-24' });
-    assert.equal(fetchedUrls[1], 'https://uwaterloo.ca/food-services/daily-menu?date=2026-09-24');
+    await foodSource.fetchRaw({ now: Date.UTC(2026, 8, 24, 14, 0), date: '2026-09-24' });
+    assert.equal(fetchedUrls[1].startsWith('https://uwaterloo.ca/food-services/daily-menu?date=2026-09-24&_='), true, fetchedUrls[1]);
+
+    // 3. Two polls of the same date must not share a URL: the CDN holds a 30 minute copy per URL,
+    //    and the Drupal page cache under it was measured serving a render from the day before.
+    await foodSource.fetchRaw({ now: Date.UTC(2026, 8, 24, 15, 0), date: '2026-09-24' });
+    assert.notEqual(fetchedUrls[2], fetchedUrls[1]);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('renderedDate reads the page own date field and calls an absent one unknown', () => {
+  assert.equal(foodSource.renderedDate('<input type="date" name="date" min="2026-08-26" max="2026-10-25" value="2026-09-25" class="form-date" />'), '2026-09-25');
+  assert.equal(foodSource.renderedDate('<html><body>no filter here</body></html>'), '');
+  assert.equal(foodSource.renderedDate('<input type="date" name="date" class="form-date" />'), '');
+});
+
+test('a cached render of another day is skipped and cannot tombstone the day it was asked about', async () => {
+  const store = new SqliteStore(':memory:');
+  const t0 = Date.UTC(2026, 8, 26, 16);
+  const dishes = ['Soup', 'Stew', 'Pie'];
+  let rendered = '2026-09-26';
+  const body = () =>
+    `<input type="date" name="date" value="${rendered}" class="form-date" />` +
+    '<div class="food_header_title">REV</div>' +
+    dishes.map((d) => `<div class="food_title"><a class="food_link" href="/food-services/daily-menu/${d}">${d}</a></div>`).join('');
+  const source = {
+    ...foodSource,
+    async fetchRaw() {
+      const page = body();
+      return {
+        status: 200,
+        contentType: 'text/html; charset=UTF-8',
+        body: page,
+        bytes: page.length,
+        requestedDate: '2026-09-26',
+        renderedDate: foodSource.renderedDate(page),
+      };
+    },
+  };
+
+  const good = await runSource(source, store, { now: t0, date: '2026-09-26' });
+  assert.equal(good.outcome, 'ok');
+  assert.equal(good.rows_written, 3);
+
+  // The same URL, one cache generation later, is handed yesterday's render instead.
+  rendered = '2026-09-25';
+  const stale = await runSource(source, store, { now: t0 + 6 * 3600_000, date: '2026-09-26' });
+  assert.equal(stale.outcome, 'skipped', stale.error);
+  assert.equal(stale.rows_written, 0);
+  assert.equal(stale.tombstones, 0);
+  assert.match(stale.error, /stale render: page shows 2026-09-25, asked for 2026-09-26/);
+  assert.equal(store.rows('menu_item', { where: 'service_date = ?', params: ['2026-09-26'] }).length, 3);
 });
 

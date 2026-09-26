@@ -1071,7 +1071,7 @@ function PinnedOutletSection({
             )
           ) : (
             <p className="text-xs text-zinc-400 pl-6">
-              Pinned outlet. No menu items currently posted for today.
+              No menu posted by UW Food Services for this date.
             </p>
           )}
         </div>

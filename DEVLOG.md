@@ -8,6 +8,32 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+## 2026-09-26 — every menu poll reads a fresh render, because the page is served from a cache
+
+The dining card showed one hall with a menu and two pinned halls with nothing, while the page a human
+opens showed all three. That read as a fetch failure and it was the reverse. For 2026-09-26 the page's
+own fresh render carries only REVelation's menu: Mudie's and The Market are open today (hours page:
+Saturday 9:00 am - 10:30 pm) and UW Food Services published no menu for either, and the two previous
+weekends published nothing for any hall. What the human saw was a cache: the plain URL answered with
+`x-drupal-cache: HIT`, `last-modified` Fri 25 Sep 20:13 GMT, `cache-control: max-age=1800`, and its
+own date field reading 2026-09-25, so it was Friday's menus under a page titled "Daily menu".
+
+The relay was reading the same cache one URL over: `?date=today` is a cache key of its own, and the
+copy under it had been rendered the previous evening. Whichever day the cache holds is the day a poll
+used to read, and nothing in the bytes said so. Every poll now carries a unique parameter so it
+renders at the origin, and the adapter reads the service date the page states in its own `name="date"`
+field. A mismatch against the requested date is a stale render: the run is `skipped`, writes nothing,
+tombstones nothing, and records which day the bytes described.
+
+Verification: 244/244 tests passed, `npm run web:typecheck` clean, the web production build passed. A
+live dry run (`cli.mjs poll uw-food-daily-menu --dry-run`) read a fresh render for 2026-09-26 and
+reported `outlets: 1, dishes: 6, page_date: 2026-09-26`, while the day-old render captured at the same
+moment is refused with `stale render: page shows 2026-09-25, asked for 2026-09-26`. The empty tile now
+names the source instead of implying a fetch failure. Open question with an hourly probe running:
+whether UW publishes a weekend menu for the other halls mid-day, which is what decides whether the 12
+hour food cadence needs to drop.
+
+---
 ## 2026-09-26 — Dynamic AI model discovery, course details, and calendar refinements
 
 Cloudflare Workers AI models are now discovered dynamically instead of relying on a hardcoded list. Both the Node.js relay and Cloudflare Worker query `GET https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search?task=Text%20Generation` with credentials, filter out paid-only models (`require_workers_paid: true`), raw LoRA fine-tuning adapters, and moderation classifiers, and sort active free models by cost per token ascending. The cheapest free models (IBM Granite 4.0 Micro at $0.02/M, Meta Llama 3.2 1B at $0.03/M, 3B at $0.05/M, Qwen3 MoE at $0.05/M, and GLM-4.7 Flash at $0.06/M) appear at the top alongside the recommended Google Gemma 4 26B-A4B MoE. Discovered models and calculated neuron rates are cached for 12 hours and registered into `ai-budget.mjs`, falling back cleanly to curated models if offline or unauthenticated. The Settings Dining tab loads these models dynamically into an unboxed dropdown with pricing/efficiency badges.
