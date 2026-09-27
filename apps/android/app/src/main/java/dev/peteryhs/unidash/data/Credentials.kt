@@ -1,0 +1,104 @@
+package dev.peteryhs.unidash.data
+
+import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** The Worker's origin plus the Cloudflare Access service token the app authenticates with. */
+@Serializable
+data class Credentials(val baseUrl: String, val clientId: String, val clientSecret: String) {
+    companion object {
+        /**
+         * Normalises what a person pastes: trims, adds https://, drops a trailing slash or path.
+         * Plain http is refused: the service token would travel in clear text.
+         */
+        fun normaliseUrl(raw: String, allowEmulatorHost: Boolean = false): String? {
+            val trimmed = raw.trim().ifEmpty { return null }
+            val withScheme = if ("://" in trimmed) trimmed else "https://$trimmed"
+            val url = runCatching { java.net.URI(withScheme) }.getOrNull() ?: return null
+            if (url.host.isNullOrBlank()) return null
+            // Debug builds only: a local relay on the development machine, as the emulator sees it.
+            val localHttp = allowEmulatorHost && url.scheme == "http" && url.host == EMULATOR_HOST
+            if (url.scheme != "https" && !localHttp) return null
+            val port = if (url.port == -1) "" else ":${url.port}"
+            return "${url.scheme}://${url.host}$port"
+        }
+
+        const val EMULATOR_HOST = "10.0.2.2"
+    }
+}
+
+private val Context.credentialStore by preferencesDataStore(name = "credentials")
+
+/**
+ * Stores the credentials encrypted with an AES-GCM key held in the Android Keystore. The key never
+ * leaves secure hardware, so the stored bytes are useless off this device, and backups are
+ * excluded in data_extraction_rules.xml.
+ */
+class CredentialStore(private val context: Context) {
+    private val blobKey = stringPreferencesKey("blob")
+
+    val credentials: Flow<Credentials?> = context.credentialStore.data.map { prefs ->
+        prefs[blobKey]?.let { decrypt(it) }
+    }
+
+    suspend fun current(): Credentials? = credentials.first()
+
+    suspend fun save(value: Credentials) {
+        val blob = encrypt(ContractJson.encodeToString(value))
+        context.credentialStore.edit { it[blobKey] = blob }
+    }
+
+    suspend fun clear() {
+        context.credentialStore.edit { it.clear() }
+    }
+
+    private fun key(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        gen.init(
+            KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build(),
+        )
+        return gen.generateKey()
+    }
+
+    private fun encrypt(plain: String): String {
+        val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, key()) }
+        val out = cipher.iv + cipher.doFinal(plain.toByteArray())
+        return Base64.encodeToString(out, Base64.NO_WRAP)
+    }
+
+    /** A blob that no longer decrypts (key wiped, app data restored) reads as signed out. */
+    private fun decrypt(blob: String): Credentials? = runCatching {
+        val bytes = Base64.decode(blob, Base64.NO_WRAP)
+        val cipher = Cipher.getInstance(TRANSFORM)
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES))
+        val plain = cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES)
+        ContractJson.decodeFromString<Credentials>(String(plain))
+    }.getOrNull()
+
+    private companion object {
+        const val ALIAS = "unidash-credentials"
+        const val TRANSFORM = "AES/GCM/NoPadding"
+        const val IV_BYTES = 12
+    }
+}

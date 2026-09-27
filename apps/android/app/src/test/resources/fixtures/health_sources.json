@@ -1,0 +1,132 @@
+{
+  "now": 1790536188816,
+  "sources": [
+    {
+      "id": "uw-food-daily-menu",
+      "role": "menu_item",
+      "shape": "menu_item",
+      "cadence_ms": 43200000,
+      "needs_secret": false,
+      "env_var": null,
+      "ready": true,
+      "blocked_by": "",
+      "last_run": {
+        "at": 1790536179912,
+        "outcome": "empty",
+        "http_status": 200,
+        "rows": 0,
+        "bytes": 44022,
+        "error": "no menu published for this date",
+        "meta": {
+          "plausible": false,
+          "credential": false,
+          "empty": true
+        }
+      },
+      "age_s": 9,
+      "job": null
+    },
+    {
+      "id": "uw-portal-ics",
+      "role": "portal",
+      "shape": "timeline_event",
+      "cadence_ms": 21600000,
+      "needs_secret": true,
+      "env_var": "PORTAL_ICS_URL",
+      "ready": true,
+      "blocked_by": "",
+      "last_run": {
+        "at": 1790536179941,
+        "outcome": "ok",
+        "http_status": 200,
+        "rows": 80,
+        "bytes": 1747,
+        "error": "",
+        "meta": {
+          "calendar": "Peter Shao - Class Schedule (sample shape)",
+          "events": 5,
+          "cancelled": 0,
+          "expanded": 80
+        }
+      },
+      "age_s": 9,
+      "job": null
+    },
+    {
+      "id": "uw-learn-ics",
+      "role": "learn",
+      "shape": "timeline_event",
+      "cadence_ms": 900000,
+      "needs_secret": true,
+      "env_var": "LEARN_ICS_URL",
+      "ready": true,
+      "blocked_by": "",
+      "last_run": {
+        "at": 1790536179944,
+        "outcome": "ok",
+        "http_status": 200,
+        "rows": 2,
+        "bytes": 1443,
+        "error": "",
+        "meta": {
+          "calendar": "LEARN Calendar (sample shape)",
+          "events": 5,
+          "cancelled": 0,
+          "expanded": 2
+        }
+      },
+      "age_s": 9,
+      "job": null
+    },
+    {
+      "id": "uw-status",
+      "role": "notice",
+      "shape": "notice",
+      "cadence_ms": 60000,
+      "needs_secret": false,
+      "env_var": null,
+      "ready": true,
+      "blocked_by": "",
+      "last_run": {
+        "at": 1790536180016,
+        "outcome": "ok",
+        "http_status": 200,
+        "rows": 3,
+        "bytes": 22084,
+        "error": "",
+        "meta": {
+          "indicator": "minor",
+          "page": "University of Waterloo",
+          "incidents": 2
+        }
+      },
+      "age_s": 9,
+      "job": null
+    },
+    {
+      "id": "user-office-hours",
+      "role": "office-hours",
+      "shape": "timeline_event",
+      "cadence_ms": 21600000,
+      "needs_secret": false,
+      "env_var": null,
+      "ready": true,
+      "blocked_by": "",
+      "last_run": {
+        "at": 1790536180017,
+        "outcome": "empty",
+        "http_status": 200,
+        "rows": 0,
+        "bytes": 24,
+        "error": "",
+        "meta": {
+          "rules_count": 0,
+          "occurrences_count": 0
+        }
+      },
+      "age_s": 9,
+      "job": null
+    }
+  ],
+  "snapshots": 6
+}

@@ -1,0 +1,351 @@
+package dev.peteryhs.unidash.ui.today
+
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Assignment
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CenterFocusStrong
+import androidx.compose.material.icons.outlined.EventBusy
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.Restaurant
+import androidx.compose.material.icons.outlined.School
+import androidx.compose.material.icons.outlined.Snooze
+import androidx.compose.material.icons.outlined.SupportAgent
+import androidx.compose.material.icons.outlined.Thermostat
+import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material.icons.outlined.WbCloudy
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.peteryhs.unidash.data.Alert
+import dev.peteryhs.unidash.data.CardState
+import dev.peteryhs.unidash.data.DueSoon
+import dev.peteryhs.unidash.data.NextCommitment
+import dev.peteryhs.unidash.data.Recommendation
+import dev.peteryhs.unidash.data.Snapshot
+import dev.peteryhs.unidash.ui.EmptyNote
+import dev.peteryhs.unidash.ui.Format
+import dev.peteryhs.unidash.ui.FreshnessLabel
+import dev.peteryhs.unidash.ui.MainViewModel
+import dev.peteryhs.unidash.ui.ScreenScaffold
+import dev.peteryhs.unidash.ui.SectionHeader
+import dev.peteryhs.unidash.ui.ShapedIcon
+import dev.peteryhs.unidash.ui.muted
+import dev.peteryhs.unidash.ui.theme.Spacing
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private const val HOUR = 3_600_000L
+
+@Composable
+fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState) {
+    val bundle = snapshot.bundle
+    val alertCard = bundle?.card("alert")
+    val alert = alertCard?.payload<Alert>()
+    val nextCard = bundle?.card("next_commitment")
+    val next = nextCard?.payload<NextCommitment>()
+    val dueCard = bundle?.card("due_soon")
+    val due = dueCard?.payload<DueSoon>()
+    val recs = snapshot.recommendations
+    val subtitle = LocalDate.now(dev.peteryhs.unidash.data.CAMPUS_ZONE)
+        .format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.CANADA))
+
+    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh) {
+        if (!snapshot.hasData) {
+            item { EmptyNote(if (snapshot.refreshing) "Loading your dashboard…" else "Nothing loaded yet. Pull to refresh.") }
+            return@ScreenScaffold
+        }
+        if (alert != null && alert.count > 0 && !alert.dismissed) {
+            item(key = "alert") { AlertCard(alert, alertCard.state, alertCard.observedAt, now, onDismiss = { vm.dismissAlert(alert.key) }) }
+        }
+        if (next != null && nextCard.state != CardState.Degraded) {
+            item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now) }
+        } else if (next != null) {
+            item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
+        }
+        recommendations(recs?.headline, recs?.items.orEmpty(), recs?.warnings.orEmpty(), now, vm)
+        if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now)
+    }
+}
+
+@Composable
+private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Long, onDismiss: () -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val uri = LocalUriHandler.current
+    val notice = alert.notices.firstOrNull()
+    Card(
+        onClick = { expanded = !expanded },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s).animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+    ) {
+        Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = null)
+                Text(
+                    if (alert.count > 1) "${alert.count} campus notices" else "Campus notice",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            Text(notice?.title ?: alert.summary, style = MaterialTheme.typography.titleMediumEmphasized)
+            if (expanded) {
+                alert.notices.forEach { n ->
+                    if (n !== notice) Text(n.title, style = MaterialTheme.typography.titleSmall)
+                    if (n.body.isNotBlank()) Text(n.body, style = MaterialTheme.typography.bodyMedium)
+                    if (n.components.isNotEmpty()) Text("Affects ${n.components.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (alert.summary.isNotBlank() && alert.summary != notice?.title) {
+                Text(alert.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            FreshnessLabel(state, observedAt, now)
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                notice?.url?.takeIf { it.isNotBlank() }?.let { url ->
+                    TextButton(onClick = { uri.openUri(url) }) { Text("Status page") }
+                }
+                TextButton(onClick = onDismiss) { Text("Dismiss") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?, now: Long) {
+    val start = next.startsAt
+    val end = next.endsAt
+    val happening = start != null && end != null && now in start..end
+    val label = when {
+        happening -> "Now · ends ${Format.relative(end!!, now)}"
+        start != null -> "Next ${kindLabel(next.kind)} · ${Format.relative(start, now)}"
+        else -> "Next up"
+    }
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+        shape = MaterialTheme.shapes.extraLarge,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s).muted(state.isStale),
+    ) {
+        Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Text(next.title, style = MaterialTheme.typography.headlineMediumEmphasized)
+            if (next.subtitle.isNotBlank()) Text(next.subtitle, style = MaterialTheme.typography.bodyLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                if (start != null) {
+                    Text(
+                        Format.time(start) + (end?.let { " – ${Format.time(it)}" } ?: ""),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                if (next.location.isNotBlank()) IconText(Icons.Outlined.Place, next.location)
+                next.weather?.takeIf { it.show && it.tempC != null }?.let { w ->
+                    IconText(Icons.Outlined.Thermostat, "${w.tempC!!.toInt()}°" + (w.reason.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""))
+                }
+            }
+            next.following?.let { f ->
+                HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                Text(
+                    "Then ${f.title}" + (f.startsAt?.let { " at ${Format.time(it)}" } ?: "") +
+                        (f.location.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            FreshnessLabel(state, observedAt, now)
+        }
+    }
+}
+
+@Composable
+private fun IconText(icon: ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Icon(icon, contentDescription = null, modifier = Modifier.padding(top = 1.dp))
+        Text(text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+private fun LazyListScope.recommendations(headline: String?, items: List<Recommendation>, warnings: List<String>, now: Long, vm: MainViewModel) {
+    item(key = "recs-header") { SectionHeader(headline?.takeIf { it.isNotBlank() }?.let { "Focus · $it" } ?: "Focus") }
+    if (items.isEmpty()) item(key = "recs-empty") { EmptyNote("Nothing needs you right now.") }
+    items(items, key = { "rec:${it.id}" }) { rec -> RecommendationCard(rec, now, vm, Modifier.animateItem()) }
+    warnings.forEach { w -> item { EmptyNote(w) } }
+}
+
+@Composable
+private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel, modifier: Modifier = Modifier) {
+    val uri = LocalUriHandler.current
+    val snooze = { vm.act(rec, "snooze", now + HOUR) }
+    val done = { vm.act(rec, "done") }
+    val swipe = rememberSwipeToDismissBoxState()
+    SwipeToDismissBox(
+        state = swipe,
+        enableDismissFromStartToEnd = rec.canComplete,
+        onDismiss = { value -> if (value == SwipeToDismissBoxValue.StartToEnd) done() else snooze() },
+        backgroundContent = { SwipeBackground(swipe.dismissDirection) },
+        modifier = modifier.padding(horizontal = Spacing.m, vertical = Spacing.xs),
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth().muted(rec.state.isStale).semantics {
+                customActions = buildList {
+                    if (rec.canComplete) add(CustomAccessibilityAction("Mark done") { done(); true })
+                    add(CustomAccessibilityAction("Snooze for an hour") { snooze(); true })
+                }
+            },
+        ) {
+            Row(Modifier.padding(Spacing.m), horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                val (icon, shape) = kindVisual(rec.kind)
+                ShapedIcon(icon, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, shape = shape, size = 40.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(rec.title, style = MaterialTheme.typography.titleMedium)
+                    val time = rec.dueAt ?: rec.startsAt
+                    val meta = listOfNotNull(
+                        rec.course,
+                        time?.let { "${rec.timeLabel ?: "At"} ${Format.relative(it, now)}" },
+                    ).joinToString(" · ")
+                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (rec.body.isNotBlank()) Text(rec.body, style = MaterialTheme.typography.bodyMedium)
+                    // Why this was picked: the web shows it as blue text; here it is the primary role.
+                    if (rec.reason.isNotBlank()) Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    FreshnessLabel(rec.state, null, now)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
+                        if (rec.canComplete) FilledTonalButton(onClick = done) {
+                            Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                            Text("Done", Modifier.padding(start = Spacing.s))
+                        }
+                        OutlinedButton(onClick = snooze) { Text("Snooze 1 h") }
+                        rec.action?.let { a ->
+                            TextButton(onClick = { uri.openUri(a.url) }) {
+                                Text(a.label)
+                                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwipeBackground(direction: SwipeToDismissBoxValue) {
+    val (color, icon, align, text) = when (direction) {
+        SwipeToDismissBoxValue.StartToEnd -> Quad(MaterialTheme.colorScheme.primaryContainer, Icons.Outlined.CheckCircle, Alignment.CenterStart, "Done")
+        SwipeToDismissBoxValue.EndToStart -> Quad(MaterialTheme.colorScheme.tertiaryContainer, Icons.Outlined.Snooze, Alignment.CenterEnd, "Snooze")
+        SwipeToDismissBoxValue.Settled -> return
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = color), shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().padding(horizontal = Spacing.l), contentAlignment = align) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                Icon(icon, contentDescription = null)
+                Text(text, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+
+private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Long?, now: Long) {
+    item(key = "due-header") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionHeader("Due in the next ${due.windowDays} days", Modifier.weight(1f))
+            FreshnessLabel(state, observedAt, now, Modifier.padding(end = Spacing.m, top = Spacing.m))
+        }
+    }
+    val items = due.items.filter { it.isDue }
+    if (items.isEmpty()) item(key = "due-empty") { EmptyNote(due.error ?: "Nothing due this week.") }
+    items(items.take(6), key = { "due:${it.key}" }) { item ->
+        val uri = LocalUriHandler.current
+        val url = item.url ?: item.links.firstOrNull()?.url
+        ListItem(
+            headlineContent = { Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            supportingContent = { Text(listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · ")) },
+            trailingContent = {
+                Text(
+                    Format.relative(item.startsAt, now),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            leadingContent = {
+                Icon(Icons.Outlined.Assignment, contentDescription = null, tint = if (item.significant) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            },
+            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .padding(horizontal = Spacing.s)
+                .muted(state.isStale)
+                .animateItem(),
+        )
+        if (url != null) {
+            Row(Modifier.fillMaxWidth().padding(start = 72.dp, bottom = Spacing.xs)) {
+                AssistChip(onClick = { uri.openUri(url) }, label = { Text("Open in LEARN") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) })
+            }
+        }
+    }
+    if (items.size > 6) item { EmptyNote("${items.size - 6} more in Calendar") }
+}
+
+private fun kindLabel(kind: String?): String = when (kind) {
+    "exam" -> "exam"
+    "office_hours" -> "office hours"
+    "deadline" -> "deadline"
+    "event" -> "event"
+    else -> "class"
+}
+
+private fun kindVisual(kind: String) = when (kind) {
+    "class" -> Icons.Outlined.School to MaterialShapes.Cookie9Sided
+    "task" -> Icons.Outlined.Assignment to MaterialShapes.Square
+    "learning" -> Icons.Outlined.MenuBook to MaterialShapes.Clover4Leaf
+    "office_hours" -> Icons.Outlined.SupportAgent to MaterialShapes.Pill
+    "focus" -> Icons.Outlined.CenterFocusStrong to MaterialShapes.Sunny
+    "conflict" -> Icons.Outlined.EventBusy to MaterialShapes.Gem
+    "food" -> Icons.Outlined.Restaurant to MaterialShapes.Cookie6Sided
+    "weather" -> Icons.Outlined.WbCloudy to MaterialShapes.Puffy
+    else -> Icons.Outlined.CenterFocusStrong to MaterialShapes.Circle
+}

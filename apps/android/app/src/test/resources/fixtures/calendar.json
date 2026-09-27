@@ -1,0 +1,440 @@
+{
+  "schema_version": 1,
+  "timezone": "America/Toronto",
+  "generated_at": 1790536188779,
+  "start": "2026-09-28",
+  "end": "2026-10-05",
+  "days": [
+    {
+      "date": "2026-09-28",
+      "events": [
+        {
+          "id": "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-09-28T13:30:00.000Z",
+          "occurrence_id": "MATH115-LEC001-1269@uwaterloo.ca#2026-09-28T13:30:00.000Z",
+          "uid": "MATH115-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "MATH 115 LEC 001",
+          "subtitle": "",
+          "course": "MATH 115",
+          "location": "MC 4021",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790602200000,
+          "ends_at": 1790605200000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        },
+        {
+          "id": "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-09-28T18:30:00.000Z",
+          "occurrence_id": "ECE150-LEC001-1269@uwaterloo.ca#2026-09-28T18:30:00.000Z",
+          "uid": "ECE150-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 150 LEC 001",
+          "subtitle": "",
+          "course": "ECE 150",
+          "location": "E7 2317",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790620200000,
+          "ends_at": 1790623200000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        }
+      ],
+      "learning": []
+    },
+    {
+      "date": "2026-09-29",
+      "events": [
+        {
+          "id": "uw-portal-ics:ECE105-LEC002-1269@uwaterloo.ca#2026-09-29T12:30:00.000Z",
+          "occurrence_id": "ECE105-LEC002-1269@uwaterloo.ca#2026-09-29T12:30:00.000Z",
+          "uid": "ECE105-LEC002-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 105 LEC 002",
+          "subtitle": "",
+          "course": "ECE 105",
+          "location": "E5 1001",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790685000000,
+          "ends_at": 1790688000000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        },
+        {
+          "id": "uw-learn-ics:learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+          "occurrence_id": "learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+          "uid": "learn-lab-55999@learn.uwaterloo.ca",
+          "source_id": "uw-learn-ics",
+          "source_label": "LEARN",
+          "kind": "deadline",
+          "category": "deadline",
+          "phase": "due",
+          "title": "ECE 105 - Lab report 2 due",
+          "subtitle": "",
+          "course": "ECE 105",
+          "location": "",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790715600000,
+          "ends_at": 1790715600000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179941,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        }
+      ],
+      "learning": []
+    },
+    {
+      "date": "2026-09-30",
+      "events": [
+        {
+          "id": "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-09-30T13:30:00.000Z",
+          "occurrence_id": "MATH115-LEC001-1269@uwaterloo.ca#2026-09-30T13:30:00.000Z",
+          "uid": "MATH115-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "MATH 115 LEC 001",
+          "subtitle": "",
+          "course": "MATH 115",
+          "location": "MC 4021",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790775000000,
+          "ends_at": 1790778000000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        },
+        {
+          "id": "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-09-30T18:30:00.000Z",
+          "occurrence_id": "ECE150-LEC001-1269@uwaterloo.ca#2026-09-30T18:30:00.000Z",
+          "uid": "ECE150-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 150 LEC 001",
+          "subtitle": "",
+          "course": "ECE 150",
+          "location": "E7 2317",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790793000000,
+          "ends_at": 1790796000000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        },
+        {
+          "id": "uw-portal-ics:ECE150-TUT101-1269@uwaterloo.ca#2026-09-30T19:30:00.000Z",
+          "occurrence_id": "ECE150-TUT101-1269@uwaterloo.ca#2026-09-30T19:30:00.000Z",
+          "uid": "ECE150-TUT101-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 150 TUT 101",
+          "subtitle": "",
+          "course": "ECE 150",
+          "location": "E7 2317",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790796600000,
+          "ends_at": 1790799600000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        }
+      ],
+      "learning": []
+    },
+    {
+      "date": "2026-10-01",
+      "events": [
+        {
+          "id": "uw-portal-ics:ECE105-LEC002-1269@uwaterloo.ca#2026-10-01T12:30:00.000Z",
+          "occurrence_id": "ECE105-LEC002-1269@uwaterloo.ca#2026-10-01T12:30:00.000Z",
+          "uid": "ECE105-LEC002-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 105 LEC 002",
+          "subtitle": "",
+          "course": "ECE 105",
+          "location": "E5 1001",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790857800000,
+          "ends_at": 1790860800000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        }
+      ],
+      "learning": []
+    },
+    {
+      "date": "2026-10-02",
+      "events": [
+        {
+          "id": "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-10-02T13:30:00.000Z",
+          "occurrence_id": "MATH115-LEC001-1269@uwaterloo.ca#2026-10-02T13:30:00.000Z",
+          "uid": "MATH115-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "MATH 115 LEC 001",
+          "subtitle": "",
+          "course": "MATH 115",
+          "location": "MC 4021",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790947800000,
+          "ends_at": 1790950800000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        },
+        {
+          "id": "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-10-02T18:30:00.000Z",
+          "occurrence_id": "ECE150-LEC001-1269@uwaterloo.ca#2026-10-02T18:30:00.000Z",
+          "uid": "ECE150-LEC001-1269@uwaterloo.ca",
+          "source_id": "uw-portal-ics",
+          "source_label": "Schedule",
+          "kind": "class",
+          "category": "class",
+          "phase": null,
+          "title": "ECE 150 LEC 001",
+          "subtitle": "",
+          "course": "ECE 150",
+          "location": "E7 2317",
+          "description": "",
+          "url": null,
+          "links": [],
+          "starts_at": 1790965800000,
+          "ends_at": 1790968800000,
+          "all_day": false,
+          "continues_from_previous": false,
+          "continues_next_day": false,
+          "group_scope": {
+            "section": null,
+            "groups": null
+          },
+          "observed_at": 1790536179913,
+          "state": "live",
+          "topics": [],
+          "readings": [],
+          "syllabus_evidence": [],
+          "syllabus_scope": null,
+          "due_at": null
+        }
+      ],
+      "learning": []
+    },
+    {
+      "date": "2026-10-03",
+      "events": [],
+      "learning": []
+    },
+    {
+      "date": "2026-10-04",
+      "events": [],
+      "learning": []
+    }
+  ],
+  "courses": [
+    {
+      "course": "ECE 105",
+      "learn_url": null,
+      "event_ids": [
+        "uw-portal-ics:ECE105-LEC002-1269@uwaterloo.ca#2026-09-29T12:30:00.000Z",
+        "uw-learn-ics:learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+        "uw-portal-ics:ECE105-LEC002-1269@uwaterloo.ca#2026-10-01T12:30:00.000Z"
+      ],
+      "class_count": 2,
+      "deadline_count": 1,
+      "office_hours_count": 0,
+      "resources": []
+    },
+    {
+      "course": "ECE 150",
+      "learn_url": null,
+      "event_ids": [
+        "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-09-28T18:30:00.000Z",
+        "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-09-30T18:30:00.000Z",
+        "uw-portal-ics:ECE150-TUT101-1269@uwaterloo.ca#2026-09-30T19:30:00.000Z",
+        "uw-portal-ics:ECE150-LEC001-1269@uwaterloo.ca#2026-10-02T18:30:00.000Z"
+      ],
+      "class_count": 4,
+      "deadline_count": 0,
+      "office_hours_count": 0,
+      "resources": []
+    },
+    {
+      "course": "MATH 115",
+      "learn_url": null,
+      "event_ids": [
+        "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-09-28T13:30:00.000Z",
+        "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-09-30T13:30:00.000Z",
+        "uw-portal-ics:MATH115-LEC001-1269@uwaterloo.ca#2026-10-02T13:30:00.000Z"
+      ],
+      "class_count": 3,
+      "deadline_count": 0,
+      "office_hours_count": 0,
+      "resources": []
+    }
+  ],
+  "count": 10,
+  "truncated": false,
+  "sources": [
+    {
+      "id": "uw-portal-ics",
+      "status": "ok",
+      "last_run_at": 1790536179941
+    },
+    {
+      "id": "uw-learn-ics",
+      "status": "ok",
+      "last_run_at": 1790536179944
+    },
+    {
+      "id": "user-office-hours",
+      "status": "ok",
+      "last_run_at": 1790536180017
+    }
+  ]
+}

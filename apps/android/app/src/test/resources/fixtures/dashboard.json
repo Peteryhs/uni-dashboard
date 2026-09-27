@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "min_client_version": 1,
+  "generated_at": 1790536188267,
+  "cards": [
+    {
+      "id": "next_commitment",
+      "type": "next_commitment",
+      "priority": 100,
+      "state": "live",
+      "observed_at": 1790536179913,
+      "valid_until": 1790622579913,
+      "source_id": "uw-portal-ics",
+      "data": {
+        "title": "MATH 115 LEC 001",
+        "subtitle": "",
+        "kind": "class",
+        "location": "MC 4021",
+        "starts_at": 1790602200000,
+        "ends_at": 1790605200000,
+        "all_day": false,
+        "weather": {
+          "hour": 1790600400000,
+          "temp_c": 12.7,
+          "feels_c": 11,
+          "precip_prob": 2,
+          "precip_mm": 0,
+          "wind_kmh": 10.5,
+          "show": false,
+          "reason": "nothing notable"
+        },
+        "following": {
+          "title": "ECE 150 LEC 001",
+          "kind": "class",
+          "location": "E7 2317",
+          "starts_at": 1790620200000,
+          "ends_at": 1790623200000,
+          "all_day": false
+        }
+      }
+    },
+    {
+      "id": "alert",
+      "type": "alert",
+      "priority": 95,
+      "state": "live",
+      "observed_at": 1790536179944,
+      "valid_until": 1790536479944,
+      "source_id": "uw-status",
+      "data": {
+        "count": 3,
+        "summary": "Network interruption in some V1 wings - Outage affects Wired Network.",
+        "key": "c2684433e6a71748",
+        "dismissed": false,
+        "checked_at": 1790536180016,
+        "notices": [
+          {
+            "severity": "critical",
+            "title": "Network interruption in some V1 wings - Outage",
+            "body": "IST is aware of a network interruption in the V1 wings listed below. An investigation is in progress.\n\nV1E4\nV1N1\nV1S6",
+            "components": [
+              "Wired Network"
+            ],
+            "incident_status": "investigating",
+            "url": "https://stspg.io/0pdhryrl1rw9"
+          },
+          {
+            "severity": "minor",
+            "title": "Other affected services",
+            "body": "The campus status page reports these services as affected. Open it for current details.",
+            "components": [
+              "ADFS",
+              "Other Systems",
+              "Other",
+              "Identity Management Systems"
+            ],
+            "incident_status": "",
+            "url": "https://status.uwaterloo.ca"
+          },
+          {
+            "severity": "minor",
+            "title": "NetApp Storage Maintenance - Cancelled Maintenance  - Degradation",
+            "body": "Update: This maintenance has been cancelled.\n\nThe original issue has reoccurred, and we are not able to safely proceed with the planned storage failback and firmware maintenance at this time.\n\nThere is currently no service impact, as the redundant node is operating normally and continuing to provide storage services.\n\nWe will continue working with the vendor on the underlying issue and will schedule a new maintenance window once the environment is stable and the work can be completed safely.",
+            "components": [
+              "Storage"
+            ],
+            "incident_status": "monitoring",
+            "url": "https://stspg.io/4v543b4mfjc8"
+          }
+        ]
+      }
+    },
+    {
+      "id": "due_soon",
+      "type": "due_soon",
+      "priority": 90,
+      "state": "live",
+      "observed_at": 1790536179941,
+      "valid_until": 1790622579941,
+      "source_id": "uw-learn-ics",
+      "data": {
+        "count": 1,
+        "nearest_at": 1790715600000,
+        "window_days": 7,
+        "items": [
+          {
+            "title": "ECE 105 - Lab report 2 due",
+            "starts_at": 1790715600000,
+            "kind": "deadline",
+            "course": "ECE 105",
+            "links": [],
+            "uid": "learn-lab-55999@learn.uwaterloo.ca",
+            "occurrence_id": "learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+            "phase": "due",
+            "all_day": false,
+            "significant": true,
+            "group_scope": {
+              "section": null,
+              "groups": null
+            }
+          }
+        ],
+        "courses": [
+          {
+            "course": "ECE 105",
+            "count": 1,
+            "items": [
+              {
+                "title": "ECE 105 - Lab report 2 due",
+                "starts_at": 1790715600000,
+                "kind": "deadline",
+                "course": "ECE 105",
+                "links": [],
+                "uid": "learn-lab-55999@learn.uwaterloo.ca",
+                "occurrence_id": "learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+                "phase": "due",
+                "all_day": false,
+                "significant": true,
+                "group_scope": {
+                  "section": null,
+                  "groups": null
+                }
+              }
+            ]
+          }
+        ],
+        "due": [
+          {
+            "title": "ECE 105 - Lab report 2 due",
+            "starts_at": 1790715600000,
+            "kind": "deadline",
+            "course": "ECE 105",
+            "links": [],
+            "uid": "learn-lab-55999@learn.uwaterloo.ca",
+            "occurrence_id": "learn-lab-55999@learn.uwaterloo.ca#2026-09-29T21:00:00.000Z",
+            "phase": "due",
+            "all_day": false,
+            "significant": true,
+            "group_scope": {
+              "section": null,
+              "groups": null
+            }
+          }
+        ],
+        "opens": [],
+        "ahead": [
+          {
+            "week_start": 1792368000000,
+            "label": "Week of Oct 19",
+            "items": [
+              {
+                "title": "ECE 105 Midterm Exam (in class)",
+                "starts_at": 1792499400000,
+                "kind": "exam",
+                "course": "ECE 105",
+                "links": [],
+                "uid": "learn-midterm-56001@learn.uwaterloo.ca",
+                "occurrence_id": "learn-midterm-56001@learn.uwaterloo.ca#2026-10-20T12:30:00.000Z",
+                "phase": "due",
+                "all_day": false,
+                "significant": true,
+                "group_scope": {
+                  "section": null,
+                  "groups": null
+                }
+              }
+            ]
+          }
+        ],
+        "next_major": {
+          "title": "ECE 105 Midterm Exam (in class)",
+          "course": "ECE 105",
+          "starts_at": 1792499400000
+        }
+      }
+    },
+    {
+      "id": "food",
+      "type": "food",
+      "priority": 80,
+      "state": "empty",
+      "observed_at": null,
+      "valid_until": null,
+      "source_id": "uw-food-daily-menu",
+      "data": {
+        "service_date": "2026-09-27",
+        "pinned": [
+          {
+            "outlet": "REVelation - Residence Dining Hall",
+            "pinned": true,
+            "serving": false,
+            "dish_count": 0,
+            "dishes": [],
+            "hidden_dishes": 0
+          },
+          {
+            "outlet": "Mudie's - Residence Dining Hall",
+            "pinned": true,
+            "serving": false,
+            "dish_count": 0,
+            "dishes": [],
+            "hidden_dishes": 0
+          },
+          {
+            "outlet": "The Market - Residence Dining Hall",
+            "pinned": true,
+            "serving": false,
+            "dish_count": 0,
+            "dishes": [],
+            "hidden_dishes": 0
+          }
+        ],
+        "others": [],
+        "others_count": 0,
+        "total_dishes": 0
+      }
+    }
+  ]
+}
