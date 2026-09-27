@@ -32,6 +32,7 @@ import dev.peteryhs.unidash.data.FoodPick
 import dev.peteryhs.unidash.data.Outlet
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.EmptyNote
+import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.FreshnessLabel
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
@@ -50,7 +51,7 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
     val pick = pickCard?.payload<FoodPick>()?.takeIf { food == null || it.serviceDate == food.serviceDate }
 
     ScreenScaffold(
-        "Food", food?.serviceDate?.let { "Menus for $it" }, snapshot, now, snackbar, onRefresh = vm::refresh,
+        "Food", food?.serviceDate?.let { date -> Format.dayHeader(date).let { d -> if (d == "Today" || d == "Tomorrow") "Menus for ${d.lowercase()}" else "Menus for $d" } }, snapshot, now, snackbar, onRefresh = vm::refresh,
         actions = {
             food?.serviceDate?.let { date ->
                 IconButton(onClick = { uri.openUri("https://uwaterloo.ca/food-services/daily-menu?date=$date") }) {

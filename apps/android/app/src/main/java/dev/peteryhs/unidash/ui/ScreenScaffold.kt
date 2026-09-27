@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -30,7 +30,7 @@ import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.theme.Spacing
 
 /**
- * Every tab has the same frame: a large flexible app bar that collapses on scroll, the connection
+ * Every tab has the same frame: a medium flexible app bar that collapses on scroll, the connection
  * banner, and pull-to-refresh with the Expressive loading indicator. Content is capped at a
  * readable width on tablets and foldables.
  */
@@ -54,7 +54,7 @@ fun ScreenScaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Column {
-                LargeFlexibleTopAppBar(
+                MediumFlexibleTopAppBar(
                     title = { Text(title) },
                     subtitle = subtitle?.let { { Text(it) } },
                     actions = actions,

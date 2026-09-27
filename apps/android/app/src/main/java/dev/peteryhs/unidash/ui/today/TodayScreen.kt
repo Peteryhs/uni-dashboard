@@ -64,6 +64,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -203,7 +205,7 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
     val happening = start != null && end != null && now in start..end
     val label = when {
         happening -> "Now · ends ${Format.relative(end!!, now)}"
-        start != null -> "Next ${kindLabel(next.kind)} · ${Format.relative(start, now)}"
+        start != null -> "Next ${kindLabel(next.kind)} · ${Format.whenLabel(start, now)}"
         else -> "Next up"
     }
     ElevatedCard(
@@ -252,7 +254,7 @@ private fun IconText(icon: ImageVector, text: String) {
 }
 
 private fun LazyListScope.recommendations(headline: String?, items: List<Recommendation>, warnings: List<String>, now: Long, vm: MainViewModel) {
-    item(key = "recs-header") { SectionHeader(headline?.takeIf { it.isNotBlank() }?.let { "Focus · $it" } ?: "Focus") }
+    item(key = "recs-header") { SectionHeader(if (items.isEmpty()) "Focus" else "Focus · ${items.size}") }
     if (items.isEmpty()) item(key = "recs-empty") { EmptyNote("Nothing needs you right now.") }
     items(items, key = { "rec:${it.id}" }) { rec -> RecommendationCard(rec, now, vm, Modifier.animateItem()) }
     warnings.forEach { w -> item { EmptyNote(w) } }
@@ -261,8 +263,9 @@ private fun LazyListScope.recommendations(headline: String?, items: List<Recomme
 @Composable
 private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel, modifier: Modifier = Modifier) {
     val uri = LocalUriHandler.current
-    val snooze = { vm.act(rec, "snooze", now + HOUR) }
-    val done = { vm.act(rec, "done") }
+    val haptics = LocalHapticFeedback.current
+    val snooze = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); vm.act(rec, "snooze", now + HOUR) }
+    val done = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "done") }
     val swipe = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = swipe,
@@ -274,7 +277,7 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             shape = MaterialTheme.shapes.large,
-            modifier = Modifier.fillMaxWidth().muted(rec.state.isStale).semantics {
+            modifier = Modifier.fillMaxWidth().semantics {
                 customActions = buildList {
                     if (rec.canComplete) add(CustomAccessibilityAction("Mark done") { done(); true })
                     add(CustomAccessibilityAction("Snooze for an hour") { snooze(); true })
@@ -289,10 +292,11 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                     val time = rec.dueAt ?: rec.startsAt
                     val meta = listOfNotNull(
                         rec.course,
-                        time?.let { "${rec.timeLabel ?: "At"} ${Format.relative(it, now)}" },
+                        recTime(rec, now),
                     ).joinToString(" · ")
                     if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (rec.body.isNotBlank()) Text(rec.body, style = MaterialTheme.typography.bodyMedium)
+                    val repeatsTime = time != null && rec.timeLabel != null && rec.body.startsWith(rec.timeLabel) && rec.body.length < 48
+                    if (rec.body.isNotBlank() && !repeatsTime) Text(rec.body, style = MaterialTheme.typography.bodyMedium)
                     // Why this was picked: the web shows it as blue text; here it is the primary role.
                     if (rec.reason.isNotBlank()) Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     FreshnessLabel(rec.state, null, now)
@@ -392,4 +396,17 @@ private fun kindVisual(kind: String) = when (kind) {
     "food" -> Icons.Outlined.Restaurant to MaterialShapes.Cookie6Sided
     "weather" -> Icons.Outlined.WbCloudy to MaterialShapes.Puffy
     else -> Icons.Outlined.CenterFocusStrong to MaterialShapes.Circle
+}
+
+/** A deadline counts down; a window says whether it is on now, ahead, or already over. */
+private fun recTime(rec: Recommendation, now: Long): String? {
+    rec.dueAt?.let { return "${rec.timeLabel ?: "Due"} ${Format.whenLabel(it, now)}" }
+    val start = rec.startsAt ?: return null
+    val end = rec.endsAt
+    return when {
+        end != null && end <= now -> "Ended"
+        start <= now && end != null -> "Now · until ${Format.time(end)}"
+        start <= now -> "Started ${Format.relative(start, now)}"
+        else -> "${rec.timeLabel ?: "Starts"} ${Format.whenLabel(start, now)}"
+    }
 }

@@ -150,14 +150,14 @@ private fun SourceRow(s: dev.peteryhs.unidash.data.SourceHealth, now: Long) {
     }
     ListItem(
         leadingContent = { Icon(icon, contentDescription = null, tint = tint) },
-        headlineContent = { Text(s.id) },
+        headlineContent = { Text(SOURCE_NAMES[s.id] ?: s.id) },
         supportingContent = {
             Text(
                 when {
-                    !s.ready -> "Needs ${s.blockedBy.ifBlank { "configuration" }}"
+                    !s.ready -> "Not set up · ${s.blockedBy.ifBlank { "needs configuration" }}"
                     run?.at == null -> "Not fetched yet"
                     else -> buildString {
-                        append(run.outcome.ifBlank { "ok" }).append(" · ").append(Format.age(run.at, now))
+                        append(OUTCOMES[run.outcome] ?: run.outcome.ifBlank { "OK" }).append(" · updated ").append(Format.age(run.at, now).removeSuffix(" old").let { if (it == "just now") it else "$it ago" })
                         if (old) append(" · overdue")
                         run.error?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
                     }
@@ -166,3 +166,15 @@ private fun SourceRow(s: dev.peteryhs.unidash.data.SourceHealth, now: Long) {
         },
     )
 }
+
+private val SOURCE_NAMES = mapOf(
+    "uw-food-daily-menu" to "Daily menus",
+    "uw-status" to "Campus and IT status",
+    "open-meteo" to "Weather",
+    "uw-portal-ics" to "Class schedule",
+    "google-calendar-ics" to "Google Calendar",
+    "uw-learn-ics" to "LEARN deadlines",
+    "user-office-hours" to "Office hours",
+)
+
+private val OUTCOMES = mapOf("ok" to "OK", "empty" to "Nothing published", "failed" to "Failed")

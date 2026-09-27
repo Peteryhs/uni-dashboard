@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -101,6 +102,7 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
 private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
     val uri = LocalUriHandler.current
     val past = ev.endsAt < now
+    val happening = !ev.allDay && now in ev.startsAt..ev.endsAt
     val (accent, label) = categoryStyle(ev)
     Column(modifier.muted(past || ev.phase == "opens")) {
         ListItem(
@@ -109,6 +111,7 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
             },
             overlineContent = { Text(label) },
             headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
+            tonalElevation = if (happening) 2.dp else 0.dp,
             supportingContent = {
                 val time = when {
                     ev.allDay -> "All day"
@@ -118,8 +121,10 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
                 Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
             },
             trailingContent = {
-                if (!past && ev.startsAt > now && ev.startsAt - now < 12 * 3_600_000L) {
-                    Text(Format.relative(ev.startsAt, now), style = MaterialTheme.typography.labelMedium)
+                when {
+                    happening -> Badge(containerColor = MaterialTheme.colorScheme.primary) { Text("Now", Modifier.padding(horizontal = Spacing.xs)) }
+                    !past && ev.startsAt > now && ev.startsAt - now < 12 * 3_600_000L ->
+                        Text(Format.relative(ev.startsAt, now), style = MaterialTheme.typography.labelMedium)
                 }
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -146,11 +151,23 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
 private fun categoryStyle(ev: CalendarEvent): Pair<Color, String> {
     val c = MaterialTheme.colorScheme
     return when (ev.category) {
-        "class" -> c.primary to (ev.course ?: "Class")
+        // The course is usually the start of the title already ("MATH 115 LEC 001"); say what it is instead.
+        "class" -> c.primary to (ev.course?.takeUnless { ev.title.startsWith(it) } ?: classKind(ev.title))
         "exam" -> c.error to "Exam"
         "office_hours" -> c.secondary to "Office hours"
         "deadline" -> c.tertiary to (ev.course?.let { "$it · Due" } ?: "Due")
         "opens" -> c.outline to (ev.course?.let { "$it · Opens" } ?: "Opens")
         else -> c.outline to "Event"
     }
+}
+
+/** "MATH 115 LEC 001" -> "Lecture". UW section codes are stable enough to name. */
+private fun classKind(title: String): String = when (Regex("\\b(LEC|TUT|LAB|SEM|TST|PRJ)\\b").find(title)?.value) {
+    "LEC" -> "Lecture"
+    "TUT" -> "Tutorial"
+    "LAB" -> "Lab"
+    "SEM" -> "Seminar"
+    "TST" -> "Test"
+    "PRJ" -> "Project"
+    else -> "Class"
 }

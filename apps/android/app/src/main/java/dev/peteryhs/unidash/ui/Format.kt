@@ -38,6 +38,23 @@ object Format {
         return if (diff >= 0) "in $text" else "$text ago"
     }
 
+    /**
+     * "in 25 min" while it is close; "tomorrow at 9:30 a.m." or "Tue at 8:30 a.m." once it is far
+     * enough that a countdown stops meaning anything.
+     */
+    fun whenLabel(target: Long, now: Long): String {
+        if (target < now || target - now < 6 * 3_600_000L) return relative(target, now)
+        val day = Instant.ofEpochMilli(target).atZone(CAMPUS_ZONE).toLocalDate()
+        val today = Instant.ofEpochMilli(now).atZone(CAMPUS_ZONE).toLocalDate()
+        val prefix = when (day) {
+            today -> "today"
+            today.plusDays(1) -> "tomorrow"
+            else -> weekday.format(day)
+        }
+        return "$prefix at ${time(target)}"
+    }
+    private val weekday = DateTimeFormatter.ofPattern("EEE", Locale.CANADA)
+
     /** "3 h old": for freshness labels. */
     fun age(since: Long, now: Long): String {
         val minutes = (now - since).coerceAtLeast(0) / 60_000

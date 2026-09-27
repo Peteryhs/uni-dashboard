@@ -62,12 +62,12 @@ fun rememberNow(): Long {
 fun FreshnessLabel(state: CardState, observedAt: Long?, now: Long, modifier: Modifier = Modifier) {
     if (!state.isStale) return
     val stale = LocalStaleColors.current
-    val age = observedAt?.let { Format.age(it, now) } ?: "age unknown"
+    val age = observedAt?.let { " · ${Format.age(it, now)}" }.orEmpty()
     Surface(color = stale.container, contentColor = stale.onContainer, shape = MaterialTheme.shapes.small, modifier = modifier) {
         Row(Modifier.padding(horizontal = Spacing.s, vertical = Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(16.dp))
             Text(
-                if (state == CardState.Dead) "Out of date · $age" else "Stale · $age",
+                if (state == CardState.Dead) "Out of date$age" else "Stale$age",
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.padding(start = Spacing.xs),
             )
