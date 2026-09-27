@@ -1,6 +1,17 @@
 package dev.peteryhs.unidash.ui.today
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material3.Badge
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -115,38 +126,71 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
     var expanded by rememberSaveable { mutableStateOf(false) }
     val uri = LocalUriHandler.current
     val notice = alert.notices.firstOrNull()
-    Card(
+    val title = notice?.title ?: alert.summary
+    // The other notices besides the one whose title is shown.
+    val more = (alert.count - 1).coerceAtLeast(0)
+    val stale = LocalStaleColors.current
+    Surface(
         onClick = { expanded = !expanded },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-            contentColor = MaterialTheme.colorScheme.onErrorContainer,
-        ),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s).animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.m, vertical = Spacing.xs)
+            .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())
+            .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
     ) {
-        Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                Icon(Icons.Outlined.WarningAmber, contentDescription = null)
+        Column {
+            // The strip: one line, title only. Details wait behind a tap.
+            Row(
+                Modifier.padding(start = Spacing.m, end = Spacing.xs).heightIn(min = 48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = "Campus notice", modifier = Modifier.size(20.dp))
                 Text(
-                    if (alert.count > 1) "${alert.count} campus notices" else "Campus notice",
+                    title,
                     style = MaterialTheme.typography.labelLarge,
+                    maxLines = if (expanded) 3 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                // Staleness stays visible when collapsed: the fixed amber, with a spoken label.
+                if (state.isStale) {
+                    Icon(
+                        Icons.Outlined.History,
+                        contentDescription = "Stale, ${observedAt?.let { Format.age(it, now) } ?: "age unknown"}",
+                        tint = stale.accent,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (more > 0) {
+                    Badge(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                        modifier = Modifier.semantics { contentDescription = "$more more notices" },
+                    ) { Text("+$more") }
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Dismiss notice", modifier = Modifier.size(20.dp))
+                }
             }
-            Text(notice?.title ?: alert.summary, style = MaterialTheme.typography.titleMediumEmphasized)
             if (expanded) {
-                alert.notices.forEach { n ->
-                    if (n !== notice) Text(n.title, style = MaterialTheme.typography.titleSmall)
-                    if (n.body.isNotBlank()) Text(n.body, style = MaterialTheme.typography.bodyMedium)
-                    if (n.components.isNotEmpty()) Text("Affects ${n.components.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                Column(
+                    Modifier.padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                ) {
+                    alert.notices.forEachIndexed { i, n ->
+                        if (i > 0) Text(n.title, style = MaterialTheme.typography.titleSmall)
+                        if (n.body.isNotBlank()) Text(n.body, style = MaterialTheme.typography.bodyMedium)
+                        if (n.components.isNotEmpty()) Text("Affects ${n.components.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    FreshnessLabel(state, observedAt, now)
+                    notice?.url?.takeIf { it.isNotBlank() }?.let { url ->
+                        TextButton(onClick = { uri.openUri(url) }, contentPadding = PaddingValues(0.dp)) { Text("Status page") }
+                    }
                 }
-            } else if (alert.summary.isNotBlank() && alert.summary != notice?.title) {
-                Text(alert.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            FreshnessLabel(state, observedAt, now)
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                notice?.url?.takeIf { it.isNotBlank() }?.let { url ->
-                    TextButton(onClick = { uri.openUri(url) }) { Text("Status page") }
-                }
-                TextButton(onClick = onDismiss) { Text("Dismiss") }
             }
         }
     }

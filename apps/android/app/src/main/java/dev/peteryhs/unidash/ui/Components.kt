@@ -87,7 +87,7 @@ fun ConnectionBanner(snapshot: Snapshot, now: Long) {
         val auth = error is RelayError.Unauthorized || error is RelayError.NotConfigured
         val (bg, fg) = if (auth) MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
         else stale.container to stale.onContainer
-        val since = snapshot.fetchedAt?.let { " Showing data from ${Format.dayTime(it)} (${Format.age(it, now)})." } ?: ""
+        val since = snapshot.fetchedAt?.let { " Showing data from ${Format.time(it)}" } ?: ""
         Row(
             Modifier.fillMaxWidth().background(bg).padding(horizontal = Spacing.m, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,

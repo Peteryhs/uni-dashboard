@@ -96,7 +96,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         fun describe(e: Throwable): String = when (e) {
-            is RelayError.Offline -> "Can't reach the dashboard (${e.message}). Showing the last saved data."
+            is RelayError.Offline -> "Can't reach the dashboard."
             is RelayError -> e.message ?: "Something went wrong"
             else -> e.message ?: "Something went wrong"
         }
