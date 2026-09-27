@@ -103,6 +103,7 @@ class RelayApiTest {
         assertNull(Credentials.normaliseUrl(""))
         assertNull("release builds never allow the emulator host", Credentials.normaliseUrl("http://10.0.2.2:8792"))
         assertEquals("http://10.0.2.2:8792", Credentials.normaliseUrl("http://10.0.2.2:8792", allowEmulatorHost = true))
+        assertEquals("http://127.0.0.1:8792", Credentials.normaliseUrl("http://127.0.0.1:8792", allowEmulatorHost = true))
         assertNull("debug still refuses any other plain-http host", Credentials.normaliseUrl("http://evil.test", allowEmulatorHost = true))
     }
 }

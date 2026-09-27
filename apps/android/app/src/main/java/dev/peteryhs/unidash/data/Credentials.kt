@@ -31,14 +31,14 @@ data class Credentials(val baseUrl: String, val clientId: String, val clientSecr
             val withScheme = if ("://" in trimmed) trimmed else "https://$trimmed"
             val url = runCatching { java.net.URI(withScheme) }.getOrNull() ?: return null
             if (url.host.isNullOrBlank()) return null
-            // Debug builds only: a local relay on the development machine, as the emulator sees it.
-            val localHttp = allowEmulatorHost && url.scheme == "http" && url.host == EMULATOR_HOST
+            // Debug builds only: a relay on the development machine, via 10.0.2.2 or `adb reverse`.
+            val localHttp = allowEmulatorHost && url.scheme == "http" && url.host in DEV_HOSTS
             if (url.scheme != "https" && !localHttp) return null
             val port = if (url.port == -1) "" else ":${url.port}"
             return "${url.scheme}://${url.host}$port"
         }
 
-        const val EMULATOR_HOST = "10.0.2.2"
+        val DEV_HOSTS = setOf("10.0.2.2", "127.0.0.1")
     }
 }
 
