@@ -573,7 +573,7 @@ test('Worker endpoints: GET/PUT /v1/office-hours, POST /v1/ai/parse-office-hours
   const { api } = createMockD1();
   const store = new D1Store(api);
   await store.init();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   // 1. GET /v1/office-hours returns default empty config
   const res1 = await worker.fetch(new Request('https://dash.test/v1/office-hours'), env, {});

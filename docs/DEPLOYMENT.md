@@ -46,9 +46,28 @@ The Worker port exists and was run locally against a real D1 and the live campus
 ```
 npm run web:build                          # client into apps/web/dist, which [assets] uploads
 npx wrangler d1 create uni-dashboard       # once, then paste the id into wrangler.toml
-npx wrangler secret put PORTAL_ICS_URL     # also LEARN_ICS_URL and RELAY_TOKEN
+npx wrangler secret put PORTAL_ICS_URL     # also LEARN_ICS_URL
+# set ACCESS_TEAM_DOMAIN and ACCESS_AUD in wrangler.toml [vars]; /v1 answers 503 until both exist
 npm run deploy                             # build the client, then wrangler deploy
 ```
+
+### Auth: Cloudflare Access, checked twice
+
+There is no relay token on the Worker. Access sits in front of it, and the Worker verifies the JWT
+Access attaches (`Cf-Access-Jwt-Assertion`: RS256 signature against the team's certs, issuer,
+audience, expiry), so the `*.workers.dev` hostname or a route without a policy is still closed.
+
+- **Web:** sign in to Access in the browser. Same-origin fetches carry the cookie.
+- **Android:** a non-expiring Access service token. Add a Service Auth policy for it to the
+  Access application; the app sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`.
+- **Fails closed:** without `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, every `/v1` route answers 503.
+  `ACCESS_DISABLED=1` turns the check off and exists only for `npm run worker:dev` and tests.
+- **Cross-site writes refused:** a non-GET with a foreign `Origin` or `Sec-Fetch-Site: cross-site`
+  gets 403, because cookie auth would otherwise let another page post as you.
+- **Revoking the phone:** delete its service token in Zero Trust.
+
+The local Node relay (`server.mjs`) has no Access in front of it. It still binds 127.0.0.1 and keeps
+its optional `RELAY_TOKEN` for the LAN case.
 
 Two platform differences worth knowing, both found by running it rather than reading about it:
 
@@ -133,8 +152,7 @@ Three rules, all enforced in `worker.mjs` and all tested:
   (`saved in the app` or `Worker secret`), and nothing else. A test asserts the saved URL does not
   appear anywhere in the response.
 - **A value saved in the app wins over a Worker secret**, because it is the more recent explicit
-  choice, and it can set `RELAY_TOKEN`, which is applied before the token check so the token gates
-  the very next request.
+  choice.
 
 An empty string clears a setting, matching the local `.env` behaviour. Worker secrets still work and
 are the fallback when nothing was saved from the app, so both paths are live at once.

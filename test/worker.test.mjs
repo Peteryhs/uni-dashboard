@@ -7,6 +7,7 @@ import { syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
 import { saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
 import { clearAiCache } from '../apps/relay/src/ai.mjs';
 import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
+import { clearAccessCache } from '../apps/relay/src/access.mjs';
 
 /**
  * The D1 binding, mocked over node:sqlite, counting prepared statements so a test can assert the
@@ -125,7 +126,7 @@ test('a cron tick with the cap removed would not fit the free tier budget', asyn
 
 test('the dashboard route answers with four cards and stays inside the query budget', async () => {
   const { api, counter } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
   const res = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -173,13 +174,13 @@ test('scheduled Worker completes a light tick and checks background food AI', as
   const store = new D1Store(api);
   await store.init();
   await store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: Date.now(), forecast: [{ at: Date.now(), temp_c: 18 }] }));
-  const env = { DB: api, AI: { run: async () => { throw new Error('no menu should call AI'); } } };
+  const env = { ACCESS_DISABLED: '1', DB: api, AI: { run: async () => { throw new Error('no menu should call AI'); } } };
   await assert.doesNotReject(worker.scheduled({ cron: '* * * * *' }, env, {}));
 });
 
 test('the calendar route serves validated days and rejects invalid ranges', async () => {
   const { api, counter } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
   const seeded = new D1Store(api);
   await seeded.init();
   await seeded.upsertRows('timeline_event', [{
@@ -200,7 +201,7 @@ test('the calendar route serves validated days and rejects invalid ranges', asyn
 
 test('the health route is open and the shell falls back when there are no assets', async () => {
   const { api } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   const health = await worker.fetch(new Request('https://dash.test/healthz'), env, {});
   assert.equal(health.status, 200);
@@ -210,27 +211,105 @@ test('the health route is open and the shell falls back when there are no assets
   assert.equal(shell.status, 404, 'no ASSETS binding in this test, so the shell route is honest about it');
 });
 
-test('a bearer token gates /v1 and leaves /healthz open', async () => {
+const TEAM = 'https://peter.cloudflareaccess.com';
+const AUD = 'aud-tag-123';
+
+/** A real RS256 key pair and a fetch stub serving its public half as the Access certs endpoint. */
+async function accessFixture(t) {
+  clearAccessCache();
+  const pair = await crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const jwk = { ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: 'k1', alg: 'RS256' };
+  const realFetch = globalThis.fetch;
+  let certFetches = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input) === `${TEAM}/cdn-cgi/access/certs`) {
+      certFetches += 1;
+      return new Response(JSON.stringify({ keys: [jwk] }), { headers: { 'content-type': 'application/json' } });
+    }
+    throw new Error(`unexpected fetch ${input}`);
+  };
+  t.after(() => { globalThis.fetch = realFetch; clearAccessCache(); });
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const sign = async (claims, { kid = 'k1', alg = 'RS256', key = pair.privateKey } = {}) => {
+    const head = `${enc({ alg, kid, typ: 'JWT' })}.${enc(claims)}`;
+    const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(head));
+    return `${head}.${Buffer.from(sig).toString('base64url')}`;
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const good = { iss: TEAM, aud: [AUD], exp: now + 3600, iat: now, common_name: 'client-id.access' };
+  return { sign, good, certFetches: () => certFetches };
+}
+
+const accessRequest = (jwt, init = {}) =>
+  new Request('https://dash.test/v1/dashboard', { ...init, headers: { ...(jwt ? { 'cf-access-jwt-assertion': jwt } : {}), ...(init.headers ?? {}) } });
+
+test('/v1 fails closed when Access is not configured, and /healthz stays open', async () => {
   const { api } = createMockD1();
-  const env = { DB: api, RELAY_TOKEN: 'secret-token' };
+  const res = await worker.fetch(new Request('https://dash.test/v1/dashboard'), { DB: api }, {});
+  assert.equal(res.status, 503);
+  assert.deepEqual((await res.json()).missing, ['ACCESS_TEAM_DOMAIN', 'ACCESS_AUD']);
+  assert.equal((await worker.fetch(new Request('https://dash.test/healthz'), { DB: api }, {})).status, 200);
+});
 
-  const blocked = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
-  assert.equal(blocked.status, 401);
+test('a request signed by Access reaches /v1; forged, expired or foreign ones do not', async (t) => {
+  const fx = await accessFixture(t);
+  const counter = { prepares: 0 };
+  const { api } = createMockD1(counter);
+  const env = { DB: api, ACCESS_TEAM_DOMAIN: 'peter.cloudflareaccess.com', ACCESS_AUD: AUD };
 
-  const wrong = await worker.fetch(
-    new Request('https://dash.test/v1/dashboard', { headers: { authorization: 'Bearer nope' } }),
+  assert.equal((await worker.fetch(accessRequest(await fx.sign(fx.good)), env, {})).status, 200);
+  const email = await worker.fetch(accessRequest(await fx.sign({ ...fx.good, common_name: undefined, email: 'p@x.ca', aud: AUD })), env, {});
+  assert.equal(email.status, 200, 'a browser login with a string aud is accepted too');
+
+  const before = counter.prepares;
+  const refused = [
+    ['no assertion', null],
+    ['garbage', 'not.a.jwt'],
+    ['expired', await fx.sign({ ...fx.good, exp: fx.good.iat - 3600 })],
+    ['not yet valid', await fx.sign({ ...fx.good, nbf: fx.good.iat + 3600 })],
+    ['other application', await fx.sign({ ...fx.good, aud: ['someone-else'] })],
+    ['other team', await fx.sign({ ...fx.good, iss: 'https://evil.cloudflareaccess.com' })],
+    ['alg none', (await fx.sign(fx.good, { alg: 'none' })).replace(/\.[^.]+$/, '.')],
+    ['unknown key', await fx.sign(fx.good, { kid: 'k2' })],
+  ];
+  const tampered = (await fx.sign(fx.good)).split('.');
+  tampered[1] = Buffer.from(JSON.stringify({ ...fx.good, aud: [AUD], email: 'attacker@x' })).toString('base64url');
+  refused.push(['tampered payload', tampered.join('.')]);
+
+  for (const [label, jwt] of refused) {
+    assert.equal((await worker.fetch(accessRequest(jwt), env, {})).status, 401, label);
+  }
+  assert.equal(counter.prepares, before, 'a refused request must not touch D1');
+  assert.ok(fx.certFetches() <= 3, 'certs are cached, refetched only for an unknown kid');
+});
+
+test('a cookie-authenticated write from another site is refused', async (t) => {
+  const fx = await accessFixture(t);
+  const { api } = createMockD1();
+  const env = { DB: api, ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD };
+  const jwt = await fx.sign(fx.good);
+  const post = (headers) => worker.fetch(
+    new Request('https://dash.test/v1/alerts/dismiss', { method: 'POST', body: '{}', headers: { 'cf-access-jwt-assertion': jwt, ...headers } }),
     env,
     {},
   );
-  assert.equal(wrong.status, 401);
+  assert.equal((await post({ origin: 'https://evil.test' })).status, 403);
+  assert.equal((await post({ 'sec-fetch-site': 'cross-site' })).status, 403);
+  assert.notEqual((await post({ origin: 'https://dash.test', 'sec-fetch-site': 'same-origin' })).status, 403);
+  assert.notEqual((await post({})).status, 403, 'the Android app sends neither header');
+});
 
-  const allowed = await worker.fetch(
-    new Request('https://dash.test/v1/dashboard', { headers: { authorization: 'Bearer secret-token' } }),
-    env,
-    {},
-  );
-  assert.equal(allowed.status, 200);
-  assert.equal((await worker.fetch(new Request('https://dash.test/healthz'), env, {})).status, 200);
+test('RELAY_TOKEN no longer gates anything and cannot be saved from the app', async (t) => {
+  t.after(clearEnvSettings);
+  const { api } = createMockD1();
+  const env = { ACCESS_DISABLED: '1', DB: api, RELAY_TOKEN: 'secret-token' };
+  assert.equal((await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {})).status, 200);
+  await worker.fetch(new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ RELAY_TOKEN: 'abc' }) }), env, {});
+  assert.equal(process.env.RELAY_TOKEN, undefined);
 });
 
 const SETTING_KEYS = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'RELAY_TOKEN'];
@@ -243,7 +322,7 @@ function clearEnvSettings() {
 test('credentials saved from the app land in D1 and configure the feeds', async (t) => {
   t.after(clearEnvSettings);
   const { api } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   const before = await (await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {})).json();
   assert.equal(before.portal.configured, false);
@@ -275,7 +354,7 @@ test('credentials saved from the app land in D1 and configure the feeds', async 
 test('the saved feeds actually configure the sources', async (t) => {
   t.after(clearEnvSettings);
   const { api } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   const blocked = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
   assert.equal(blocked.sources.find((s) => s.id === 'uw-learn-ics').ready, false);
@@ -298,7 +377,7 @@ test('the saved feeds actually configure the sources', async (t) => {
 test('a saved credential is validated before it becomes an environment variable', async (t) => {
   t.after(clearEnvSettings);
   const { api } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   const notHttps = await worker.fetch(
     new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ PORTAL_ICS_URL: 'http://portal.test/feed.ics' }) }),
@@ -322,7 +401,7 @@ test('a saved credential is validated before it becomes an environment variable'
 test('an empty value clears a saved credential', async (t) => {
   t.after(clearEnvSettings);
   const { api } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   await worker.fetch(
     new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ LEARN_ICS_URL: 'https://learn.test/feed.ics' }) }),
@@ -339,33 +418,6 @@ test('an empty value clears a saved credential', async (t) => {
   assert.equal(status.learn.configured, false);
 });
 
-test('a token saved from the app gates the very next request', async (t) => {
-  t.after(clearEnvSettings);
-  const { api } = createMockD1();
-  const env = { DB: api };
-
-  // no token yet, so /v1 is open and the app can set one
-  const open = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
-  assert.equal(open.status, 200);
-
-  const saved = await worker.fetch(
-    new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify({ RELAY_TOKEN: 'app-token-123' }) }),
-    env,
-    {},
-  );
-  assert.equal(saved.status, 200);
-
-  const blocked = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
-  assert.equal(blocked.status, 401, 'the token saved in the app must gate the next request');
-
-  const allowed = await worker.fetch(
-    new Request('https://dash.test/v1/dashboard', { headers: { authorization: 'Bearer app-token-123' } }),
-    env,
-    {},
-  );
-  assert.equal(allowed.status, 200);
-});
-
 test('the AI route fails loudly when there is no binding and no REST credentials', async () => {
   const { api } = createMockD1();
   const store = new D1Store(api);
@@ -373,7 +425,7 @@ test('the AI route fails loudly when there is no binding and no REST credentials
   await store.upsertRows('menu_item', [
     { source_id: 'uw-food-daily-menu', external_id: 'd1', observed_at: now, valid_until: now + 1000, outlet: 'REV', dish: 'Soup', service_date: '2026-09-22' },
   ]);
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
 
   const tasks = [];
   const res = await worker.fetch(
@@ -402,7 +454,7 @@ test('Worker manual food ranking persists matching results for the automatic rec
   let aiCalls = 0;
   let releaseAi;
   const aiGate = new Promise((resolve) => { releaseAi = resolve; });
-  const env = { DB: api, AI: { run: async () => {
+  const env = { ACCESS_DISABLED: '1', DB: api, AI: { run: async () => {
     aiCalls++;
     await aiGate;
     return { response: JSON.stringify({
@@ -450,7 +502,7 @@ test('AI syllabus review continues after its request and is readable on a fresh 
   const { api } = createMockD1();
   let releaseAi;
   const aiGate = new Promise((resolve) => { releaseAi = resolve; });
-  const env = { DB: api, AI: { run: async () => {
+  const env = { ACCESS_DISABLED: '1', DB: api, AI: { run: async () => {
     await aiGate;
     return { response: JSON.stringify({ entries: [] }) };
   } } };
@@ -476,7 +528,7 @@ test('raw HTML snapshots download as text rather than execute on the dashboard o
   const store = new D1Store(api);
   await store.init();
   const sha = await store.saveSnapshot({ sourceId: 's', fetchedAt: now, contentType: 'text/html', body: '<script>alert(1)</script>' });
-  const response = await worker.fetch(new Request(`https://dash.test/v1/snapshot/${sha}`), { DB: api }, {});
+  const response = await worker.fetch(new Request(`https://dash.test/v1/snapshot/${sha}`), { ACCESS_DISABLED: '1', DB: api }, {});
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /^text\/plain/);
   assert.match(response.headers.get('content-disposition'), /^attachment/);
@@ -486,7 +538,7 @@ test('raw HTML snapshots download as text rather than execute on the dashboard o
 test('Worker previews and saves a syllabus, serves guidance within query budget, and persists done and undo', async (t) => {
   t.after(clearEnvSettings);
   const { api, counter } = createMockD1();
-  const env = { DB: api };
+  const env = { ACCESS_DISABLED: '1', DB: api };
   const store = new D1Store(api);
   await store.init();
   const due = Date.now() + 4 * 3600_000;
@@ -524,7 +576,7 @@ test('syllabus import bounds request size before parsing or calling AI', async (
   t.after(clearEnvSettings);
   const { api } = createMockD1();
   let aiCalls = 0;
-  const env = { DB: api, AI: { run: async () => { aiCalls++; throw new Error('should not run'); } } };
+  const env = { ACCESS_DISABLED: '1', DB: api, AI: { run: async () => { aiCalls++; throw new Error('should not run'); } } };
   const huge = await worker.fetch(new Request('https://dash.test/v1/courses/ECE%20150/syllabus/preview', {
     method: 'POST', body: JSON.stringify({ text: 'x'.repeat(300_001), use_ai: true }) }), env, {});
   assert.equal(huge.status, 413);

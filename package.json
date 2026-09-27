@@ -22,7 +22,7 @@
     "web:build": "npm --prefix apps/web run build",
     "web:typecheck": "npm --prefix apps/web run typecheck",
     "dash": "npm run web:build && npm run serve",
-    "worker:dev": "npm run web:build && wrangler dev",
+    "worker:dev": "npm run web:build && wrangler dev --var ACCESS_DISABLED:1",
     "worker:check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
     "d1:create": "wrangler d1 create uni-dashboard",
     "deploy": "npm run web:build && wrangler deploy"

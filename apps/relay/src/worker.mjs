@@ -26,6 +26,7 @@ import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
+import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -36,7 +37,6 @@ const ENV_KEYS = [
   'LEARN_ICS_URL',
   'CLOUDFLARE_ACCOUNT_ID',
   'CLOUDFLARE_API_TOKEN',
-  'RELAY_TOKEN',
 ];
 
 /**
@@ -52,7 +52,6 @@ const WRITABLE_SETTINGS = {
   LEARN_ICS_URL: (v) => /^https:\/\/\S+$/.test(v),
   CLOUDFLARE_ACCOUNT_ID: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
   CLOUDFLARE_API_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
-  RELAY_TOKEN: (v) => /^[a-zA-Z0-9_-]+$/.test(v),
   OFFICE_HOURS_JSON: (v) => {
     try {
       const parsed = JSON.parse(v);
@@ -175,33 +174,46 @@ async function handleFetch(request, env, ctx) {
   if (path === '/healthz') return json({ ok: true, uptime_s: Math.round((Date.now() - STARTED_AT) / 1000) });
 
   /**
-   * The token gates the data, not the shell: a browser cannot put an Authorization header on the
-   * initial document request, so index.html stays public and every /v1 route below stays closed.
+   * The Worker gates the data, not the shell. Access already covers the shell at the edge, and
+   * the bundle holds nothing personal: it is an empty renderer until a /v1 call answers.
    */
   if (!path.startsWith('/v1/')) {
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
   }
 
+  /**
+   * Every /v1 route requires a request Cloudflare Access has signed: a browser login or the
+   * Android app's service token. Checked before the database is touched, so an unauthenticated
+   * request costs no D1 queries.
+   */
+  const access = accessConfig(env);
+  if (!access.disabled) {
+    if (!access.configured) return json({ error: 'access not configured', missing: ['ACCESS_TEAM_DOMAIN', 'ACCESS_AUD'].filter((k) => !(env[k] || process.env[k])) }, 503);
+    let verdict;
+    try {
+      verdict = await verifyAccessJwt(request.headers.get('cf-access-jwt-assertion'), access);
+    } catch (error) {
+      console.error(`[access] ${error.message}`);
+      return json({ error: 'access verification unavailable' }, 503);
+    }
+    if (!verdict.ok) {
+      console.warn(`[access] refused ${request.method} ${path}: ${verdict.reason}`);
+      return json({ error: 'unauthorized' }, 401);
+    }
+  }
+  if (isCrossSiteWrite(request, url)) return json({ error: 'cross-site request refused' }, 403);
+
   const store = storeFor(env);
   await store.init();
 
-  /**
-   * Settings the owner saved from the app are applied before the token check, because RELAY_TOKEN
-   * can be one of them: a token set in the UI has to be able to gate the very next request. A value
-   * saved from the app wins over a Worker secret, because it is the more recent explicit choice.
-   */
+  // Settings the owner saved from the app win over Worker secrets: the more recent explicit choice.
   const saved = await applySettings(store);
   const startAiJob = (job) => {
     const task = processAiJob(store, job, { cfEnv: env });
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
     else void task.catch((error) => console.error(`[ai-job] ${job.kind} ${error.message}`));
   };
-
-  const token = process.env.RELAY_TOKEN || env.RELAY_TOKEN || '';
-  if (token && request.headers.get('authorization') !== `Bearer ${token}`) {
-    return json({ error: 'unauthorized' }, 401);
-  }
 
   if (isGuidanceRoute(path)) {
     const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob });
@@ -439,10 +451,10 @@ async function handleFetch(request, env, ctx) {
           name: 'Cloudflare Workers AI',
           role: 'Daily menu ranking and dish highlights (bound, no key needed)',
         },
-        relay_token: {
-          configured: Boolean(process.env.RELAY_TOKEN || env.RELAY_TOKEN),
-          source: saved.includes('RELAY_TOKEN') ? 'saved in the app' : process.env.RELAY_TOKEN || env.RELAY_TOKEN ? 'Worker secret' : 'not set',
-          role: 'Bearer token that gates every /v1 route',
+        access: {
+          configured: accessConfig(env).configured,
+          team_domain: accessConfig(env).teamDomain,
+          role: 'Cloudflare Access gates every /v1 route: browser login or service token',
         },
         writable: true,
         storage: 'd1',
