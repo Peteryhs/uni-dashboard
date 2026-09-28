@@ -11,17 +11,16 @@
 # route answers 503 until both values below are set, so a deploy cannot go out open by accident.
 #   ACCESS_TEAM_DOMAIN  Zero Trust > Settings > Custom Pages, e.g. https://<team>.cloudflareaccess.com
 #   ACCESS_AUD          Zero Trust > Access > Applications > this app > Overview > Application Audience (AUD) Tag
-# Uncomment and fill in:
-# [vars]
-# ACCESS_TEAM_DOMAIN = "https://<team>.cloudflareaccess.com"
-# ACCESS_AUD = "<aud tag>"
-
 name = "uni-dashboard"
 main = "apps/relay/src/worker.mjs"
 compatibility_date = "2026-09-01"
 # nodejs_compat is needed for process.env (the source adapters read it) and for Buffer/Blob paths
 # the storage and AI modules use. No Node-only module is imported by the Worker entrypoint.
 compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ACCESS_TEAM_DOMAIN = "https://peterfat11.cloudflareaccess.com"
+ACCESS_AUD = "89094f50761aeba9685fa28a5bb0fb32bfddbbc4835411eed56020e7fff40ae3"
 
 # The Vite client, served from the same origin as /v1 so there is no CORS path anywhere.
 # single-page-application means unknown paths fall back to index.html instead of 404.
