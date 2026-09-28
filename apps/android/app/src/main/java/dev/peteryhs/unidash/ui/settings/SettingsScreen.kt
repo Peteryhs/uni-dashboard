@@ -171,7 +171,7 @@ private fun AboutSection(baseUrl: String?, health: Result<Health>?) {
     }
 
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = Spacing.m, top = Spacing.xl, bottom = Spacing.l),
+        Modifier.fillMaxWidth().padding(start = Spacing.m, top = Spacing.xl, end = Spacing.m, bottom = Spacing.l),
         verticalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
         Text(
