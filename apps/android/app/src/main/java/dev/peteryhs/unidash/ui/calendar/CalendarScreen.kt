@@ -1,11 +1,17 @@
 package dev.peteryhs.unidash.ui.calendar
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,9 +21,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Badge
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -25,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,7 +40,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.data.CalendarEvent
@@ -42,7 +54,6 @@ import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.FreshnessLabel
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
-import dev.peteryhs.unidash.ui.muted
 import dev.peteryhs.unidash.ui.theme.Spacing
 
 private enum class Filter(val label: String, val categories: Set<String>) {
@@ -100,50 +111,131 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
 
 @Composable
 private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
-    val uri = LocalUriHandler.current
     val past = ev.endsAt < now
     val happening = !ev.allDay && now in ev.startsAt..ev.endsAt
     val (accent, label) = categoryStyle(ev)
-    Column(modifier.muted(past || ev.phase == "opens")) {
-        ListItem(
-            leadingContent = {
-                Box(Modifier.width(4.dp).height(40.dp).background(accent, RoundedCornerShape(2.dp)))
-            },
-            overlineContent = { Text(label) },
-            headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
-            tonalElevation = if (happening) 2.dp else 0.dp,
-            supportingContent = {
-                val time = when {
-                    ev.allDay -> "All day"
-                    ev.category == "deadline" -> "Due ${Format.time(ev.startsAt)}"
-                    else -> "${Format.time(ev.startsAt)} – ${Format.time(ev.endsAt)}"
-                }
-                Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
-            },
-            trailingContent = {
-                when {
-                    happening -> Badge(containerColor = MaterialTheme.colorScheme.primary) { Text("Now", Modifier.padding(horizontal = Spacing.xs)) }
-                    !past && ev.startsAt > now && ev.startsAt - now < 12 * 3_600_000L ->
-                        Text(Format.relative(ev.startsAt, now), style = MaterialTheme.typography.labelMedium)
-                }
-            },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.clickable(onClick = onToggle),
-        )
-        AnimatedVisibility(expanded) {
-            Column(Modifier.padding(start = 72.dp, end = Spacing.m, bottom = Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                if (ev.subtitle.isNotBlank()) Text(ev.subtitle, style = MaterialTheme.typography.bodyMedium)
-                if (ev.description.isNotBlank()) Text(ev.description, style = MaterialTheme.typography.bodyMedium, maxLines = 8, overflow = TextOverflow.Ellipsis)
-                Text("From ${ev.sourceLabel}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FreshnessLabel(ev.state, null, now)
-                val links = (listOfNotNull(ev.url?.let { dev.peteryhs.unidash.data.Link("Open", it) }) + ev.links).distinctBy { it.url }.take(3)
-                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                    links.forEach { l ->
-                        AssistChip(onClick = { uri.openUri(l.url) }, label = { Text(l.label, maxLines = 1) }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) })
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
+        label = "Calendar detail chevron",
+    )
+    val time = when {
+        ev.allDay -> "All day · no exact time"
+        ev.category == "deadline" -> "Due ${Format.time(ev.startsAt)}"
+        else -> "${Format.time(ev.startsAt)} – ${Format.time(ev.endsAt)}"
+    }
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.xs),
+        color = if (expanded || happening) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column {
+            ListItem(
+                leadingContent = {
+                    Box(Modifier.width(4.dp).height(40.dp).background(accent, RoundedCornerShape(2.dp)))
+                },
+                overlineContent = {
+                    Text(label, color = if (ev.category == "opens" || ev.category == "event") MaterialTheme.colorScheme.onSurfaceVariant else accent)
+                },
+                headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
+                supportingContent = {
+                    Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
+                },
+                trailingContent = {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        when {
+                            happening -> Text("Now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            !past && ev.startsAt > now && ev.startsAt - now < 12 * 3_600_000L ->
+                                Text(Format.relative(ev.startsAt, now), style = MaterialTheme.typography.labelMedium)
+                        }
+                        Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.graphicsLayer { rotationZ = rotation })
                     }
+                },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent,
+                    headlineColor = if (past || ev.phase == "opens") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                ),
+                modifier = Modifier.clickable(role = Role.Button, onClick = onToggle)
+                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            )
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+                    fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+                exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+                    fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+            ) { EventDetails(ev, now) }
+        }
+    }
+}
+
+@Composable
+private fun EventDetails(ev: CalendarEvent, now: Long) {
+    val uri = LocalUriHandler.current
+    var showEvidence by rememberSaveable(ev.occurrenceId) { mutableStateOf(false) }
+    val description = ev.description.trim()
+    val subtitle = ev.subtitle.trim().takeUnless { it.isEmpty() || it == description || description.startsWith(it) }
+    val scope = listOfNotNull(
+        ev.groupScope?.section?.let { "Section $it" },
+        ev.groupScope?.groups?.takeIf { it.size == 2 }?.let { "Groups ${it[0]}–${it[1]}" },
+    ).joinToString(" · ")
+    val links = (ev.links + listOfNotNull(ev.url?.let { dev.peteryhs.unidash.data.Link("Open source", it) }))
+        .filter { it.url.startsWith("https://") || it.url.startsWith("http://") }
+        .distinctBy { it.url }
+
+    Column(
+        Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        if (ev.category == "opens" && ev.dueAt != null) DetailLine("Due", Format.dayTime(ev.dueAt))
+        if (ev.location.isNotBlank()) DetailLine("Location", ev.location)
+        if (scope.isNotBlank()) DetailLine("For", scope)
+        if (subtitle != null) DetailLine("Details", subtitle)
+        description.split(Regex("\\n\\s*\\n|\\n")).map(String::trim).filter(String::isNotEmpty).forEach { paragraph ->
+            Text(paragraph, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (ev.topics.isNotEmpty()) DetailLine(if (ev.syllabusScope == "period") "Topics this period" else "Topics", ev.topics.joinToString(", "))
+        if (ev.readings.isNotEmpty()) DetailLine("Readings", ev.readings.joinToString(", "))
+        if (ev.syllabusEvidence.isNotEmpty()) {
+            TextButton(onClick = { showEvidence = !showEvidence }) {
+                Text(if (showEvidence) "Hide syllabus source" else "Show syllabus source")
+            }
+            AnimatedVisibility(
+                visible = showEvidence,
+                enter = expandVertically(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()) +
+                    fadeIn(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
+                exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()) +
+                    fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    ev.syllabusEvidence.forEach { evidence -> Text(evidence, style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Text("From ${ev.sourceLabel}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FreshnessLabel(ev.state, ev.observedAt, now)
+        }
+        if (links.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                links.forEach { link ->
+                    AssistChip(
+                        onClick = { uri.openUri(link.url) },
+                        label = { Text(link.label, maxLines = 1) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+        Text(value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
     }
 }
 

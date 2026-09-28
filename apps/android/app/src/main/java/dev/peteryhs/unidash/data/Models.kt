@@ -239,10 +239,23 @@ data class CalendarEvent(
     val description: String = "",
     val url: String? = null,
     val links: List<Link> = emptyList(),
+    @SerialName("group_scope") val groupScope: CalendarGroupScope? = null,
+    val topics: List<String> = emptyList(),
+    val readings: List<String> = emptyList(),
+    @SerialName("syllabus_evidence") val syllabusEvidence: List<String> = emptyList(),
+    @SerialName("syllabus_scope") val syllabusScope: String? = null,
+    @SerialName("due_at") val dueAt: Long? = null,
+    @SerialName("observed_at") val observedAt: Long? = null,
     @SerialName("starts_at") val startsAt: Long,
     @SerialName("ends_at") val endsAt: Long,
     @SerialName("all_day") val allDay: Boolean = false,
     val state: CardState = CardState.Live,
+)
+
+@Serializable
+data class CalendarGroupScope(
+    val section: Int? = null,
+    val groups: List<Int>? = null,
 )
 
 @Serializable

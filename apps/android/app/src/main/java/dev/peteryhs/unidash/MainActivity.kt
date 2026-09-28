@@ -18,7 +18,12 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            val app = application as UniDashApp
+            app.notifier.ensurePersistent(app.repository.snapshot.value)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -28,10 +33,20 @@ class MainActivity : ComponentActivity() {
         // Ask for notifications once there is something to notify about: after the first sign-in.
         lifecycleScope.launch {
             vm.session.first { it == Session.SignedIn }
-            (application as UniDashApp).scheduleSync()
+            val app = application as UniDashApp
+            app.scheduleSync()
+            app.notifier.ensurePersistent(app.repository.snapshot.value)
             if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) {
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (vm.session.value == Session.SignedIn) {
+            val app = application as UniDashApp
+            app.notifier.ensurePersistent(app.repository.snapshot.value)
         }
     }
 }

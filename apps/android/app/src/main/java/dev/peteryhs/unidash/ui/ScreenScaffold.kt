@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -47,10 +48,18 @@ fun ScreenScaffold(
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val pull = rememberPullToRefreshState()
+    val listState = rememberLazyListState()
+    // A collapsed app bar owns the first downward drag. Disable the pull modifier itself until
+    // both scroll positions are at rest so it cannot consume that drag before the bar expands.
+    val canRefresh = !snapshot.refreshing &&
+        scroll.state.collapsedFraction == 0f &&
+        listState.firstVisibleItemIndex == 0 &&
+        listState.firstVisibleItemScrollOffset == 0
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         // The navigation bar outside this scaffold already consumes the bottom inset.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = MaterialTheme.colorScheme.surface,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Column {
@@ -58,6 +67,10 @@ fun ScreenScaffold(
                     title = { Text(title) },
                     subtitle = subtitle?.let { { Text(it) } },
                     actions = actions,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        scrolledContainerColor = MaterialTheme.colorScheme.surface,
+                    ),
                     scrollBehavior = scroll,
                 )
                 ConnectionBanner(snapshot, now)
@@ -65,8 +78,9 @@ fun ScreenScaffold(
         },
     ) { padding ->
         PullToRefreshBox(
+            enabled = canRefresh,
             isRefreshing = snapshot.refreshing,
-            onRefresh = onRefresh,
+            onRefresh = { if (canRefresh) onRefresh() },
             state = pull,
             modifier = Modifier.fillMaxSize().padding(padding),
             indicator = {
@@ -79,6 +93,7 @@ fun ScreenScaffold(
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
                     contentPadding = PaddingValues(bottom = Spacing.xl),
                     content = content,

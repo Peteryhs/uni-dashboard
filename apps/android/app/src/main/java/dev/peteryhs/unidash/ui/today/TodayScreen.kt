@@ -5,12 +5,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material3.Badge
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.stateDescription
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,13 +40,11 @@ import androidx.compose.material.icons.outlined.WbCloudy
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
@@ -83,8 +81,6 @@ import dev.peteryhs.unidash.ui.FreshnessLabel
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.SectionHeader
-import dev.peteryhs.unidash.ui.ShapedIcon
-import dev.peteryhs.unidash.ui.muted
 import dev.peteryhs.unidash.ui.theme.Spacing
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -133,15 +129,13 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
     val more = (alert.count - 1).coerceAtLeast(0)
     val stale = LocalStaleColors.current
     Surface(
-        onClick = { expanded = !expanded },
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
         shape = MaterialTheme.shapes.large,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Spacing.m, vertical = Spacing.xs)
-            .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())
-            .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
     ) {
         Column {
             // The strip: one line, title only. Details wait behind a tap.
@@ -168,11 +162,18 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
                     )
                 }
                 if (more > 0) {
-                    Badge(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError,
+                    Text(
+                        "+$more",
+                        style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.semantics { contentDescription = "$more more notices" },
-                    ) { Text("+$more") }
+                    )
+                }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = if (expanded) "Hide notice details" else "Show notice details",
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Outlined.Close, contentDescription = "Dismiss notice", modifier = Modifier.size(20.dp))
@@ -208,13 +209,13 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
         start != null -> "Next ${kindLabel(next.kind)} · ${Format.whenLabel(start, now)}"
         else -> "Next up"
     }
-    ElevatedCard(
-        colors = CardDefaults.elevatedCardColors(
+    Card(
+        colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ),
-        shape = MaterialTheme.shapes.extraLarge,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s).muted(state.isStale),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
     ) {
         Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
             Text(label, style = MaterialTheme.typography.labelLarge)
@@ -269,8 +270,8 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
     val swipe = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = swipe,
-        enableDismissFromStartToEnd = rec.canComplete,
-        onDismiss = { value -> if (value == SwipeToDismissBoxValue.StartToEnd) done() else snooze() },
+        enableDismissFromStartToEnd = false,
+        onDismiss = { value -> if (value == SwipeToDismissBoxValue.EndToStart) snooze() },
         backgroundContent = { SwipeBackground(swipe.dismissDirection) },
         modifier = modifier.padding(horizontal = Spacing.m, vertical = Spacing.xs),
     ) {
@@ -285,8 +286,7 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
             },
         ) {
             Row(Modifier.padding(Spacing.m), horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                val (icon, shape) = kindVisual(rec.kind)
-                ShapedIcon(icon, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer, shape = shape, size = 40.dp)
+                RecommendationIcon(kindVisual(rec.kind))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(rec.title, style = MaterialTheme.typography.titleMedium)
                     val time = rec.dueAt ?: rec.startsAt
@@ -321,22 +321,23 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
 
 @Composable
 private fun SwipeBackground(direction: SwipeToDismissBoxValue) {
-    val (color, icon, align, text) = when (direction) {
-        SwipeToDismissBoxValue.StartToEnd -> Quad(MaterialTheme.colorScheme.primaryContainer, Icons.Outlined.CheckCircle, Alignment.CenterStart, "Done")
-        SwipeToDismissBoxValue.EndToStart -> Quad(MaterialTheme.colorScheme.tertiaryContainer, Icons.Outlined.Snooze, Alignment.CenterEnd, "Snooze")
-        SwipeToDismissBoxValue.Settled -> return
-    }
-    Card(colors = CardDefaults.cardColors(containerColor = color), shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().padding(horizontal = Spacing.l), contentAlignment = align) {
+    if (direction != SwipeToDismissBoxValue.EndToStart) return
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        ),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Box(Modifier.fillMaxSize().padding(horizontal = Spacing.l), contentAlignment = Alignment.CenterEnd) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                Icon(icon, contentDescription = null)
-                Text(text, style = MaterialTheme.typography.labelLarge)
+                Icon(Icons.Outlined.Snooze, contentDescription = null)
+                Text("Snooze", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
 }
-
-private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
 private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Long?, now: Long) {
     item(key = "due-header") {
@@ -357,7 +358,7 @@ private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Lo
                 Text(
                     Format.relative(item.startsAt, now),
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             },
             leadingContent = {
@@ -366,7 +367,6 @@ private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Lo
             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
                 .padding(horizontal = Spacing.s)
-                .muted(state.isStale)
                 .animateItem(),
         )
         if (url != null) {
@@ -386,16 +386,31 @@ private fun kindLabel(kind: String?): String = when (kind) {
     else -> "class"
 }
 
-private fun kindVisual(kind: String) = when (kind) {
-    "class" -> Icons.Outlined.School to MaterialShapes.Cookie9Sided
-    "task" -> Icons.Outlined.Assignment to MaterialShapes.Square
-    "learning" -> Icons.Outlined.MenuBook to MaterialShapes.Clover4Leaf
-    "office_hours" -> Icons.Outlined.SupportAgent to MaterialShapes.Pill
-    "focus" -> Icons.Outlined.CenterFocusStrong to MaterialShapes.Sunny
-    "conflict" -> Icons.Outlined.EventBusy to MaterialShapes.Gem
-    "food" -> Icons.Outlined.Restaurant to MaterialShapes.Cookie6Sided
-    "weather" -> Icons.Outlined.WbCloudy to MaterialShapes.Puffy
-    else -> Icons.Outlined.CenterFocusStrong to MaterialShapes.Circle
+/** One quiet icon treatment across the scannable recommendation list. */
+@Composable
+private fun RecommendationIcon(icon: ImageVector) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.size(40.dp),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
+        }
+    }
+}
+
+private fun kindVisual(kind: String): ImageVector = when (kind) {
+    "class" -> Icons.Outlined.School
+    "task" -> Icons.Outlined.Assignment
+    "learning" -> Icons.Outlined.MenuBook
+    "office_hours" -> Icons.Outlined.SupportAgent
+    "focus" -> Icons.Outlined.CenterFocusStrong
+    "conflict" -> Icons.Outlined.EventBusy
+    "food" -> Icons.Outlined.Restaurant
+    "weather" -> Icons.Outlined.WbCloudy
+    else -> Icons.Outlined.CenterFocusStrong
 }
 
 /** A deadline counts down; a window says whether it is on now, ahead, or already over. */

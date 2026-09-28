@@ -1,6 +1,10 @@
 package dev.peteryhs.unidash.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -83,7 +86,13 @@ fun FreshnessLabel(state: CardState, observedAt: Long?, now: Long, modifier: Mod
 fun ConnectionBanner(snapshot: Snapshot, now: Long) {
     val error = snapshot.error
     val stale = LocalStaleColors.current
-    AnimatedVisibility(visible = error != null && !snapshot.refreshing) {
+    AnimatedVisibility(
+        visible = error != null && !snapshot.refreshing,
+        enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+            fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+        exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+            fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+    ) {
         val auth = error is RelayError.Unauthorized || error is RelayError.NotConfigured
         val (bg, fg) = if (auth) MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
         else stale.container to stale.onContainer
@@ -130,6 +139,3 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
         modifier = modifier.padding(start = Spacing.m, end = Spacing.m, top = Spacing.l, bottom = Spacing.s),
     )
 }
-
-/** Dims what is past or stale, so the eye goes to what is current. */
-fun Modifier.muted(enabled: Boolean): Modifier = if (enabled) graphicsLayer { alpha = 0.6f } else this

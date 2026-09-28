@@ -18,10 +18,16 @@ import dev.peteryhs.unidash.MainActivity
 import dev.peteryhs.unidash.R
 import dev.peteryhs.unidash.UniDashApp
 import dev.peteryhs.unidash.data.Alert
+import dev.peteryhs.unidash.data.CardState
+import dev.peteryhs.unidash.data.CAMPUS_ZONE
+import dev.peteryhs.unidash.data.NextCommitment
 import dev.peteryhs.unidash.data.Snapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** Posts notifications and keeps the AlarmManager reminders in step with the calendar. */
 class Notifier(private val context: Context) {
@@ -31,7 +37,11 @@ class Notifier(private val context: Context) {
     fun createChannels() {
         val manager = context.getSystemService(NotificationManager::class.java)
         for (c in Channel.entries) {
-            val importance = if (c == Channel.Alerts || c == Channel.Classes) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_DEFAULT
+            val importance = when (c) {
+                Channel.Persistent -> NotificationManager.IMPORTANCE_LOW
+                Channel.Alerts, Channel.Classes -> NotificationManager.IMPORTANCE_HIGH
+                else -> NotificationManager.IMPORTANCE_DEFAULT
+            }
             manager.createNotificationChannel(NotificationChannel(c.id, c.label, importance).apply { description = c.description })
         }
     }
@@ -42,16 +52,12 @@ class Notifier(private val context: Context) {
 
     fun post(key: String, channel: Channel, title: String, text: String, bigText: String? = null) {
         if (!canPost) return
-        val open = PendingIntent.getActivity(
-            context, 0, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
         val n = NotificationCompat.Builder(context, channel.id)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText ?: text))
-            .setContentIntent(open)
+            .setContentIntent(openIntent())
             .setAutoCancel(true)
             .setCategory(if (channel == Channel.Classes) NotificationCompat.CATEGORY_REMINDER else NotificationCompat.CATEGORY_STATUS)
             .build()
@@ -62,8 +68,28 @@ class Notifier(private val context: Context) {
         }
     }
 
+    /** Keeps a single low-priority dashboard status notification in the shade. */
+    fun ensurePersistent(snapshot: Snapshot = Snapshot(), now: Long = System.currentTimeMillis()) {
+        if (!canPost) return
+        val n = NotificationCompat.Builder(context, Channel.Persistent.id)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Uni Dashboard")
+            .setContentText(persistentText(snapshot, now))
+            .setContentIntent(openIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(PERSISTENT_NOTIFICATION_ID, n)
+        } catch (_: SecurityException) {
+            // Permission revoked between the check and the call.
+        }
+    }
+
     /** Called after every successful refresh, from the app or the background worker. */
     fun onSnapshot(snapshot: Snapshot, now: Long = System.currentTimeMillis(), fromNetwork: Boolean = true) {
+        ensurePersistent(snapshot, now)
         scheduleReminders(NotificationPlanner.plan(snapshot.calendar, now))
         val alert = snapshot.bundle?.card("alert")?.payload<Alert>()
         NotificationPlanner.alertToShow(alert, prefs.getString(KEY_ALERT, null))?.let { a ->
@@ -100,6 +126,33 @@ class Notifier(private val context: Context) {
         NotificationManagerCompat.from(context).cancelAll()
     }
 
+    private fun openIntent(): PendingIntent = PendingIntent.getActivity(
+        context, 0, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    private fun persistentText(snapshot: Snapshot, now: Long): String {
+        val card = snapshot.bundle?.card("next_commitment") ?: return PERSISTENT_FALLBACK
+        if (card.state !in setOf(CardState.Live, CardState.Ageing)) return PERSISTENT_FALLBACK
+        if (card.validUntil == null || card.validUntil <= now) return PERSISTENT_FALLBACK
+        val commitment = card.payload<NextCommitment>() ?: return PERSISTENT_FALLBACK
+        if (commitment.title.isBlank() || commitment.startsAt == null || commitment.endsAt?.let { it <= now } == true) {
+            return PERSISTENT_FALLBACK
+        }
+
+        val details = buildList {
+            commitment.startsAt?.let { startsAt ->
+                add(if (commitment.allDay) "All day" else commitmentTime.format(Instant.ofEpochMilli(startsAt)))
+            }
+            commitment.location.takeIf { it.isNotBlank() }?.let(::add)
+            commitment.subtitle.takeIf { it.isNotBlank() }?.let(::add)
+        }.joinToString(" · ")
+        return buildString {
+            append("Next: ").append(commitment.title)
+            if (details.isNotBlank()) append(" · ").append(details)
+        }
+    }
+
     private fun pendingFor(key: String, r: Reminder?): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).setAction("reminder:$key")
         if (r != null) {
@@ -117,6 +170,9 @@ class Notifier(private val context: Context) {
         private const val KEY_SCHEDULED = "scheduled"
         private const val KEY_ALERT = "last_alert_key"
         private const val KEY_AUTH_WARNED = "auth_warned"
+        private const val PERSISTENT_NOTIFICATION_ID = 0x554E49
+        private const val PERSISTENT_FALLBACK = "Background reminders are enabled"
+        private val commitmentTime = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
     }
 }
 

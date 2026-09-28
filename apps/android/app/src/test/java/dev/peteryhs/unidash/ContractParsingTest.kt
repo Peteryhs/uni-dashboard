@@ -77,6 +77,9 @@ class ContractParsingTest {
         val cal = ContractJson.decodeFromString<Calendar>(fixture("calendar.json"))
         assertEquals(cal.count, cal.days.sumOf { it.events.size })
         assertTrue(cal.days.flatMap { it.events }.any { it.category == "class" })
+        val scheduledClass = cal.days.flatMap { it.events }.first { it.title == "MATH 115 LEC 001" }
+        assertNotNull(scheduledClass.groupScope)
+        assertNotNull(scheduledClass.observedAt)
 
         val health = ContractJson.decodeFromString<Health>(fixture("health_sources.json"))
         assertTrue(health.sources.any { it.id == "uw-status" })

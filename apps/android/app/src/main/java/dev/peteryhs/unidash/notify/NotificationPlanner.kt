@@ -13,6 +13,7 @@ enum class Channel(val id: String, val label: String, val description: String) {
     Deadlines("deadlines", "Deadlines", "A day and two hours before work is due"),
     Alerts("alerts", "Campus alerts", "Campus and IT outages as they are reported"),
     Account("account", "Connection", "When the app can no longer reach your dashboard"),
+    Persistent("persistent", "Uni Dashboard", "The dashboard status notification"),
 }
 
 /** One notification to fire at a set time. `key` is stable across syncs, so it can be replaced or cancelled. */

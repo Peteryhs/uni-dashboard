@@ -105,7 +105,9 @@ private fun Dashboard(vm: MainViewModel) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 600.dp) {
             Row(Modifier.fillMaxSize()) {
-                NavigationRail {
+                NavigationRail(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
                     Tab.entries.forEach { t ->
                         NavigationRailItem(
                             selected = tab == t,
@@ -120,7 +122,9 @@ private fun Dashboard(vm: MainViewModel) {
         } else {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f)) { content() }
-                ShortNavigationBar {
+                ShortNavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
                     Tab.entries.forEach { t ->
                         ShortNavigationBarItem(
                             selected = tab == t,

@@ -8,6 +8,10 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AlarmOn
@@ -35,6 +39,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import dev.peteryhs.unidash.data.Health
 import dev.peteryhs.unidash.data.Snapshot
@@ -123,6 +129,8 @@ fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
                 onFailure = { e -> item { EmptyNote(MainViewModel.describe(e)) } },
             )
         }
+
+        item { AboutSection(baseUrl, health) }
     }
 
     if (confirmSignOut) {
@@ -135,6 +143,113 @@ fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         )
     }
 }
+
+/** App identity and the compact instance details shown by the web settings panel. */
+@Composable
+private fun AboutSection(baseUrl: String?, health: Result<Health>?) {
+    val uri = LocalUriHandler.current
+    val sourceHealth = health?.getOrNull()
+    val sources = sourceHealth?.sources.orEmpty()
+    val nominal = sources.count { source ->
+        source.ready && (source.lastRun == null || source.lastRun.outcome == "ok")
+    }
+    // Health success means the relay answered; feed health below remains a separate signal.
+    val status = when {
+        health == null -> "Checking…"
+        health.isSuccess -> "Operational"
+        else -> "Unreachable"
+    }
+    val statusColor = when (status) {
+        "Operational" -> MaterialTheme.colorScheme.primary
+        "Checking…" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.error
+    }
+    val runtimeTarget = when (Uri.parse(baseUrl.orEmpty()).host?.lowercase()) {
+        "localhost", "127.0.0.1", "10.0.2.2" -> "Local Relay Engine (Node)"
+        null -> "Unknown runtime"
+        else -> "Cloudflare Workers (Edge)"
+    }
+
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Spacing.m, top = Spacing.xl, bottom = Spacing.l),
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        Text(
+            "About",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = Spacing.l, bottom = Spacing.s),
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Uni Dashboard", style = MaterialTheme.typography.headlineSmallEmphasized)
+                Text("v${dev.peteryhs.unidash.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+            Text(status, style = MaterialTheme.typography.labelMedium, color = statusColor)
+        }
+        Text(
+            "A centralized dashboard for calendars, deadlines, dining, and everyday Waterloo student life.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Created by Peter (Peteryhs)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }) {
+            Text("View source on GitHub")
+        }
+
+        Text("Instance status", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        AboutMetric("Runtime target", runtimeTarget)
+        AboutMetric("Feed health", if (sources.isNotEmpty()) "$nominal / ${sources.size} nominal" else "Unavailable")
+        AboutMetric("Host endpoint", baseUrl ?: "Not connected")
+        AboutMetric("Campus timezone", "America/Toronto")
+
+        Text("Acknowledgements & sources", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Built on official University of Waterloo campus systems and open telemetry feeds.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ABOUT_SOURCES.forEach { (name, description, format) ->
+            AboutSourceRow(name, description, format)
+        }
+    }
+}
+
+@Composable
+private fun AboutMetric(label: String, value: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = Spacing.xs)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun AboutSourceRow(name: String, description: String, format: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.bodyMedium)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(format, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+private val ABOUT_SOURCES = listOf(
+    Triple("Waterloo LEARN (D2L)", "Schedule & deliverables", "iCal / API"),
+    Triple("UW Portal & Open Data", "Timetable & locations", "iCal / REST"),
+    Triple("UW Food Services", "Cafeteria daily menus", "Daily HTML"),
+    Triple("UW IST Campus Status", "IT infrastructure health", "Status API"),
+    Triple("Open-Meteo", "Campus weather models", "Forecast API"),
+    Triple("Cloudflare", "Workers, D1 & Workers AI", "Edge Platform"),
+)
 
 @Composable
 private fun SourceRow(s: dev.peteryhs.unidash.data.SourceHealth, now: Long) {
