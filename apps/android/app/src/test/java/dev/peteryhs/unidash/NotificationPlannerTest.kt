@@ -1,10 +1,12 @@
 package dev.peteryhs.unidash
 
+import android.app.NotificationManager
 import dev.peteryhs.unidash.data.Alert
 import dev.peteryhs.unidash.data.Calendar
 import dev.peteryhs.unidash.data.ContractJson
 import dev.peteryhs.unidash.notify.Channel
 import dev.peteryhs.unidash.notify.NotificationPlanner
+import dev.peteryhs.unidash.notify.channelImportance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -60,5 +62,13 @@ class NotificationPlannerTest {
         assertNull(NotificationPlanner.alertToShow(alert.copy(dismissed = true), null))
         assertNull(NotificationPlanner.alertToShow(alert.copy(count = 0), null))
         assertNull(NotificationPlanner.alertToShow(null, null))
+    }
+
+    @Test
+    fun `no channel is silent and the reminders are the loudest`() {
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, channelImportance(Channel.Classes))
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, channelImportance(Channel.Alerts))
+        assertEquals(NotificationManager.IMPORTANCE_DEFAULT, channelImportance(Channel.Persistent))
+        Channel.entries.forEach { assertTrue("$it went quiet", channelImportance(it) > NotificationManager.IMPORTANCE_LOW) }
     }
 }

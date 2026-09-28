@@ -37,10 +37,12 @@ class Notifier(private val context: Context) {
     fun createChannels() {
         val manager = context.getSystemService(NotificationManager::class.java)
         for (c in Channel.entries) {
-            val importance = when (c) {
-                Channel.Persistent -> NotificationManager.IMPORTANCE_LOW
-                Channel.Alerts, Channel.Classes -> NotificationManager.IMPORTANCE_HIGH
-                else -> NotificationManager.IMPORTANCE_DEFAULT
+            val importance = channelImportance(c)
+            // Android freezes a channel's importance when it is first created, so a code change that
+            // raises one only reaches an existing install if the channel is deleted and recreated.
+            // Only a quieter-than-intended channel is repaired; that resets its per-channel override.
+            if ((manager.getNotificationChannel(c.id)?.importance ?: importance) < importance) {
+                manager.deleteNotificationChannel(c.id)
             }
             manager.createNotificationChannel(NotificationChannel(c.id, c.label, importance).apply { description = c.description })
         }
@@ -174,6 +176,16 @@ class Notifier(private val context: Context) {
         private const val PERSISTENT_FALLBACK = "Background reminders are enabled"
         private val commitmentTime = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
     }
+}
+
+/**
+ * Importance per channel. The status notification used to be Importance.LOW, which made the app's
+ * only always-present notification the quiet one. It is a normal notification now, and the mapping is
+ * unit tested, so a channel cannot go silent by accident again.
+ */
+internal fun channelImportance(c: Channel): Int = when (c) {
+    Channel.Classes, Channel.Alerts -> NotificationManager.IMPORTANCE_HIGH
+    else -> NotificationManager.IMPORTANCE_DEFAULT
 }
 
 class ReminderReceiver : BroadcastReceiver() {
