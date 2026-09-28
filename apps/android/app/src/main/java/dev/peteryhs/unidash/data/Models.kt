@@ -169,6 +169,25 @@ data class FoodPick(
     @SerialName("top_outlet") val topOutlet: String,
     @SerialName("ranked_outlets") val rankedOutlets: List<RankedOutlet> = emptyList(),
     val tip: String = "",
+    val model: String = "",
+    @SerialName("generated_at") val generatedAt: Long? = null,
+)
+
+@Serializable
+data class FoodRankingJob(
+    val status: String = "idle",
+    val error: String = "",
+    @SerialName("updated_at") val updatedAt: Long? = null,
+)
+
+@Serializable
+data class FoodRecommendationResponse(
+    val status: String = "pending",
+    val recommendation: FoodPick? = null,
+    @SerialName("ranking_job") val rankingJob: FoodRankingJob? = null,
+    val stale: Boolean = false,
+    @SerialName("limit_reason") val limitReason: String = "",
+    val error: String = "",
 )
 
 @Serializable

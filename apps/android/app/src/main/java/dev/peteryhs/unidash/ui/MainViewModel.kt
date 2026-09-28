@@ -92,6 +92,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun rankFood(date: String) {
+        viewModelScope.launch {
+            app.repository.rankFood(date)
+                .onFailure { _messages.tryEmit(describe(it)) }
+        }
+    }
+
     suspend fun health(): Result<Health> = app.repository.health()
 
     companion object {

@@ -38,6 +38,12 @@ test('handles the three DTSTART forms a UW feed uses', () => {
   assert.equal(local - utc, 4 * 3600 * 1000, 'EDT is UTC-4');
 });
 
+test('DURATION resolves against DTSTART regardless of property order', () => {
+  const body = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:duration-first\nDURATION:PT45M\nDTSTART:20260921T140000Z\nEND:VEVENT\nEND:VCALENDAR';
+  const { events } = parseIcs(body);
+  assert.equal(events[0].end - events[0].start, 45 * 60_000);
+});
+
 test('parses the portal sample into events with recurrence rules', () => {
   const { events, calendarName } = parseIcs(portal);
   assert.equal(events.length, 5);
@@ -80,6 +86,16 @@ test('unsupported recurrence fails loudly instead of silently dropping classes',
   assert.throws(
     () => expandRecurrence({ uid: 'x', start: Date.UTC(2026, 8, 14), end: Date.UTC(2026, 8, 14, 1), rrule: 'FREQ=MONTHLY;BYDAY=1MO' }, { windowStart: 0, windowEnd: 1 }),
     /unsupported RRULE/,
+  );
+});
+
+test('WKST=MO leaves ordinary weekly occurrences unchanged', () => {
+  const start = zonedToEpoch(2026, 9, 21, 20, 0, 0, 'America/Toronto');
+  const event = { uid: 'weekly-meeting', start, end: start + 3600_000, rrule: 'FREQ=WEEKLY' };
+  const window = { windowStart: start, windowEnd: start + 28 * 86400_000 };
+  assert.deepEqual(
+    expandRecurrence({ ...event, rrule: 'FREQ=WEEKLY;WKST=MO' }, window),
+    expandRecurrence(event, window),
   );
 });
 
@@ -128,9 +144,81 @@ test('calendar exclusions, moved instances and cancellations produce the actual 
   validateRows('timeline_event', rows);
 });
 
-test('unsupported calendar recurrence fails the source parse instead of saving an incomplete schedule', () => {
-  const body = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:monthly\nSUMMARY:Meeting\nDTSTART:20260921T140000Z\nDTEND:20260921T150000Z\nRRULE:FREQ=MONTHLY;BYDAY=1MO\nEND:VEVENT\nEND:VCALENDAR';
-  assert.throws(() => portalIcs.parse({ body }, { now: Date.UTC(2026, 8, 21) }), /unsupported RRULE/);
+test('unsupported recurrence skips only its event and records the reason in the run receipt', async () => {
+  const now = Date.UTC(2026, 8, 21, 12);
+  const body = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT', 'UID:good-before', 'SUMMARY:Class before',
+    'DTSTART:20260921T140000Z', 'DTEND:20260921T150000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:exotic', 'SUMMARY:Exotic recurrence',
+    'DTSTART:20260921T140000Z', 'DTEND:20260921T150000Z',
+    'RRULE:FREQ=WEEKLY;BYSETPOS=1', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:good-after', 'SUMMARY:Class after',
+    'DTSTART:20260922T140000Z', 'DTEND:20260922T150000Z', 'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const source = { ...portalIcs, async fetchRaw() {
+    return { status: 200, contentType: 'text/calendar', body, bytes: body.length };
+  } };
+  const store = new SqliteStore(':memory:');
+  const receipt = await runSource(source, store, { now });
+  assert.equal(receipt.outcome, 'ok');
+  assert.equal(receipt.rows_written, 2);
+  assert.deepEqual(store.rows('timeline_event').map((row) => row.uid).sort(), ['good-after', 'good-before']);
+  assert.equal(receipt.meta.skipped_events, 1);
+  assert.deepEqual(receipt.meta.skipped_event_reasons, [
+    { uid: 'exotic', reason: 'unsupported RRULE BYSETPOS on exotic' },
+  ]);
+  assert.deepEqual(store.recentRuns(1)[0].meta.skipped_event_reasons, receipt.meta.skipped_event_reasons);
+  store.close();
+});
+
+test('unexpandable Google Calendar event fields skip only that event', () => {
+  const body = [
+    'BEGIN:VCALENDAR', 'X-WR-CALNAME:Google Calendar',
+    'BEGIN:VEVENT', 'UID:with-rdate', 'SUMMARY:Unsupported date set',
+    'DTSTART:20260921T140000Z', 'DTEND:20260921T150000Z',
+    'RDATE:20260928T140000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:with-exrule', 'SUMMARY:Unsupported exclusion rule',
+    'DTSTART:20260921T140000Z', 'DTEND:20260921T150000Z',
+    'EXRULE:FREQ=WEEKLY', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:with-range', 'SUMMARY:Unsupported override range',
+    'DTSTART:20260921T140000Z', 'DTEND:20260921T150000Z',
+    'RECURRENCE-ID;RANGE=THISANDFUTURE:20260921T140000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:with-duration', 'SUMMARY:Unsupported duration',
+    'DTSTART:20260921T140000Z', 'DURATION:PT45S', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:ordinary', 'SUMMARY:Ordinary class',
+    'DTSTART:20260921T160000Z', 'DTEND:20260921T170000Z',
+    'SEQUENCE:2', 'TRANSP:OPAQUE', 'X-GOOGLE-CONFERENCE:https://example.invalid',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  const parsed = portalIcs.parse({ body }, { now: Date.UTC(2026, 8, 21, 12) });
+  assert.deepEqual(parsed.rows.map((row) => row.uid), ['ordinary']);
+  assert.equal(parsed.meta.skipped_events, 4);
+  assert.deepEqual(parsed.meta.skipped_event_reasons, [
+    { uid: 'with-rdate', reason: 'unsupported RDATE on with-rdate' },
+    { uid: 'with-exrule', reason: 'unsupported EXRULE on with-exrule' },
+    { uid: 'with-range', reason: 'unsupported RECURRENCE-ID RANGE on with-range' },
+    { uid: 'with-duration', reason: 'unsupported DURATION PT45S on with-duration' },
+  ]);
+});
+
+test('partial calendar run preserves stored rows until a complete run can reconcile them', async () => {
+  const now = Date.UTC(2026, 8, 21, 12);
+  const good = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:existing\nSUMMARY:Existing class\nDTSTART:20260922T140000Z\nDTEND:20260922T150000Z\nEND:VEVENT\nEND:VCALENDAR';
+  const partial = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:new\nSUMMARY:New class\nDTSTART:20260922T160000Z\nDTEND:20260922T170000Z\nEND:VEVENT\nBEGIN:VEVENT\nUID:exotic\nDTSTART:20260922T140000Z\nDTEND:20260922T150000Z\nRRULE:FREQ=WEEKLY;BYSETPOS=1\nEND:VEVENT\nEND:VCALENDAR';
+  let body = good;
+  const source = { ...portalIcs, async fetchRaw() {
+    return { status: 200, contentType: 'text/calendar', body, bytes: body.length };
+  } };
+  const store = new SqliteStore(':memory:');
+  await runSource(source, store, { now });
+  body = partial;
+  const receipt = await runSource(source, store, { now: now + 60_000 });
+  assert.equal(receipt.outcome, 'ok');
+  assert.equal(receipt.tombstones, 0);
+  assert.deepEqual(store.rows('timeline_event').map((row) => row.uid).sort(), ['existing', 'new']);
+  store.close();
 });
 
 test('an explicit cancellation removes a saved event while an empty feed preserves it', async () => {

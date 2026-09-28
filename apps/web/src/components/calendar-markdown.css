@@ -1,0 +1,45 @@
+.calendar-markdown {
+  margin: 10px 0;
+  padding: 13px 15px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-secondary) 72%, transparent);
+  color: var(--color-foreground);
+}
+
+.calendar-markdown__label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--color-muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.calendar-markdown__blocks { display: grid; gap: 9px; }
+.calendar-markdown__blocks > :is(p, h4, blockquote) { margin: 0; white-space: normal; }
+.calendar-markdown__blocks p,
+.calendar-markdown__item,
+.calendar-markdown__blocks blockquote { font-size: 13px; line-height: 1.55; }
+.calendar-markdown__blocks h4 { font-size: 14px; font-weight: 700; }
+.calendar-markdown__blocks blockquote {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--live) 13%, var(--color-secondary));
+}
+.calendar-markdown__item { display: flex; align-items: flex-start; gap: 9px; }
+.calendar-markdown__bubble {
+  display: grid;
+  flex: 0 0 24px;
+  min-height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--live) 23%, var(--color-secondary));
+  color: var(--color-foreground);
+  font-size: 11px;
+  font-weight: 700;
+}
+.calendar-markdown a { color: var(--live); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.calendar-markdown code { padding: 1px 4px; border-radius: 4px; background: var(--color-background); }
+.calendar-markdown-preview { margin-top: 7px; }
+.calendar-markdown-preview summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--live); font-size: 12px; font-weight: 600; }
+.calendar-markdown-preview summary span { min-width: 0; overflow: hidden; color: var(--color-muted-foreground); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event-detail .calendar-markdown__blocks p { margin: 0; color: var(--color-foreground); font-size: 13px; line-height: 1.55; white-space: normal; }

@@ -6,6 +6,7 @@ import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, formatTime } from '@/lib/time';
 import type { CalendarData, CalendarEvent, CourseResource } from '@/lib/contract';
 import { cn } from '@/lib/utils';
+import { CalendarMarkdown, calendarMarkdownPreview } from '@/components/calendar-markdown';
 
 function shiftDate(date: string, days: number) {
   const [year, month, day] = date.split('-').map(Number);
@@ -53,13 +54,16 @@ function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelec
           )}
         </div>
         <p className="mt-1 text-sm font-medium leading-snug text-foreground">{event.title}</p>
-        {(event.subtitle || event.location || event.description) && (
+        {(event.subtitle || event.location) && (
           <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-zinc-400">
-            {distinctSubtitle(event) && <>{distinctSubtitle(event)}{event.location || event.description ? ' · ' : ''}</>}
-            {event.location && <><MapPin className="mr-1 inline size-3" />{event.location}{event.description ? ' · ' : ''}</>}
-            {event.description}
+            {distinctSubtitle(event) && <>{distinctSubtitle(event)}{event.location ? ' · ' : ''}</>}
+            {event.location && <><MapPin className="mr-1 inline size-3" />{event.location}</>}
           </p>
         )}
+        {event.description && <details className="calendar-markdown-preview">
+          <summary>Description <span>{calendarMarkdownPreview(event.description)}</span></summary>
+          <CalendarMarkdown description={event.description} />
+        </details>}
         {event.url && (
           <a href={event.url} target="_blank" rel="noopener noreferrer"
             className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-live hover:underline">

@@ -193,7 +193,9 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
   const tombstoneScope = source.scopeColumn
     ? { column: source.scopeColumn, values: [...new Set(rows.map((r) => r[source.scopeColumn]))] }
     : {};
-  const tombstones = await store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
+  const tombstones = parsed.tombstone === false
+    ? 0
+    : await store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
   await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
 
   receipt.outcome = 'ok';

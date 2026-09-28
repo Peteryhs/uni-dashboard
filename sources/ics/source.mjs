@@ -57,7 +57,7 @@ export function makeIcsSource({
     failOnEmptyWhenFutureRows: true,
     // A nonempty feed that resolves to no upcoming rows may contain explicit cancellations.
     // A suddenly empty feed is less trustworthy, so keep the last good rows in that case.
-    tombstoneOnEmpty: (parsed) => parsed.meta.events > 0,
+    tombstoneOnEmpty: (parsed) => parsed.meta.events > 0 && parsed.meta.skipped_events === 0,
     url() {
       const v = process.env[envVar] || fallbackEnvVars.map((k) => process.env[k]).find(Boolean);
       if (!v) return null;
@@ -113,22 +113,23 @@ export function makeIcsSource({
     },
     parse(raw, ctx) {
       const now = ctx?.now ?? Date.now();
-      const { events } = parseIcs(raw.body, { tz: this.tz });
+      const { events, skippedEvents } = parseIcs(raw.body, { tz: this.tz });
       const windowStart = now - 12 * 60 * 60 * 1000;
       const windowEnd = now + this.windowDays * 86400000;
       const rowsById = new Map();
       const masters = events.filter((event) => event.recurrenceId == null);
       const overrides = events.filter((event) => event.recurrenceId != null);
       const cancelledSeries = new Set(masters.filter((event) => event.status.toUpperCase() === 'CANCELLED').map((event) => event.uid));
-      const overridden = new Set(overrides.map((event) => `${event.uid}#${event.recurrenceId}`));
+      const overridden = new Set();
+      const skipped = [...skippedEvents];
 
-      const addOccurrence = (event, occ, originalStart) => {
+      const addOccurrence = (event, occ, originalStart, target = rowsById) => {
         if (!Number.isFinite(occ.start) || !Number.isFinite(occ.end)) {
           throw new Error(`invalid occurrence date on ${event.uid}`);
         }
         if (occ.end < windowStart || occ.start > windowEnd) return;
         const externalId = `${event.uid}#${new Date(originalStart).toISOString()}`;
-        rowsById.set(externalId, {
+        target.set(externalId, {
           source_id: this.id,
           external_id: externalId,
           uid: event.uid,
@@ -149,32 +150,62 @@ export function makeIcsSource({
         });
       };
 
+      // Stage each event's rows before committing them. A bad occurrence cannot leave a
+      // partially expanded series behind, and the receipt retains the exact reason and UID.
+      const processEvent = (event, addRows, target = rowsById) => {
+        const staged = new Map();
+        try {
+          addRows(staged);
+          for (const [id, row] of staged) target.set(id, row);
+          return true;
+        } catch (error) {
+          skipped.push({ uid: event.uid, reason: error.message });
+          return false;
+        }
+      };
+
+      const overrideRows = new Map();
+      for (const event of overrides) {
+        if (cancelledSeries.has(event.uid)) continue;
+        const originalId = `${event.uid}#${event.recurrenceId}`;
+        if (event.status.toUpperCase() === 'CANCELLED') {
+          overridden.add(originalId);
+          continue;
+        }
+        if (processEvent(event, (staged) => {
+          addOccurrence(event, { start: event.start, end: event.end }, event.recurrenceId, staged);
+        }, overrideRows)) overridden.add(originalId);
+      }
       for (const event of masters) {
         if (cancelledSeries.has(event.uid)) continue;
-        const excluded = new Set(event.exdates);
-        const occurrences = expandRecurrence(event, {
-          windowStart,
-          windowEnd,
-          tz: this.tz,
+        processEvent(event, (staged) => {
+          const excluded = new Set(event.exdates);
+          const occurrences = expandRecurrence(event, {
+            windowStart,
+            windowEnd,
+            tz: this.tz,
+          });
+          for (const occ of occurrences) {
+            if (excluded.has(occ.start) || overridden.has(`${event.uid}#${occ.start}`)) continue;
+            addOccurrence(event, occ, occ.start, staged);
+          }
         });
-        for (const occ of occurrences) {
-          if (excluded.has(occ.start) || overridden.has(`${event.uid}#${occ.start}`)) continue;
-          addOccurrence(event, occ, occ.start);
-        }
       }
-      for (const event of overrides) {
-        if (cancelledSeries.has(event.uid) || event.status.toUpperCase() === 'CANCELLED') continue;
-        addOccurrence(event, { start: event.start, end: event.end }, event.recurrenceId);
-      }
+      for (const [id, row] of overrideRows) rowsById.set(id, row);
       const rows = [...rowsById.values()];
       return {
         rows,
         meta: {
           calendar: raw.body.match(/X-WR-CALNAME:(.*)/)?.[1]?.trim() ?? '',
-          events: events.length,
+          events: events.length + skippedEvents.length,
           cancelled: events.filter((event) => event.status.toUpperCase() === 'CANCELLED').length,
           expanded: rows.length,
+          skipped_events: skipped.length,
+          skipped_event_reasons: skipped,
         },
+        // A partial calendar cannot establish that any previously saved event disappeared.
+        // The next fully parsed run can reconcile deletions safely.
+        tombstone: skipped.length === 0,
       };
     },
   };

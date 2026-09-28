@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, Star, WifiOff, X } from 'lucide-react';
 import { CustomizationSheet } from '@/components/customization-sheet';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
+import { CalendarMarkdown } from '@/components/calendar-markdown';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/components/cards/food';
 import { matchDiningDish, matchDiningOutlet, useDiningRecommendation } from '@/components/use-dining-recommendation';
 import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, readCachedCalendar, readCachedRecommendations, saveRecommendationAction, triggerPoll } from '@/lib/api';
@@ -344,7 +345,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
         {event.location && <p>{event.location}</p>}
         {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
-        {event.description && <p>{event.description}</p>}
+        {event.description && <CalendarMarkdown description={event.description} />}
         {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
         {event.readings && event.readings.length > 0 && <p><strong>Readings</strong> · {event.readings.join(', ')}</p>}
         {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <details className="calendar-evidence"><summary>Syllabus source text</summary>{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</details>}

@@ -24,19 +24,11 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Assignment
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.CenterFocusStrong
-import androidx.compose.material.icons.outlined.EventBusy
-import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Place
-import androidx.compose.material.icons.outlined.Restaurant
-import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Snooze
-import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material.icons.outlined.WbCloudy
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -286,7 +278,6 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
             },
         ) {
             Row(Modifier.padding(Spacing.m), horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                RecommendationIcon(kindVisual(rec.kind))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(rec.title, style = MaterialTheme.typography.titleMedium)
                     val time = rec.dueAt ?: rec.startsAt
@@ -361,16 +352,13 @@ private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Lo
                     color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             },
-            leadingContent = {
-                Icon(Icons.Outlined.Assignment, contentDescription = null, tint = if (item.significant) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-            },
             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
                 .padding(horizontal = Spacing.s)
                 .animateItem(),
         )
         if (url != null) {
-            Row(Modifier.fillMaxWidth().padding(start = 72.dp, bottom = Spacing.xs)) {
+            Row(Modifier.fillMaxWidth().padding(start = Spacing.m, bottom = Spacing.xs)) {
                 AssistChip(onClick = { uri.openUri(url) }, label = { Text("Open in LEARN") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) })
             }
         }
@@ -384,33 +372,6 @@ private fun kindLabel(kind: String?): String = when (kind) {
     "deadline" -> "deadline"
     "event" -> "event"
     else -> "class"
-}
-
-/** One quiet icon treatment across the scannable recommendation list. */
-@Composable
-private fun RecommendationIcon(icon: ImageVector) {
-    Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.size(40.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
-        }
-    }
-}
-
-private fun kindVisual(kind: String): ImageVector = when (kind) {
-    "class" -> Icons.Outlined.School
-    "task" -> Icons.Outlined.Assignment
-    "learning" -> Icons.Outlined.MenuBook
-    "office_hours" -> Icons.Outlined.SupportAgent
-    "focus" -> Icons.Outlined.CenterFocusStrong
-    "conflict" -> Icons.Outlined.EventBusy
-    "food" -> Icons.Outlined.Restaurant
-    "weather" -> Icons.Outlined.WbCloudy
-    else -> Icons.Outlined.CenterFocusStrong
 }
 
 /** A deadline counts down; a window says whether it is on now, ahead, or already over. */

@@ -35,6 +35,8 @@ class RelayApi(
     suspend fun dashboard(): Pair<Bundle, String> = getParsed("/v1/dashboard")
     suspend fun recommendations(): Pair<Recommendations, String> = getParsed("/v1/recommendations")
     suspend fun calendar(start: String, days: Int): Pair<Calendar, String> = getParsed("/v1/calendar?start=$start&days=$days")
+    suspend fun foodRecommendation(date: String): Pair<FoodRecommendationResponse, String> =
+        getParsed("/v1/food/recommendation?date=$date")
     suspend fun health(): Pair<Health, String> = getParsed("/v1/health/sources")
 
     suspend fun recommendationAction(id: String, action: String, until: Long? = null) {
@@ -43,6 +45,10 @@ class RelayApi(
             put("action", action)
             if (until != null) put("until", until)
         }.toString())
+    }
+
+    suspend fun rankFood(date: String) {
+        post("/v1/ai/rank-food", buildJsonObject { put("date", date) }.toString())
     }
 
     suspend fun dismissAlert(key: String) {

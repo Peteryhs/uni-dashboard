@@ -109,7 +109,7 @@ const WEEKDAYS = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 /**
  * Expand a recurrence for a bounded window. Supports FREQ=DAILY and FREQ=WEEKLY with
  * INTERVAL / COUNT / UNTIL / BYDAY, which is what a class timetable uses. Anything more exotic
- * throws, loudly, rather than silently dropping classes.
+ * throws with the event UID so the source can skip and report that event.
  *
  * The subtlety that bit this once: BYDAY is a set within a week. Stepping the cursor a week at a
  * time and testing its single weekday emits only the first weekday of each week (a MWF class
@@ -126,7 +126,11 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
       return [k.toUpperCase(), (v ?? '').toUpperCase()];
     }),
   );
-  const supportedParts = new Set(['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'BYDAY']);
+  // Ignoring WKST=MO is equivalent to RFC 5545's default when WKST is absent. This timetable
+  // uses the DTSTART week as its anchor, so
+  // ignoring another WKST can shift which week is week zero for INTERVAL > 1 with BYDAY.
+  // That edge case is immaterial to the class timetable; an ordinary weekly rule is unchanged.
+  const supportedParts = new Set(['FREQ', 'INTERVAL', 'COUNT', 'UNTIL', 'BYDAY', 'WKST']);
   const unsupportedPart = Object.keys(parts).find((part) => !supportedParts.has(part));
   if (unsupportedPart) {
     throw new Error(`unsupported RRULE ${unsupportedPart} on ${event.uid}`);
@@ -211,7 +215,7 @@ export function expandRecurrence(event, { windowStart, windowEnd, tz = DEFAULT_T
 
 /**
  * Parse a whole feed.
- * @returns {{calendarName: string, events: Array<object>, vtimezone: string}}
+ * @returns {{calendarName: string, events: Array<object>, vtimezone: string, skippedEvents: Array<object>}}
  */
 export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
   if (!text || text.indexOf('BEGIN:VCALENDAR') === -1) {
@@ -219,6 +223,7 @@ export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
   }
   const lines = unfold(text);
   const events = [];
+  const skippedEvents = [];
   let calendarName = '';
   let vtimezone = '';
   let inEvent = false;
@@ -234,7 +239,8 @@ export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
       inEvent = false;
       if (cur) {
         if (!cur.uid) cur.uid = `${cur.summary}|${cur.start ?? 0}`;
-        events.push(cur);
+        if (cur.parseError) skippedEvents.push({ uid: cur.uid, reason: cur.parseError });
+        else events.push(cur);
       }
       cur = null;
       continue;
@@ -250,77 +256,83 @@ export function parseIcs(text, { tz = DEFAULT_TZ } = {}) {
       if (prop.name === 'X-WR-CALNAME') calendarName = prop.value;
       continue;
     }
-    switch (prop.name) {
-      case 'UID':
-        cur.uid = prop.value;
-        break;
-      case 'SUMMARY':
-        cur.summary = prop.value;
-        break;
-      case 'LOCATION':
-        cur.location = prop.value;
-        break;
-      case 'DESCRIPTION':
-        cur.description = prop.value;
-        break;
-      case 'STATUS':
-        cur.status = prop.value;
-        break;
-      case 'URL':
-        cur.url = prop.value;
-        break;
-      case 'RRULE':
-        cur.rrule = prop.value;
-        break;
-      case 'RDATE':
-      case 'EXRULE':
-        throw new Error(`unsupported ${prop.name} on ${cur.uid}`);
-      case 'EXDATE': {
-        const zone = prop.params.TZID || tz;
-        for (const value of prop.value.split(',')) {
-          const at = parseDateValue(value, zone).at;
-          if (!Number.isFinite(at)) throw new Error(`invalid EXDATE on ${cur.uid}`);
-          cur.exdates.push(at);
+    // An unsupported field belongs to this VEVENT, not to the whole calendar. Keep reading
+    // UID if it appears later so the receipt can identify the skipped event accurately.
+    if (cur.parseError && prop.name !== 'UID') continue;
+    try {
+      switch (prop.name) {
+        case 'UID':
+          cur.uid = prop.value;
+          break;
+        case 'SUMMARY':
+          cur.summary = prop.value;
+          break;
+        case 'LOCATION':
+          cur.location = prop.value;
+          break;
+        case 'DESCRIPTION':
+          cur.description = prop.value;
+          break;
+        case 'STATUS':
+          cur.status = prop.value;
+          break;
+        case 'URL':
+          cur.url = prop.value;
+          break;
+        case 'RRULE':
+          cur.rrule = prop.value;
+          break;
+        case 'RDATE':
+        case 'EXRULE':
+          throw new Error(`unsupported ${prop.name} on ${cur.uid}`);
+        case 'EXDATE': {
+          const zone = prop.params.TZID || tz;
+          for (const value of prop.value.split(',')) {
+            const at = parseDateValue(value, zone).at;
+            if (!Number.isFinite(at)) throw new Error(`invalid EXDATE on ${cur.uid}`);
+            cur.exdates.push(at);
+          }
+          break;
         }
-        break;
-      }
-      case 'RECURRENCE-ID': {
-        if (prop.params.RANGE) throw new Error(`unsupported RECURRENCE-ID RANGE on ${cur.uid}`);
-        const zone = prop.params.TZID || tz;
-        cur.recurrenceId = parseDateValue(prop.value, zone).at;
-        if (!Number.isFinite(cur.recurrenceId)) throw new Error(`invalid RECURRENCE-ID on ${cur.uid}`);
-        break;
-      }
-      case 'DTSTART': {
-        const zone = prop.params.TZID || tz;
-        const { at, allDay } = parseDateValue(prop.value, zone);
-        cur.start = at;
-        cur.allDay = allDay;
-        cur.tz = zone;
-        break;
-      }
-      case 'DTEND': {
-        const zone = prop.params.TZID || tz;
-        cur.end = parseDateValue(prop.value, zone).at;
-        break;
-      }
-      case 'DURATION': {
-        const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/.exec(prop.value);
-        if (m) {
+        case 'RECURRENCE-ID': {
+          if (prop.params.RANGE) throw new Error(`unsupported RECURRENCE-ID RANGE on ${cur.uid}`);
+          const zone = prop.params.TZID || tz;
+          cur.recurrenceId = parseDateValue(prop.value, zone).at;
+          if (!Number.isFinite(cur.recurrenceId)) throw new Error(`invalid RECURRENCE-ID on ${cur.uid}`);
+          break;
+        }
+        case 'DTSTART': {
+          const zone = prop.params.TZID || tz;
+          const { at, allDay } = parseDateValue(prop.value, zone);
+          cur.start = at;
+          cur.allDay = allDay;
+          cur.tz = zone;
+          break;
+        }
+        case 'DTEND': {
+          const zone = prop.params.TZID || tz;
+          cur.end = parseDateValue(prop.value, zone).at;
+          break;
+        }
+        case 'DURATION': {
+          const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/.exec(prop.value);
+          if (!m) throw new Error(`unsupported DURATION ${prop.value} on ${cur.uid}`);
           const ms = (Number(m[1] ?? 0) * 86400 + Number(m[2] ?? 0) * 3600 + Number(m[3] ?? 0) * 60) * 1000;
           cur.durationMs = ms;
-          cur.end = (cur.start ?? 0) + ms;
+          break;
         }
-        break;
+        default:
+          break;
       }
-      default:
-        break;
+    } catch (error) {
+      cur.parseError = error.message;
     }
   }
 
   for (const e of events) {
     if (e.start == null) e.start = NaN;
+    if (e.end == null && e.durationMs != null) e.end = e.start + e.durationMs;
     if (e.end == null || Number.isNaN(e.end)) e.end = e.start + (e.allDay ? 86400000 : 3600000);
   }
-  return { calendarName, events, vtimezone };
+  return { calendarName, events, vtimezone, skippedEvents };
 }

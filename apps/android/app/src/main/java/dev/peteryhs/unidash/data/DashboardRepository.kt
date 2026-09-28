@@ -1,6 +1,7 @@
 package dev.peteryhs.unidash.data
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,7 @@ data class Snapshot(
     val bundle: Bundle? = null,
     val recommendations: Recommendations? = null,
     val calendar: Calendar? = null,
+    val foodRanking: FoodRecommendationResponse? = null,
     /** When this device last got a full answer from the Worker; null before the first one. */
     val fetchedAt: Long? = null,
     val refreshing: Boolean = false,
@@ -61,12 +63,26 @@ class DashboardRepository(
         }
         result.fold(
             onSuccess = { (dash, recs, cal) ->
+                val foodDate = dash.first.card("food")?.payload<Food>()?.serviceDate
+                // The ranking endpoint is optional for the rest of the dashboard. A failed AI
+                // request must leave the menu, calendar, and last saved ranking usable.
+                val dining = foodDate?.let { date ->
+                    try { api.foodRecommendation(date) }
+                    catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        null
+                    }
+                }
+                val savedDining = dining?.first ?: _snapshot.value.foodRanking?.takeIf {
+                    it.recommendation?.serviceDate == foodDate
+                }
                 write(BUNDLE, dash.second)
                 write(RECS, recs.second)
                 write(CALENDAR, cal.second)
+                if (dining != null) write(FOOD_RANKING, dining.second)
                 val now = clock()
                 write(FETCHED_AT, now.toString())
-                _snapshot.value = Snapshot(dash.first, recs.first, cal.first, fetchedAt = now)
+                _snapshot.value = Snapshot(dash.first, recs.first, cal.first, foodRanking = savedDining, fetchedAt = now)
                 Result.success(_snapshot.value)
             },
             onFailure = { e ->
@@ -95,6 +111,11 @@ class DashboardRepository(
         return runCatching { api.dismissAlert(key) }.onSuccess { refresh() }
     }
 
+    suspend fun rankFood(date: String): Result<Unit> {
+        val api = apiFor() ?: return Result.failure(RelayError.Unauthorized("not signed in"))
+        return runCatching { api.rankFood(date) }.onSuccess { refresh() }
+    }
+
     suspend fun health(): Result<Health> {
         val api = apiFor() ?: return Result.failure(RelayError.Unauthorized("not signed in"))
         return runCatching { api.health().first }
@@ -112,6 +133,7 @@ class DashboardRepository(
             bundle = read(BUNDLE) { ContractJson.decodeFromString<Bundle>(it) },
             recommendations = read(RECS) { ContractJson.decodeFromString<Recommendations>(it) },
             calendar = read(CALENDAR) { ContractJson.decodeFromString<Calendar>(it) },
+            foodRanking = read(FOOD_RANKING) { ContractJson.decodeFromString<FoodRecommendationResponse>(it) },
             fetchedAt = read(FETCHED_AT) { it.trim().toLong() },
         )
     }
@@ -128,6 +150,7 @@ class DashboardRepository(
         private const val BUNDLE = "dashboard.json"
         private const val RECS = "recommendations.json"
         private const val CALENDAR = "calendar.json"
+        private const val FOOD_RANKING = "food-ranking.json"
         private const val FETCHED_AT = "fetched_at"
     }
 }

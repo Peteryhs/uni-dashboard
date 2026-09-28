@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -29,8 +30,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.data.Food
 import dev.peteryhs.unidash.data.FoodPick
-import dev.peteryhs.unidash.data.Highlight
+import dev.peteryhs.unidash.data.FoodRecommendationResponse
 import dev.peteryhs.unidash.data.Outlet
+import dev.peteryhs.unidash.data.RankedOutlet
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
@@ -39,6 +41,8 @@ import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.theme.Spacing
+import java.text.Normalizer
+import java.util.Locale
 
 /** The saved dining summary and menus. Ranking and parsing happen on the server; this only renders them. */
 @Composable
@@ -47,7 +51,9 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
     val foodCard = snapshot.bundle?.card("food")
     val food = foodCard?.payload<Food>()
     val pickCard = snapshot.bundle?.card("food_ai_recommendation")
-    val pick = pickCard?.payload<FoodPick>()?.takeIf { food == null || it.serviceDate == food.serviceDate }
+    val ranking = snapshot.foodRanking?.takeIf { food != null &&
+        (it.recommendation == null || it.recommendation.serviceDate == food.serviceDate) }
+    val pick = ranking?.recommendation ?: pickCard?.payload<FoodPick>()?.takeIf { food == null || it.serviceDate == food.serviceDate }
 
     ScreenScaffold(
         "Food", food?.serviceDate?.let { date -> Format.dayHeader(date).let { d -> if (d == "Today" || d == "Tomorrow") "Menus for ${d.lowercase()}" else "Menus for $d" } }, snapshot, now, snackbar, onRefresh = vm::refresh,
@@ -63,10 +69,16 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
             item { EmptyNote("No menu loaded yet.") }
             return@ScreenScaffold
         }
-        if (pick != null && pickCard != null) item(key = "pick") { AiSummaryCard(pick, pickCard.state, pickCard.observedAt, now) }
-        else item(key = "pick-unavailable") { EmptyNote("No saved dining picks for this menu.") }
+        item(key = "pick") {
+            AiSummaryCard(pick, ranking, pickCard?.state, pickCard?.observedAt, now) {
+                vm.rankFood(food.serviceDate)
+            }
+        }
         val outlets = food.pinned + food.others
         val serving = outlets.filter { it.serving || it.dishCount > 0 }
+            .sortedWith(compareBy<Outlet> { outlet ->
+                pick?.rankedOutlets?.firstOrNull { diningNameMatches(it.outlet, outlet.outlet) }?.rank ?: Int.MAX_VALUE
+            }.thenByDescending { it.pinned })
         if (serving.isEmpty()) {
             item(key = "none") {
                 FreshnessLabel(foodCard.state, foodCard.observedAt, now, Modifier.padding(horizontal = Spacing.m))
@@ -82,8 +94,8 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
             }
         }
         items(serving, key = { "outlet:${it.outlet}" }) { outlet ->
-            val ranked = pick?.rankedOutlets?.firstOrNull { it.outlet == outlet.outlet }
-            OutletCard(outlet, ranked?.verdict, ranked?.highlights.orEmpty(), isTop = pick?.topOutlet == outlet.outlet)
+            val ranked = pick?.rankedOutlets?.firstOrNull { diningNameMatches(it.outlet, outlet.outlet) }
+            OutletCard(outlet, ranked, isTop = pick?.topOutlet?.let { diningNameMatches(it, outlet.outlet) } == true)
         }
         val closed = outlets - serving.toSet()
         if (closed.isNotEmpty()) {
@@ -93,40 +105,71 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
 }
 
 @Composable
-private fun AiSummaryCard(pick: FoodPick, state: dev.peteryhs.unidash.data.CardState, observedAt: Long?, now: Long) {
-    val top = pick.rankedOutlets.firstOrNull { it.outlet == pick.topOutlet }
-        ?: pick.rankedOutlets.firstOrNull { it.rank == 1 }
-        ?: pick.rankedOutlets.firstOrNull()
-    val outletName = (top?.outlet ?: pick.topOutlet).substringBefore(" - ").trim()
+private fun AiSummaryCard(
+    pick: FoodPick?,
+    ranking: FoodRecommendationResponse?,
+    state: dev.peteryhs.unidash.data.CardState?,
+    observedAt: Long?,
+    now: Long,
+    onRank: () -> Unit,
+) {
+    val top = pick?.rankedOutlets?.firstOrNull { it.outlet == pick?.topOutlet }
+        ?: pick?.rankedOutlets?.firstOrNull { it.rank == 1 }
+        ?: pick?.rankedOutlets?.firstOrNull()
+    val outletName = (top?.outlet ?: pick?.topOutlet.orEmpty()).substringBefore(" - ").trim()
     val reason = top?.verdict?.trim().orEmpty().let { verdict ->
         when {
             verdict.isNotBlank() -> Regex("^.*?[.!?](?=\\s|$)").find(verdict)?.value ?: verdict
-            pick.headline.isNotBlank() -> pick.headline
+            pick?.headline?.isNotBlank() == true -> pick?.headline.orEmpty()
             else -> "No explanation was saved for this ranking."
         }
     }
+    val processing = ranking?.rankingJob?.status == "processing" || ranking?.status == "processing"
+    val statusText = when {
+        processing -> "Ranking dining picks…"
+        ranking?.status == "budget_limited" -> "Dining picks are paused until the shared AI allowance resets."
+        ranking?.status == "attempt_limited" || ranking?.status == "limited" -> "Automatic ranking is paused at its daily limit."
+        ranking?.status == "failed" -> ranking.error.ifBlank { "Dining ranking is unavailable right now." }
+        else -> "No saved dining picks for this menu."
+    }
+    val colors = if (pick != null) CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) else CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = colors,
         shape = MaterialTheme.shapes.large,
         modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
     ) {
         Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("AI dining summary", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(outletName.ifBlank { "No saved outlet recommendation" }, style = MaterialTheme.typography.headlineSmallEmphasized)
+                    Text("Dining pick", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (pick != null) outletName.ifBlank { "Saved recommendation" } else statusText,
+                        style = if (pick != null) MaterialTheme.typography.headlineSmallEmphasized else MaterialTheme.typography.bodyMedium,
+                    )
                 }
-                FreshnessLabel(state, observedAt, now)
+                if (state != null && pick != null && ranking?.recommendation == null) FreshnessLabel(state, observedAt, now)
             }
-            Text(reason, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
-            if (pick.tip.isNotBlank()) Text(pick.tip, style = MaterialTheme.typography.bodySmall)
+            if (pick != null) {
+                Text(reason, style = MaterialTheme.typography.bodyLarge)
+                if (pick.tip.isNotBlank()) Text(pick.tip, style = MaterialTheme.typography.bodySmall)
+                if (ranking?.stale == true || processing) Text(
+                    if (processing) "Showing saved picks while a new ranking runs."
+                    else "Showing saved picks; an updated ranking is unavailable.",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            if (!processing && ranking?.status != "budget_limited") {
+                FilledTonalButton(onClick = onRank) { Text(if (pick == null) "Rank menu" else "Rank again") }
+            }
         }
     }
 }
 
 @Composable
-private fun OutletCard(outlet: Outlet, verdict: String?, highlights: List<Highlight>, isTop: Boolean) {
-    val highlightsByDish = highlights.associateBy { dishKey(it.dish) }
+private fun OutletCard(outlet: Outlet, ranked: RankedOutlet?, isTop: Boolean) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         shape = MaterialTheme.shapes.large,
@@ -134,10 +177,10 @@ private fun OutletCard(outlet: Outlet, verdict: String?, highlights: List<Highli
     ) {
         ListItem(
             headlineContent = { Text(outlet.outlet.substringBefore(" - "), fontWeight = if (isTop) FontWeight.SemiBold else null) },
-            supportingContent = verdict?.let { v -> { Text(v, color = MaterialTheme.colorScheme.primary) } },
+            supportingContent = ranked?.verdict?.takeIf { it.isNotBlank() }?.let { v -> { Text(v, color = MaterialTheme.colorScheme.primary) } },
             trailingContent = {
                 Text(
-                    if (isTop) "Top pick" else "${outlet.dishCount} dishes",
+                    if (isTop) "Top pick" else ranked?.rank?.let { "#$it pick" } ?: "${outlet.dishCount} dishes",
                     style = MaterialTheme.typography.labelMedium,
                     color = if (isTop) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -150,7 +193,7 @@ private fun OutletCard(outlet: Outlet, verdict: String?, highlights: List<Highli
                 verticalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
                 outlet.dishes.forEach { d ->
-                    val highlight = highlightsByDish[dishKey(d.dish)]
+                    val highlight = ranked?.highlights?.firstOrNull { diningNameMatches(it.dish, d.dish) }
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                         verticalAlignment = Alignment.Top,
@@ -180,4 +223,29 @@ private fun OutletCard(outlet: Outlet, verdict: String?, highlights: List<Highli
     }
 }
 
-private fun dishKey(value: String): String = value.trim().replace(Regex("\\s+"), " ").lowercase()
+private fun diningTokens(value: String): Set<String> = Normalizer.normalize(value, Normalizer.Form.NFKD)
+    .replace(Regex("\\p{M}+"), "")
+    .lowercase(Locale.ROOT)
+    .replace("&", " and ")
+    .replace(Regex("[^a-z0-9]+"), " ")
+    .trim()
+    .split(Regex("\\s+"))
+    .filter(String::isNotBlank)
+    .map { token ->
+        when {
+            token.length > 4 && token.endsWith("ies") -> token.dropLast(3) + "y"
+            token.length > 3 && token.endsWith("s") && !token.endsWith("ss") -> token.dropLast(1)
+            else -> token
+        }
+    }.toSet()
+
+/** Match web's dining names without treating a shared single word as the same outlet or dish. */
+internal fun diningNameMatches(aiName: String, menuName: String): Boolean {
+    val ai = diningTokens(aiName)
+    val menu = diningTokens(menuName)
+    if (ai.isEmpty() || menu.isEmpty()) return false
+    if (ai == menu) return true
+    val shorter = if (ai.size < menu.size) ai else menu
+    val longer = if (ai.size < menu.size) menu else ai
+    return shorter.size >= 2 && longer.containsAll(shorter)
+}

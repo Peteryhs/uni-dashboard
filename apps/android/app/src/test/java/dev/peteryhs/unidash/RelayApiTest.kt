@@ -45,6 +45,21 @@ class RelayApiTest {
     }
 
     @Test
+    fun `food page reads the same ranking endpoint as web and can request a rerank`() = runTest {
+        server.enqueue(json("""{"status":"ready","recommendation":{"service_date":"2026-09-28","headline":"Lunch pick","top_outlet":"V1","ranked_outlets":[{"outlet":"V1","rank":1,"match_score":90,"verdict":"Good match.","highlights":[{"dish":"Noodles","why":"Your preference"}]}],"tip":"Go early.","generated_at":1},"ranking_job":{"status":"idle"}}"""))
+        server.enqueue(json("{}"))
+        val ranking = api.foodRecommendation("2026-09-28").first
+        assertEquals("V1", ranking.recommendation?.topOutlet)
+        assertEquals("Your preference", ranking.recommendation?.rankedOutlets?.first()?.highlights?.first()?.why)
+        assertEquals("/v1/food/recommendation?date=2026-09-28", server.takeRequest().path)
+        api.rankFood("2026-09-28")
+        val rerank = server.takeRequest()
+        assertEquals("/v1/ai/rank-food", rerank.path)
+        assertEquals("POST", rerank.method)
+        assertTrue(rerank.body.readUtf8().contains("2026-09-28"))
+    }
+
+    @Test
     fun `refusals map to errors the UI can act on`() = runTest {
         suspend fun failure(response: MockResponse): Throwable {
             server.enqueue(response)

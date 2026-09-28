@@ -192,8 +192,16 @@ private fun EventDetails(ev: CalendarEvent, now: Long) {
         if (ev.location.isNotBlank()) DetailLine("Location", ev.location)
         if (scope.isNotBlank()) DetailLine("For", scope)
         if (subtitle != null) DetailLine("Details", subtitle)
-        description.split(Regex("\\n\\s*\\n|\\n")).map(String::trim).filter(String::isNotEmpty).forEach { paragraph ->
-            Text(paragraph, style = MaterialTheme.typography.bodyMedium)
+        if (description.isNotEmpty()) Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                Text("Description", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CalendarMarkdown(description)
+            }
         }
         if (ev.topics.isNotEmpty()) DetailLine(if (ev.syllabusScope == "period") "Topics this period" else "Topics", ev.topics.joinToString(", "))
         if (ev.readings.isNotEmpty()) DetailLine("Readings", ev.readings.joinToString(", "))
