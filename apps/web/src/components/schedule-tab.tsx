@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { BlurFade } from '@/components/ui/blur-fade';
 import {
   getOfficeHours,
   putOfficeHours,
@@ -648,7 +649,16 @@ export function ScheduleTab() {
 
       {/* SECTION 2: DRAFT PREVIEW STATE */}
       {draft && (
-        <div className="settings-office-hours-draft space-y-4 animate-in fade-in duration-200">
+        <BlurFade
+          as="section"
+          className="settings-office-hours-draft space-y-4"
+          delay={0.05}
+          duration={0.38}
+          offset={8}
+          blur="5px"
+          direction="up"
+          inView
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BookOpen className="size-4 text-live" />
@@ -766,7 +776,7 @@ export function ScheduleTab() {
               </Button>
             </div>
           </div>
-        </div>
+        </BlurFade>
       )}
 
       {/* SECTION 3: SAVED ENTRIES */}
@@ -935,10 +945,17 @@ export function ScheduleTab() {
       {undoToast &&
         typeof document !== 'undefined' &&
         createPortal(
-          <div
+          <BlurFade
+            as="div"
+            delay={0.02}
+            duration={0.3}
+            offset={8}
+            blur="4px"
+            direction="up"
+            inView
             role="status"
             aria-live="polite"
-            className="fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-xl border border-white/10 bg-zinc-900/95 px-4 py-2.5 shadow-2xl backdrop-blur-md ring-1 ring-white/10 animate-in fade-in slide-in-from-bottom-4 duration-200"
+            className="fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-xl border border-white/10 bg-zinc-900/95 px-4 py-2.5 shadow-2xl backdrop-blur-md ring-1 ring-white/10"
           >
             <div className="flex items-center gap-2 max-w-xs sm:max-w-sm truncate text-xs text-zinc-200">
               <span className="font-medium text-zinc-400">Deleted</span>
@@ -962,7 +979,7 @@ export function ScheduleTab() {
             >
               <span className="text-xs">Dismiss</span>
             </button>
-          </div>,
+          </BlurFade>,
           document.body
         )}
     </div>

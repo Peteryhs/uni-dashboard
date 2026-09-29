@@ -1,0 +1,35 @@
+.blur-fade {
+  --blur-fade-duration: 0.4s;
+  --blur-fade-delay: 0s;
+  --blur-fade-blur: 6px;
+  --blur-fade-start-x: 0px;
+  --blur-fade-start-y: 6px;
+
+  opacity: 0;
+  filter: blur(var(--blur-fade-blur));
+  transform: translate3d(var(--blur-fade-start-x), var(--blur-fade-start-y), 0);
+  transition:
+    opacity var(--blur-fade-duration) cubic-bezier(0.22, 1, 0.36, 1) var(--blur-fade-delay),
+    filter var(--blur-fade-duration) cubic-bezier(0.22, 1, 0.36, 1) var(--blur-fade-delay),
+    transform var(--blur-fade-duration) cubic-bezier(0.22, 1, 0.36, 1) var(--blur-fade-delay);
+  will-change: opacity, filter, transform;
+}
+
+.blur-fade[data-blur-fade-state='visible'] {
+  opacity: 1;
+  filter: none;
+  transform: none;
+  will-change: auto;
+}
+
+/* Keep content available when the runtime cannot observe the viewport or motion is disabled. */
+@media (prefers-reduced-motion: reduce) {
+  .blur-fade,
+  .blur-fade[data-blur-fade-state='visible'] {
+    opacity: 1;
+    filter: none;
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
+}

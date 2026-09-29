@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Sliders,
@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { BlurFade } from '@/components/ui/blur-fade';
 import {
   fetchCredentialsStatus,
   updateCredentials,
@@ -66,6 +67,8 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'dairy', label: 'Dairy-free' },
   { id: 'gluten', label: 'Gluten-free' },
 ];
+
+const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'about'] as const;
 
 const AI_MODEL_OPTIONS: AiModelInfo[] = [
   {
@@ -391,9 +394,20 @@ export function CustomizationSheet({
         </Button>
       </SheetTrigger>}
       <SheetContent showCloseButton={false} className="settings-sheet w-full sm:max-w-[44rem] border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
-        <SheetHeader className="settings-heading p-0 text-left">
-          <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
-        </SheetHeader>
+        <BlurFade
+          as="div"
+          className="settings-heading-entry"
+          delay={0.02}
+          duration={0.4}
+          offset={8}
+          blur="6px"
+          direction="up"
+          inView
+        >
+          <SheetHeader className="settings-heading p-0 text-left">
+            <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
+          </SheetHeader>
+        </BlurFade>
         <SheetClose className="settings-close close-detail" aria-label="Close settings">
           <X size={17} />
         </SheetClose>
@@ -403,41 +417,62 @@ export function CustomizationSheet({
           onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule' | 'about')}
           className="settings-tabs-wrap mt-5"
         >
-          <TabsList className="settings-tabs grid h-10 w-full grid-cols-5 bg-secondary/50 p-1 border border-border/60 rounded-lg">
-            <TabsTrigger
-              value="taste"
-              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <Bot className="size-3.5 mr-1 text-[#3478eb]" /> Dining
-            </TabsTrigger>
-            <TabsTrigger
-              value="courses"
-              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <GraduationCap className="size-3.5 mr-1" /> Courses
-            </TabsTrigger>
-            <TabsTrigger
-              value="schedule"
-              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <Calendar className="size-3.5 mr-1" /> Schedule
-            </TabsTrigger>
-            <TabsTrigger
-              value="credentials"
-              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <KeyRound className="size-3.5 mr-1" /> Connections
-            </TabsTrigger>
-            <TabsTrigger
-              value="about"
-              className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-            >
-              <Info className="size-3.5 mr-1" /> About
-            </TabsTrigger>
-          </TabsList>
+          <BlurFade
+            as="div"
+            className="settings-tabs-entry"
+            delay={0.08}
+            duration={0.4}
+            offset={8}
+            blur="6px"
+            direction="up"
+            inView
+          >
+            <TabsList className="settings-tabs grid h-10 w-full grid-cols-5 bg-secondary/50 p-1 border border-border/60 rounded-lg" style={{ '--settings-tab-offset': `${SETTINGS_TAB_ORDER.indexOf(activeTab) * 100}%` } as CSSProperties}>
+              <TabsTrigger
+                value="taste"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >
+                <Bot className="size-3.5 mr-1 text-[#3478eb]" /> Dining
+              </TabsTrigger>
+              <TabsTrigger
+                value="courses"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >
+                <GraduationCap className="size-3.5 mr-1" /> Courses
+              </TabsTrigger>
+              <TabsTrigger
+                value="schedule"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >
+                <Calendar className="size-3.5 mr-1" /> Schedule
+              </TabsTrigger>
+              <TabsTrigger
+                value="credentials"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >
+                <KeyRound className="size-3.5 mr-1" /> Connections
+              </TabsTrigger>
+              <TabsTrigger
+                value="about"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >
+                <Info className="size-3.5 mr-1" /> About
+              </TabsTrigger>
+            </TabsList>
+          </BlurFade>
 
           {/* Tab 1: AI Taste Profile */}
-          <TabsContent value="taste" className="settings-panel space-y-6 pt-5">
+          <TabsContent value="taste" className="settings-panel pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
             {/* Section 1: AI Taste Profile */}
             <section className="space-y-3">
               <div className="space-y-0.5">
@@ -584,20 +619,42 @@ export function CustomizationSheet({
                 <p className="text-xs text-zinc-500">No favorites yet.</p>
               )}
             </section>
+            </BlurFade>
           </TabsContent>
 
-          <TabsContent value="courses" className="settings-panel settings-courses space-y-6 pt-5">
-            <CourseSettingsTab
-              data={courseData}
-              pending={courseDataPending}
-              error={courseDataError}
-              focusCourse={focusCourse}
-              onRetry={onRetryCourseData}
-              onSaved={onCourseDataSaved}
-            />
+          <TabsContent value="courses" className="settings-panel settings-courses pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
+              <CourseSettingsTab
+                data={courseData}
+                pending={courseDataPending}
+                error={courseDataError}
+                focusCourse={focusCourse}
+                onRetry={onRetryCourseData}
+                onSaved={onCourseDataSaved}
+              />
+            </BlurFade>
           </TabsContent>
 
-          <TabsContent value="credentials" className="settings-panel space-y-6 pt-5">
+          <TabsContent value="credentials" className="settings-panel pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
             <CredentialsManager />
             <div className="space-y-3">
               <div className="space-y-0.5">
@@ -634,9 +691,20 @@ export function CustomizationSheet({
                 </p>
               )}
             </div>
+            </BlurFade>
           </TabsContent>
 
-          <TabsContent value="schedule" className="settings-panel settings-schedule space-y-6 pt-5">
+          <TabsContent value="schedule" className="settings-panel settings-schedule pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
             <ScheduleTab />
 
             <section className="space-y-3">
@@ -675,10 +743,22 @@ export function CustomizationSheet({
                 <p className="text-xs text-zinc-500">No hidden items.</p>
               )}
             </section>
+            </BlurFade>
           </TabsContent>
 
-          <TabsContent value="about" className="settings-panel settings-about space-y-6 pt-5">
-            <AboutTab />
+          <TabsContent value="about" className="settings-panel settings-about pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
+              <AboutTab />
+            </BlurFade>
           </TabsContent>
         </Tabs>
       </SheetContent>

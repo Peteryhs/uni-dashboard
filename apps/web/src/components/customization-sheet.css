@@ -11,6 +11,14 @@
   overscroll-behavior: contain;
 }
 
+.settings-heading-entry,
+.settings-tabs-entry,
+.settings-tab-panel {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .settings-heading {
   padding-right: 2.75rem;
 }
@@ -66,13 +74,26 @@
   background: #24262b;
 }
 
+.settings-tabs::after {
+  position: absolute;
+  right: auto;
+  bottom: 0;
+  left: 0;
+  width: 20%;
+  height: 2px;
+  background: #f5f6f7;
+  content: '';
+  pointer-events: none;
+  transform: translateX(var(--settings-tab-offset, 0%));
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .settings-tab {
   display: flex;
   min-width: 0;
   min-height: 2.75rem;
   padding-inline: 0.5rem;
   border: 0;
-  border-bottom: 2px solid transparent;
   border-radius: 0;
   font-size: 0.77rem;
   color: #aeb4bc;
@@ -84,7 +105,6 @@
 }
 
 .settings-tab[data-state='active'] {
-  border-bottom-color: #f5f6f7;
   background: transparent !important;
   color: #f5f6f7 !important;
   box-shadow: none;
@@ -94,7 +114,6 @@
   min-width: 0;
   max-width: 100%;
   padding-bottom: 1.5rem;
-  animation: settings-panel-in 160ms ease-out both;
 }
 
 .settings-panel > *,
@@ -254,12 +273,19 @@
   font-size: 0.74rem;
 }
 
+.settings-model-summary > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .settings-model-current {
   min-width: 0;
-  max-width: none !important;
+  max-width: 100% !important;
+  overflow: hidden;
   color: #d1d5db;
   font-size: 0.74rem;
   text-align: right;
+  text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 150ms ease;
 }
@@ -415,17 +441,6 @@
 .settings-source-panel > section > div.border-t { border-top: 0; background: transparent; padding-inline: 0; }
 .settings-source-panel li.rounded-lg.border { border: 0; border-radius: 0; background: transparent; padding-inline: 0; }
 
-@keyframes settings-panel-in {
-  from {
-    opacity: 0.75;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @media (max-width: 520px) {
   .settings-sheet {
     padding: 1rem;
@@ -459,9 +474,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-panel {
-    animation: none;
-  }
+  .settings-panel { transition: none; }
+  .settings-tabs::after { transition: none; }
 }
 .settings-ai-usage { margin: -2px 0 0; color: #b9c0ca; font-size: 11px; line-height: 1.4; }
 .settings-ai-usage span { color: #939ca8; }

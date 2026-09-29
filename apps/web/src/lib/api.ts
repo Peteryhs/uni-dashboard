@@ -210,14 +210,24 @@ export async function fetchHealthz(signal?: AbortSignal): Promise<HealthzRespons
   return getJson<HealthzResponse>('/healthz', signal);
 }
 
-/** Ask the relay to poll now. Used by the manual refresh control. */
-export async function triggerPoll(sourceId?: string): Promise<void> {
+export interface PollResult {
+  receipts: Array<{ source_id: string; outcome: string; error?: string }>;
+  deferred?: string[];
+}
+
+/** Ask the relay to poll now and report which sources completed. */
+export async function triggerPoll(sourceId?: string): Promise<PollResult> {
   const qs = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
   const res = await fetch(`/v1/poll${qs}`, {
     method: 'POST',
     headers: { accept: 'application/json', ...authHeaders() },
   });
-  if (!res.ok) throw new RelayError(`poll failed with ${res.status}`, res.status);
+  if (res.status === 401) throw new RelayError('Device token rejected. Check Connections in Settings.', 401);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: string } | null;
+    throw new RelayError(body?.error || `Refresh returned ${res.status}.`, res.status);
+  }
+  return (await res.json()) as PollResult;
 }
 
 export interface CredentialFeedInfo {

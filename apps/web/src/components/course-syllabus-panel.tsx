@@ -8,6 +8,7 @@ import {
 } from '@/lib/api';
 import { useAiJob } from '@/hooks/use-ai-job';
 import type { CourseSyllabus, CourseSyllabusPreview } from '@/lib/contract';
+import { BlurFade } from '@/components/ui/blur-fade';
 import './course-syllabus-panel.css';
 
 const campusDateFormat = new Intl.DateTimeFormat('en-CA', {
@@ -183,7 +184,17 @@ export function CourseSyllabusPanel({
       </span>
     </button>
 
-    {open && <div id={panelId} className="syllabus-content">
+    {open && <BlurFade
+      as="div"
+      id={panelId}
+      className="syllabus-content"
+      delay={0.03}
+      duration={0.42}
+      offset={8}
+      blur="6px"
+      direction="up"
+      inView
+    >
       {loadError && <p className="syllabus-error" role="alert">{loadError} <button type="button" onClick={() => setReload((value) => value + 1)}>Retry</button></p>}
       {loading && <p className="syllabus-state" aria-live="polite">Loading saved syllabus…</p>}
       {!loading && !loadError && saved && <div className="syllabus-saved">
@@ -228,7 +239,7 @@ export function CourseSyllabusPanel({
           </div>}
         </div>
       </details>
-    </div>}
+    </BlurFade>}
   </section>;
 }
 

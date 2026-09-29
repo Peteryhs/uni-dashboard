@@ -4,6 +4,8 @@ import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, S
 import { CustomizationSheet } from '@/components/customization-sheet';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
 import { CalendarMarkdown } from '@/components/calendar-markdown';
+import { BlurFade } from '@/components/ui/blur-fade';
+import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/components/cards/food';
 import { matchDiningDish, matchDiningOutlet, useDiningRecommendation } from '@/components/use-dining-recommendation';
 import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, readCachedCalendar, readCachedRecommendations, saveRecommendationAction, triggerPoll } from '@/lib/api';
@@ -81,6 +83,24 @@ function weekendDateParts(satDate: string, sunDate: string): { month: string; da
 function countLabel(count: number, singular: string, plural = singular + 's'): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
+function refreshIssue(sourceId: string, error: string | undefined, outcome: string): string {
+  const source = ({
+    'uw-learn-ics': 'LEARN',
+    'uw-portal-ics': 'Schedule',
+    'uw-food-daily-menu': 'Dining',
+    'user-office-hours': 'Office hours',
+  } as Record<string, string>)[sourceId] ?? sourceId.replace(/-/g, ' ');
+  const reason = /not authenticated|unauthorized/i.test(error ?? '') ? 'sign-in needed'
+    : /timed? out/i.test(error ?? '') ? 'timed out'
+      : /rate limit|\b429\b/i.test(error ?? '') ? 'rate limited'
+        : error || outcome;
+  return `${source}: ${reason}`;
+}
+function refreshRequestIssue(message: string): string {
+  if (/token rejected/i.test(message)) return 'Token rejected';
+  if (/failed to fetch|networkerror|network request failed/i.test(message)) return 'Relay unreachable';
+  return message.length <= 34 ? message : 'Refresh failed';
+}
 function shiftDate(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
@@ -101,18 +121,6 @@ function distinctCalendarSubtitle(event: CalendarEvent): string {
   if (!subtitle || subtitle === description || description.startsWith(subtitle)) return '';
   return event.subtitle;
 }
-function useReveal() {
-  useEffect(() => {
-    const sections = document.querySelectorAll<HTMLElement>('[data-reveal]');
-    if (!('IntersectionObserver' in window)) { sections.forEach(section => section.classList.add('is-visible')); return; }
-    const observer = new IntersectionObserver(entries => entries.forEach(entry => {
-      if (entry.isIntersecting) { entry.target.classList.add('is-visible'); observer.unobserve(entry.target); }
-    }), { threshold: 0.06, rootMargin: '0px 0px -35px 0px' });
-    sections.forEach(section => observer.observe(section));
-    return () => observer.disconnect();
-  }, []);
-}
-
 function useExitingPresence<T>(value: T | null | undefined, durationMs = 220): { item: T | null; isClosing: boolean } {
   const [item, setItem] = useState<T | null>(value ?? null);
   const [isClosing, setIsClosing] = useState(false);
@@ -198,16 +206,16 @@ function AnimatedUndoToast({
   };
 
   return (
-    <div className={'undo-toast' + (closing ? ' is-closing' : '')} role="status">
+    <BlurFade as="div" className={'undo-toast' + (closing ? ' is-closing' : '')} role="status" duration={0.3} offset={8} blur="5px">
       <span>Hidden: {activeItem.title}</span>
       <button onClick={handleUndo}>Undo</button>
-    </div>
+    </BlurFade>
   );
 }
 
 function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: RecommendationItem; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze') => void }) {
   const course = item.course;
-  return <section className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} aria-label={'Details for ' + cleanTitle(item.title)}>
+  return <BlurFade as="section" className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} duration={0.3} offset={8} blur="5px" aria-label={'Details for ' + cleanTitle(item.title)}>
     <div className="rec-detail-head">
       <div>
         {!isAiFood(item) && <span className="neutral-label">{kindLabel(item)}</span>}
@@ -228,8 +236,8 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       {item.can_complete && <button className="quiet-action" onClick={() => onAction('done')}><Check size={15} /> Mark done</button>}
       <button className="quiet-action" onClick={() => onAction('snooze')}>Remind me in an hour</button>
     </div>
-    <details className="rec-evidence"><summary>Source details</summary><p>{item.source_label}. {item.evidence || 'No additional source details.'}</p></details>
-  </section>;
+    <BlurFadeDisclosure className="rec-evidence" summary="Source details"><p>{item.source_label}. {item.evidence || 'No additional source details.'}</p></BlurFadeDisclosure>
+  </BlurFade>;
 }
 
 function NextCommitment({ data, state, now }: { data?: NextCommitmentData; state?: CardState; now: number }) {
@@ -238,14 +246,33 @@ function NextCommitment({ data, state, now }: { data?: NextCommitmentData; state
   const sourceAge = state === 'stale' || state === 'dead' ? ' · Saved schedule' : '';
   if (!data.starts_at) return <div className="next-commitment next-commitment-empty"><span>{label}</span><strong>{data.title || 'Nothing scheduled'}</strong>{data.subtitle && <small>{data.subtitle}</small>}</div>;
   const when = campusDate(data.starts_at) === campusDate(now) ? 'Today' : campusDate(data.starts_at) === shiftDate(campusDate(now), 1) ? 'Tomorrow' : formatShortDay(data.starts_at);
-  return <details className="next-commitment"><summary><span>{label}</span><strong>{cleanTitle(data.title)}</strong><small>{when}{data.all_day ? ' · Date only' : ' · ' + formatTime(data.starts_at)}{data.location ? ' · ' + data.location : ''}{sourceAge}</small><ChevronRight size={15} /></summary><div className="next-commitment-detail">{data.subtitle && <p>{data.subtitle}</p>}{data.following && <p>Then: {cleanTitle(data.following.title)}{data.following.starts_at ? ' · ' + formatShortDay(data.following.starts_at) + (data.following.all_day ? '' : ' ' + formatTime(data.following.starts_at)) : ''}{data.following.location ? ' · ' + data.following.location : ''}</p>}{data.weather && !data.weather.error && data.weather.temp_c != null && <p>At that time: {Math.round(data.weather.temp_c)}°C{data.weather.feels_c != null ? ' · feels ' + Math.round(data.weather.feels_c) + '°C' : ''}{data.weather.precip_prob != null && data.weather.precip_prob > 0 ? ' · ' + Math.round(data.weather.precip_prob) + '% rain' : ''}{data.weather.wind_kmh != null && data.weather.wind_kmh >= 20 ? ' · wind ' + Math.round(data.weather.wind_kmh) + ' km/h' : ''}{data.weather.show && data.weather.reason ? ' · ' + data.weather.reason : ''}</p>}</div></details>;
+  return <BlurFadeDisclosure className="next-commitment" contentClassName="next-commitment-detail" summary={<><span>{label}</span><strong>{cleanTitle(data.title)}</strong><small>{when}{data.all_day ? ' · Date only' : ' · ' + formatTime(data.starts_at)}{data.location ? ' · ' + data.location : ''}{sourceAge}</small><ChevronRight size={15} /></>}>{data.subtitle && <p>{data.subtitle}</p>}{data.following && <p>Then: {cleanTitle(data.following.title)}{data.following.starts_at ? ' · ' + formatShortDay(data.following.starts_at) + (data.following.all_day ? '' : ' ' + formatTime(data.following.starts_at)) : ''}{data.following.location ? ' · ' + data.following.location : ''}</p>}{data.weather && !data.weather.error && data.weather.temp_c != null && <p>At that time: {Math.round(data.weather.temp_c)}°C{data.weather.feels_c != null ? ' · feels ' + Math.round(data.weather.feels_c) + '°C' : ''}{data.weather.precip_prob != null && data.weather.precip_prob > 0 ? ' · ' + Math.round(data.weather.precip_prob) + '% rain' : ''}{data.weather.wind_kmh != null && data.weather.wind_kmh >= 20 ? ' · wind ' + Math.round(data.weather.wind_kmh) + ' km/h' : ''}{data.weather.show && data.weather.reason ? ' · ' + data.weather.reason : ''}</p>}</BlurFadeDisclosure>;
 }
 
 function CalendarSection({ data, pending, error, now, page, setPage, nextCommitment, nextCommitmentState }: { data?: CalendarData; pending: boolean; error: boolean; now: number; page: number; setPage: (page: number) => void; nextCommitment?: NextCommitmentData; nextCommitmentState?: CardState }) {
   const [view, setView] = useState<'compact' | 'week' | 'full'>('compact');
   const [lastHidden, setLastHidden] = useState<{ id: string; title: string } | null>(null);
+  const calendarContentRef = useRef<HTMLDivElement>(null);
+  const previousRangeRef = useRef<string | null>(null);
   const { preferences, dismissTask, undismissTask } = usePreferences();
   const today = campusDate(now);
+  const rangeStart = data?.start;
+
+  useEffect(() => {
+    if (!rangeStart) return;
+    const range = `${view}:${rangeStart}`;
+    const previousRange = previousRangeRef.current;
+    previousRangeRef.current = range;
+    if (!previousRange || previousRange === range || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const content = calendarContentRef.current;
+    if (!content?.animate) return;
+    const animation = content.animate([
+      { opacity: 0.35, filter: 'blur(4px)', transform: 'translateY(5px)' },
+      { opacity: 1, filter: 'none', transform: 'none' },
+    ], { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    return () => animation.cancel();
+  }, [view, rangeStart]);
+
   const hidden = new Set(preferences.dismissedTasks);
   const visibleDays = data?.days.map(day => ({ ...day, events: day.events.filter(event => !hidden.has(event.occurrence_id) && !(event.uid && hidden.has(event.uid))) })) ?? [];
   const rangeLength = view === 'compact' ? 3 : view === 'week' ? 7 : 31;
@@ -326,8 +353,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
   }
 
   const renderCalendarEvent = (event: CalendarEvent, dayBadge?: string) => (
-    <details className="calendar-event" key={event.id}>
-      <summary>
+    <BlurFadeDisclosure className="calendar-event" key={`${event.id}:${dayBadge ?? ''}`} contentClassName="calendar-event-detail" summary={<>
         <span className="calendar-time">
           {dayBadge && <span className="calendar-day-badge">{dayBadge}</span>}
           {calendarTime(event)}
@@ -338,8 +364,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
           <span className={'event-tag event-' + event.category}>{calendarKind(event)}</span>
         </span>
         <ChevronRight className="calendar-item-chevron" size={14} />
-      </summary>
-      <div className="calendar-event-detail">
+      </>}>
         {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
         {event.category === 'opens' && event.due_at && <p><strong>Due:</strong> {formatShortDay(event.due_at)} · {formatTime(event.due_at)}</p>}
         {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
@@ -348,7 +373,8 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         {event.description && <CalendarMarkdown description={event.description} />}
         {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
         {event.readings && event.readings.length > 0 && <p><strong>Readings</strong> · {event.readings.join(', ')}</p>}
-        {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <details className="calendar-evidence"><summary>Syllabus source text</summary>{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</details>}
+        {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <BlurFadeDisclosure className="calendar-evidence" summary="Syllabus source text">{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</BlurFadeDisclosure>}
+        <div className="calendar-event-footer">
         <small>{event.source_label}{event.state !== 'live' ? ' · ' + event.state : ''}</small>
         <div className="calendar-event-actions">
           {event.links.map((link, index) => <a key={link.url + index} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}
@@ -356,14 +382,23 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
           {!event.url && event.links.length === 0 && data?.courses.find(course => course.course === event.course)?.learn_url && <a href={data.courses.find(course => course.course === event.course)!.learn_url!} target="_blank" rel="noopener noreferrer">Open course<ExternalLink size={12} /></a>}
           <button onClick={() => { const id = event.occurrence_id || event.uid || event.id; dismissTask(id); setLastHidden({ id, title: cleanTitle(event.title) }); }}>Hide event</button>
         </div>
-      </div>
-    </details>
+        </div>
+    </BlurFadeDisclosure>
   );
 
-  return <section className="content-section" id="calendar" data-reveal>
-    <div className="section-head"><h2>Calendar</h2>{view === 'full' && <nav className="calendar-navigation" aria-label="31-day calendar dates"><button onClick={() => setPage(page - 1)} aria-label="Previous 31 days"><ChevronLeft size={15} /></button><span>{shortDateLabel(data?.start ?? today)} – {shortDateLabel(data?.end ? shiftDate(data.end, -1) : shiftDate(today, 30))}</span><button onClick={() => setPage(page + 1)} aria-label="Next 31 days"><ChevronRight size={15} /></button>{page !== 0 && <button onClick={() => setPage(0)}>Today</button>}</nav>}</div>
+  return <BlurFade as="section" className="content-section" id="calendar" inView duration={0.45} offset={10} blur="6px" direction="up">
+    <div className={'section-head calendar-section-head' + (view === 'full' ? ' is-full' : '')}>
+      <h2>Calendar</h2>
+      {view === 'full' && <nav className="calendar-navigation" aria-label="31-day calendar dates"><button onClick={() => setPage(page - 1)} aria-label="Previous 31 days"><ChevronLeft size={15} /></button><span>{shortDateLabel(data?.start ?? today)} – {shortDateLabel(data?.end ? shiftDate(data.end, -1) : shiftDate(today, 30))}</span><button onClick={() => setPage(page + 1)} aria-label="Next 31 days"><ChevronRight size={15} /></button>{page !== 0 && <button onClick={() => setPage(0)}>Today</button>}</nav>}
+      {data && <div className="calendar-range" role="group" aria-label="Calendar range" style={{ '--calendar-range-offset': `${({ compact: 0, week: 1, full: 2 }[view]) * 100}%` } as CSSProperties}>
+        <button type="button" aria-controls="calendar-day-list" aria-pressed={view === 'compact'} onClick={() => { setView('compact'); setPage(0); }}>3 days</button>
+        <button type="button" aria-controls="calendar-day-list" aria-pressed={view === 'week'} onClick={() => { setView('week'); setPage(0); }}>7 days</button>
+        <button type="button" aria-controls="calendar-day-list" aria-pressed={view === 'full'} onClick={() => setView('full')}>31 days</button>
+      </div>}
+    </div>
     <div className={'section-panel calendar-panel' + (view === 'full' ? ' is-full' : '')}>
-      {page === 0 && <NextCommitment data={nextCommitment} state={nextCommitmentState} now={now} />}
+      {page === 0 && nextCommitment && <BlurFade as="div" className="next-commitment-fade" duration={0.42} offset={7} blur="4px"><NextCommitment data={nextCommitment} state={nextCommitmentState} now={now} /></BlurFade>}
+      <div className="calendar-view-content" ref={calendarContentRef}>
       {pending && <p className="empty-state">Loading calendar…</p>}
       {error && !data && <p className="empty-state" role="alert">Calendar is unavailable right now.</p>}
       {data && calendarRows.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
@@ -408,19 +443,12 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
       })}
       </div>
       {view !== 'full' && weeks.size > 0 && <div className="calendar-weeks"><span>Deadlines and exams ahead</span>{[...weeks.entries()].slice(0, 4).map(([date, events]) => <div className="calendar-week" key={date}><strong>Week of {shortDateLabel(date)}</strong><p>{events.slice(0, 2).map(event => cleanTitle(event.title)).join(' · ')}{events.length > 2 ? ' · +' + (events.length - 2) + ' more' : ''}</p></div>)}</div>}
-      {data && <div className="calendar-view-controls">
-        <div className="calendar-controls-spacer" aria-hidden="true" />
-        {view === 'compact' && <button className="calendar-mode-step" onClick={() => setView('week')} aria-controls="calendar-day-list" aria-expanded={false}>Show 7 days</button>}
-        {view === 'week' && <button className="calendar-mode-step" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to next 3 days">Show 3 days</button>}
-        {view === 'full' && <button className="calendar-mode-step" onClick={() => setView('week')} aria-controls="calendar-day-list" aria-expanded={false}>Show 7 days</button>}
-        {view !== 'full' && <button className="calendar-expand" onClick={() => setView('full')} aria-controls="calendar-day-list" aria-expanded={false}>Show full calendar<ChevronRight size={16} /></button>}
-        {view === 'full' && <button className="calendar-expand" onClick={() => { setView('compact'); setPage(0); }} aria-controls="calendar-day-list" aria-expanded={true} aria-label="Collapse calendar to next 3 days">Show 3 days<ChevronLeft size={16} /></button>}
-      </div>}
       {data?.truncated && <p className="calendar-notice">The calendar feed has more events than can be shown in this range.</p>}
       {data?.sources.some(source => source.status !== 'ok') && <p className="calendar-notice">Some calendar sources need attention. The schedule may be incomplete.</p>}
+      </div>
       <AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} />
     </div>
-  </section>;
+  </BlurFade>;
 }
 
 function DueWorkSection({ data }: { data?: DueSoonData }) {
@@ -431,8 +459,8 @@ function DueWorkSection({ data }: { data?: DueSoonData }) {
   const isVisible = (item: DueSoonItem) => !hidden.has(item.occurrence_id || '') && !hidden.has(item.uid || '');
   const near = [...(data.due ?? data.items ?? []), ...(data.opens ?? [])].filter(isVisible).sort((a, b) => a.starts_at - b.starts_at);
   const ahead = (data.ahead ?? []).map(group => ({ ...group, items: group.items.filter(isVisible) })).filter(group => group.items.length > 0);
-  const renderTask = (item: DueSoonItem) => <details className="work-item" key={(item.occurrence_id || item.uid || item.title) + item.starts_at}><summary><span>{item.all_day ? formatShortDay(item.starts_at) : formatShortDay(item.starts_at) + ' · ' + formatTime(item.starts_at)}</span><strong>{cleanTitle(item.title)}</strong>{item.course && <small>{item.course}</small>}<em>{item.phase === 'opens' ? (item.due_at ? `Opens · Due ${formatShortDay(item.due_at)}` : 'Opens') : 'Due'}</em><ChevronRight size={14} /></summary><div className="work-item-detail">{item.all_day && <p>No exact time was supplied.</p>}{item.phase === 'opens' && item.due_at && <p><strong>Due:</strong> {formatShortDay(item.due_at)} · {formatTime(item.due_at)}</p>}{item.description && <p>{item.description}</p>}{item.location && <p>{item.location}</p>}<div>{item.links?.map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}{item.url && !item.links?.some(link => link.url === item.url) && <a href={item.url} target="_blank" rel="noopener noreferrer">Open task<ExternalLink size={12} /></a>}{(item.occurrence_id || item.uid) && <button onClick={() => { const id = item.occurrence_id || item.uid!; dismissTask(id); setLastHidden({ id, title: cleanTitle(item.title) }); }}>Hide</button>}</div></div></details>;
-  return <section className="content-section" id="work" data-reveal><div className="section-head"><h2>Due & opening</h2><span className="section-count">{near.filter(item => item.phase !== 'opens').length} due · {near.filter(item => item.phase === 'opens').length} opens in 7 days</span></div><div className="section-panel work-panel">{data.error && <p className="calendar-notice">{data.error}</p>}{near.length ? near.map(renderTask) : <p className="empty-state">Nothing due or opening in the next seven days.</p>}{ahead.length > 0 && <details className="term-work"><summary>Later this term · {ahead.reduce((sum, group) => sum + group.items.length, 0)} major items<ChevronRight size={15} /></summary>{ahead.map(group => <div className="term-week" key={group.week_start}><h3>{group.label}</h3>{group.items.map(renderTask)}</div>)}</details>}<AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} /></div></section>;
+  const renderTask = (item: DueSoonItem) => <BlurFadeDisclosure className="work-item" key={(item.occurrence_id || item.uid || item.title) + item.starts_at} contentClassName="work-item-detail" summary={<><span>{item.all_day ? formatShortDay(item.starts_at) : formatShortDay(item.starts_at) + ' · ' + formatTime(item.starts_at)}</span><strong>{cleanTitle(item.title)}</strong>{item.course && <small>{item.course}</small>}<em>{item.phase === 'opens' ? (item.due_at ? `Opens · Due ${formatShortDay(item.due_at)}` : 'Opens') : 'Due'}</em><ChevronRight size={14} /></>}>{item.all_day && <p>No exact time was supplied.</p>}{item.phase === 'opens' && item.due_at && <p><strong>Due:</strong> {formatShortDay(item.due_at)} · {formatTime(item.due_at)}</p>}{item.description && <p>{item.description}</p>}{item.location && <p>{item.location}</p>}<div>{item.links?.map(link => <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a>)}{item.url && !item.links?.some(link => link.url === item.url) && <a href={item.url} target="_blank" rel="noopener noreferrer">Open task<ExternalLink size={12} /></a>}{(item.occurrence_id || item.uid) && <button onClick={() => { const id = item.occurrence_id || item.uid!; dismissTask(id); setLastHidden({ id, title: cleanTitle(item.title) }); }}>Hide</button>}</div></BlurFadeDisclosure>;
+  return <BlurFade as="section" className="content-section" id="work" inView duration={0.45} offset={10} blur="6px" direction="up"><div className="section-head"><h2>Due & opening</h2><span className="section-count">{near.filter(item => item.phase !== 'opens').length} due · {near.filter(item => item.phase === 'opens').length} opens in 7 days</span></div><div className="section-panel work-panel">{data.error && <p className="calendar-notice">{data.error}</p>}{near.length ? near.map(renderTask) : <p className="empty-state">Nothing due or opening in the next seven days.</p>}{ahead.length > 0 && <BlurFadeDisclosure className="term-work" summary={<>Later this term · {ahead.reduce((sum, group) => sum + group.items.length, 0)} major items<ChevronRight size={15} /></>}>{ahead.map(group => <div className="term-week" key={group.week_start}><h3>{group.label}</h3>{group.items.map(renderTask)}</div>)}</BlurFadeDisclosure>}<AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} /></div></BlurFade>;
 }
 
 function MenuSection() {
@@ -469,22 +497,22 @@ function MenuSection() {
     catch (error) { setRefreshError(error instanceof Error ? error.message : 'Could not refresh the menu.'); }
     finally { setRefreshing(false); }
   };
-  return <section className="content-section" id="menu" data-reveal>
+  return <BlurFade as="section" className="content-section" id="menu" inView duration={0.45} offset={10} blur="6px" direction="up">
     <div className="section-head"><h2>Dining menu</h2><button className="section-control" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={15} className={refreshing ? 'spinning' : ''} /> Refresh menu</button></div>
     {menu.data?.status === 'previous' && <p className="menu-status">Today’s menu has not been posted. Showing the last posted menu from {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.status === 'today' && <p className="menu-status">Posted for today, {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
     {menu.data && <div className="menu-controls"><input type="search" aria-label="Search dishes or outlets" placeholder="Search dishes or outlets" value={preferences.dishSearchQuery} onChange={event => setDishSearchQuery(event.target.value)} /><div className="menu-outlet-select" aria-label="Dining outlets"><button aria-pressed={selectedOutlet === 'all'} onClick={() => setSelectedOutlet('all')}>All outlets</button>{outlets.map(outlet => <button key={outlet} aria-pressed={selectedOutlet === outlet} onClick={() => setSelectedOutlet(outlet)}>{getOutletLocation(outlet).name}</button>)}</div></div>}
-    {menu.isPending && <p className="state-panel">Loading dining menu…</p>}
-    {menu.isError && <p className="state-panel" role="alert">Could not load the dining menu.</p>}
+    {menu.isPending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading dining menu…</BlurFade>}
+    {menu.isError && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Could not load the dining menu.</BlurFade>}
     {refreshError && <p className="action-error" role="alert">{refreshError}</p>}
-    {menu.data?.status === 'unavailable' && <p className="state-panel">No menu has been published in the feed yet.</p>}
-    {menu.data && menu.data.items.length > 0 && groups.size === 0 && <p className="state-panel">No dishes match your dining filters.</p>}
-    {groups.size > 0 && <div className="menu-grid">{sortedGroups.map(([outlet, dishes]) => {
+    {menu.data?.status === 'unavailable' && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No menu has been published in the feed yet.</BlurFade>}
+    {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your dining filters.</BlurFade>}
+    {groups.size > 0 && <div className="menu-grid">{sortedGroups.map(([outlet, dishes], outletIndex) => {
       const aiOutlet = diningRecommendation.state.status === 'ready'
         ? matchDiningOutlet(diningRecommendation.state.recommendation, outlet)
         : undefined;
-      return <article className={'menu-outlet' + (aiOutlet?.rank === 1 ? ' menu-outlet--best' : '')} key={outlet}>
+      return <BlurFade as="article" className={'menu-outlet' + (aiOutlet?.rank === 1 ? ' menu-outlet--best' : '')} key={outlet} inView delay={Math.min(outletIndex, 5) * 0.06} duration={0.5} offset={12} blur="6px">
         <div className="menu-outlet-head"><div><h3>{getOutletLocation(outlet).name}</h3><small>{getOutletLocation(outlet).building} · {getOutletLocation(outlet).campusZone}</small>{aiOutlet?.verdict.trim() && <p className="menu-outlet-ai-verdict">{aiOutlet.verdict.trim()}</p>}</div><div><span>{dishes.length} {dishes.length === 1 ? 'dish' : 'dishes'}</span><button onClick={() => toggleFavoriteOutlet(outlet)} aria-label={(isFavoriteOutlet(outlet) ? 'Unpin ' : 'Pin ') + getOutletLocation(outlet).name} aria-pressed={isFavoriteOutlet(outlet)}><Star size={15} fill={isFavoriteOutlet(outlet) ? 'currentColor' : 'none'} /></button></div></div>
         {dishes.length ? <ul>{dishes.map((dish, index) => {
           const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
@@ -494,34 +522,33 @@ function MenuSection() {
             <div className="menu-dish-actions"><button onClick={() => toggleFavoriteDish(dish.dish)} aria-label={(isFavoriteDish(dish.dish) ? 'Remove ' : 'Favorite ') + dish.dish} aria-pressed={isFavoriteDish(dish.dish)}><Star size={14} fill={isFavoriteDish(dish.dish) ? 'currentColor' : 'none'} /></button>{dish.url && <a href={dish.url} target="_blank" rel="noopener noreferrer" aria-label={'View ' + dish.dish}><ExternalLink size={14} /></a>}</div>
           </li>;
         })}</ul> : <p className="menu-outlet-empty">No dishes posted here today.</p>}
-      </article>;
+      </BlurFade>;
     })}</div>}
-    <details className="dining-directory"><summary>Campus dining locations</summary><div>{CAMPUS_DINING_LOCATIONS.map(location => <p key={location.name}><strong>{location.name}</strong><span>{location.building} · {location.campusZone}</span></p>)}</div></details>
-  </section>;
+    <BlurFadeDisclosure className="dining-directory" contentClassName="dining-directory-list" summary="Campus dining locations">{CAMPUS_DINING_LOCATIONS.map(location => <p key={location.name}><strong>{location.name}</strong><span>{location.building} · {location.campusZone}</span></p>)}</BlurFadeDisclosure>
+  </BlurFade>;
 }
 
 function CoursesSection({ data, pending, error, onManageCourse }: { data?: CalendarData; pending: boolean; error: boolean; onManageCourse: (course: string) => void }) {
   const events = data?.days.flatMap(day => day.events) ?? [];
-  return <section className="content-section" id="courses" data-reveal>
+  return <BlurFade as="section" className="content-section" id="courses" inView duration={0.45} offset={10} blur="6px" direction="up">
     <div className="section-head"><h2>Courses</h2></div>
-    {pending && <p className="state-panel">Loading courses…</p>}
-    {error && !data && <p className="state-panel" role="alert">Courses are unavailable right now.</p>}
-    {data && data.courses.length === 0 && <p className="state-panel">No courses are in the calendar feed. Add your schedule in Settings.</p>}
+    {pending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading courses…</BlurFade>}
+    {error && !data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Courses are unavailable right now.</BlurFade>}
+    {data && data.courses.length === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No courses are in the calendar feed. Add your schedule in Settings.</BlurFade>}
     {data && data.courses.length > 0 && <div className="courses-grid">{data.courses.map(course => {
       const upcoming = events.filter(event => event.course === course.course).slice(0, 3);
-      return <article className="course-card" key={course.course}>
+      return <BlurFade as="article" className="course-card" key={course.course} inView duration={0.45} offset={10} blur="6px">
         <div className="course-card-head"><h3>{course.course}</h3>{course.learn_url && <a href={course.learn_url} target="_blank" rel="noopener noreferrer">Open course <ExternalLink size={14} /></a>}</div>
         <p className="course-counts">In this range · {countLabel(course.class_count, 'class', 'classes')} · {countLabel(course.deadline_count, 'deadline')} · {countLabel(course.office_hours_count, 'office hour')}</p>
         {course.resources.length > 0 && <div className="course-links">{course.resources.map(resource => <a href={resource.url} key={resource.url} target="_blank" rel="noopener noreferrer">{resource.title} <ExternalLink size={12} /></a>)}</div>}
         <div className="course-upcoming"><span>Coming up</span>{upcoming.length ? upcoming.map(event => <div key={event.id}><small>{formatShortDay(event.starts_at)} · {event.all_day ? 'Date only' : formatTime(event.starts_at)}</small><strong>{cleanTitle(event.title)}</strong></div>) : <p>Nothing scheduled in this range.</p>}</div>
         <button type="button" className="course-manage" onClick={() => onManageCourse(course.course)}>Manage in Settings <ChevronRight size={14} /></button>
-      </article>;
+      </BlurFade>;
     })}</div>}
-  </section>;
+  </BlurFade>;
 }
 
 export default function App() {
-  useReveal();
   const queryClient = useQueryClient();
   const now = useNow(30_000);
   const { cards, offline, refetch } = useDashboard();
@@ -533,7 +560,10 @@ export default function App() {
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertError, setAlertError] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('');
   const [syncError, setSyncError] = useState('');
+  const { item: visibleSyncStatus } = useExitingPresence(syncStatus || null, 300);
+  const syncStatusTimer = useRef<number | null>(null);
   const [calendarPage, setCalendarPage] = useState(0);
   const todayStart = campusDate(now);
   const start = shiftDate(todayStart, calendarPage * 31);
@@ -582,47 +612,83 @@ export default function App() {
     try { await saveRecommendationAction(item.id, action); await recs.refetch(); }
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not update recommendation.'); }
   };
+  useEffect(() => () => {
+    if (syncStatusTimer.current !== null) window.clearTimeout(syncStatusTimer.current);
+  }, []);
   const refreshAll = async () => {
-    setSyncing(true); setSyncError('');
-    try { await triggerPoll(); await queryClient.invalidateQueries(); }
-    catch (error) { setSyncError(error instanceof Error ? error.message : 'Could not refresh sources.'); }
+    if (syncStatusTimer.current !== null) {
+      window.clearTimeout(syncStatusTimer.current);
+      syncStatusTimer.current = null;
+    }
+    setSyncing(true); setSyncError(''); setSyncStatus('Checking sources…');
+    try {
+      const result = await triggerPoll();
+      setSyncStatus('Updating view…');
+      await queryClient.invalidateQueries();
+
+      const sourceIssues = result.receipts.filter(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty');
+      if (sourceIssues.length) {
+        const issues = sourceIssues.map(receipt => refreshIssue(receipt.source_id, receipt.error, receipt.outcome));
+        setSyncStatus(issues[0] + (issues.length > 1 ? ` +${issues.length - 1} more` : ''));
+        setSyncError(issues.join(' · '));
+        return;
+      }
+
+      const viewIssue = queryClient.getQueryCache().getAll().find(query =>
+        query.isActive() && ['dashboard', 'recommendations', 'full-calendar'].includes(String(query.queryKey[0])) && query.state.status === 'error',
+      );
+      if (viewIssue) {
+        const reason = viewIssue.state.error instanceof Error ? viewIssue.state.error.message : 'Could not load updated information.';
+        setSyncStatus(`View: ${refreshRequestIssue(reason)}`);
+        setSyncError(reason);
+        return;
+      }
+
+      const queued = result.deferred?.length ?? 0;
+      setSyncStatus(queued ? `${queued} queued` : result.receipts.length ? 'Updated' : 'Up to date');
+      syncStatusTimer.current = window.setTimeout(() => { setSyncStatus(''); syncStatusTimer.current = null; }, 2200);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not refresh sources.';
+      setSyncStatus(refreshRequestIssue(reason));
+      setSyncError(reason);
+    }
     finally { setSyncing(false); }
   };
   return <div className="dashboard-app"><main className="dashboard-frame">
     <section className="today-content" aria-label="Today">
-      <div className="day-context">
+      <BlurFade as="div" className="day-context" duration={0.5} offset={8} blur="4px">
         <span>{formatDay(now)} · {formatTime(now)}</span>
         {weather.data?.temp_c !== null && weather.data?.temp_c !== undefined && <span>{weather.data.temp_c}°C</span>}
         {alert && alert.count > 0 && !alert.dismissed && <button className="context-alert" onClick={() => setAlertOpen(value => !value)} aria-expanded={alertOpen}>{alert.notices?.[0]?.title || alert.summary || 'Campus service issue'}{alert.count > 1 ? ' · ' + alert.count + ' notices' : ''}</button>}
         {alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}
         {(offline || recs.isError || isOld) && <span className="saved-context"><WifiOff size={13} /> Saved information</span>}
         <div className="day-context-actions">
-          <button className="top-refresh" onClick={() => void refreshAll()} disabled={syncing} aria-label="Refresh all sources" title="Refresh all sources"><RefreshCw size={16} className={syncing ? 'spinning' : ''} /></button>
+          <button className={'top-refresh' + (syncStatus ? ' has-status' : '') + (syncError ? ' has-error' : '')} onClick={() => void refreshAll()} disabled={syncing} aria-label="Refresh all sources" title={syncError || 'Refresh all sources'}><RefreshCw size={16} className={syncing ? 'spinning' : ''} /><span className="top-refresh-status" aria-hidden="true">{visibleSyncStatus && <BlurFade as="span" className="top-refresh-message" key={visibleSyncStatus} duration={0.24} offset={3} blur="3px" direction="up">{visibleSyncStatus}</BlurFade>}</span></button>
+          <span className="sr-only" role="status">{syncError || syncStatus}</span>
           <button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button>
         </div>
-      </div>
-      {activeAlert && <section className={'alert-detail' + (isAlertClosing ? ' is-closing' : '')} aria-label="Campus alert details"><div className="alert-list">{activeAlert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{activeAlert.checked_at && <small>Checked {shortAge(activeAlert.checked_at, now)} ago</small>}</div><div className="alert-actions">{activeAlert.key && <button onClick={async () => { try { await dismissAlert(activeAlert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</section>}
-      {syncError && <p className="action-error" role="alert">{syncError}</p>}
-      {recs.isPending && <div className="state-panel hero-loading" aria-busy="true">Finding your next move…</div>}
-      {recs.isError && !recs.data && <div className="state-panel" role="alert">Recommendations are unavailable. <button className="inline-link" onClick={() => void recs.refetch()}>Try again</button></div>}
-      {recs.data && !featured && <div className="state-panel">{recs.data.headline}.</div>}
+      </BlurFade>
+      {activeAlert && <BlurFade as="section" className={'alert-detail' + (isAlertClosing ? ' is-closing' : '')} duration={0.34} offset={8} blur="5px" aria-label="Campus alert details"><div className="alert-list">{activeAlert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{activeAlert.checked_at && <small>Checked {shortAge(activeAlert.checked_at, now)} ago</small>}</div><div className="alert-actions">{activeAlert.key && <button onClick={async () => { try { await dismissAlert(activeAlert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</BlurFade>}
+      {recs.isPending && <BlurFade as="div" className="state-panel hero-loading" duration={0.42} offset={10} blur="5px" aria-busy="true">Finding your next move…</BlurFade>}
+      {recs.isError && !recs.data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Recommendations are unavailable. <button className="inline-link" onClick={() => void recs.refetch()}>Try again</button></BlurFade>}
+      {recs.data && !featured && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">{recs.data.headline}.</BlurFade>}
       {featured && <div className="recommendation-grid">
-        <article className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')}>
+        <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
             <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.course || recommendationBody(featured).split('.')[0]}</p><ChevronRight size={18} /></button>
             {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>
-        </article>
-        <section className="more-recs" aria-label="More recommendations"><span className="more-label">More for today</span>
+        </BlurFade>
+        <BlurFade as="section" className="more-recs" aria-label="More recommendations" duration={0.58} delay={0.14} offset={14} blur="7px"><span className="more-label">More for today</span>
           {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
           {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small></button>}
-        </section>
+        </BlurFade>
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
-      {recs.data?.warnings && recs.data.warnings.length > 0 && <details className="warning-strip"><summary>{recs.data.warnings.length} source updates need attention</summary><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></details>}
+      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} source updates need attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}
     </section>
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />
