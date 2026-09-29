@@ -14,20 +14,22 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val app = applicationContext as UniDashApp
         if (app.credentialStore.current() == null) return Result.success()
-        return app.repository.refresh().fold(
-            onSuccess = {
-                app.notifier.onSnapshot(it)
+        val generation = app.repository.currentSessionGeneration()
+        return app.repository.refresh(expectedGeneration = generation).fold(
+            onSuccess = { snapshot ->
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
                 Result.success()
             },
             onFailure = { e ->
-                when (e) {
-                    is RelayError.Unauthorized, is RelayError.NotConfigured -> {
-                        app.notifier.onUnauthorized(e.message ?: "Open the app to reconnect.")
-                        Result.success()
+                app.repository.runIfCurrent(generation) {
+                    when (e) {
+                        is RelayError.Unauthorized, is RelayError.NotConfigured ->
+                            app.notifier.onUnauthorized(e.message ?: "Open the app to reconnect.")
+                        // Offline or a 5xx: the next periodic run is soon enough; retrying sooner burns battery.
+                        else -> Unit
                     }
-                    // Offline or a 5xx: the next periodic run is soon enough; retrying sooner burns battery.
-                    else -> Result.success()
                 }
+                Result.success()
             },
         )
     }

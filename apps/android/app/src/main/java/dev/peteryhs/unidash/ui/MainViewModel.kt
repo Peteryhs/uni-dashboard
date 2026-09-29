@@ -10,6 +10,9 @@ import dev.peteryhs.unidash.data.Recommendation
 import dev.peteryhs.unidash.data.RelayApi
 import dev.peteryhs.unidash.data.RelayError
 import dev.peteryhs.unidash.data.Snapshot
+import dev.peteryhs.unidash.data.StaleSessionException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,12 +21,15 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Signed-in state is tri-state so the first frame never flashes the setup screen. */
 enum class Session { Loading, SignedOut, SignedIn }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as UniDashApp
+    private val sessionTransition = Mutex()
 
     val session: StateFlow<Session> = app.credentialStore.credentials
         .map { if (it == null) Session.SignedOut else Session.SignedIn }
@@ -41,7 +47,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refresh() {
         viewModelScope.launch {
-            app.repository.refresh().onSuccess { app.notifier.onSnapshot(it) }
+            app.repository.refresh().onSuccess { snapshot ->
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
+            }
         }
     }
 
@@ -51,7 +59,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     suspend fun liveLoop() {
         while (true) {
-            app.repository.refresh().onSuccess { app.notifier.onSnapshot(it) }
+            app.repository.refresh().onSuccess { snapshot ->
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
+            }
             val hint = snapshot.value.recommendations?.refreshAfterMs ?: 60_000
             delay(hint.coerceIn(30_000, 5 * 60_000))
         }
@@ -62,19 +72,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val base = Credentials.normaliseUrl(url, allowEmulatorHost = dev.peteryhs.unidash.BuildConfig.DEBUG)
             ?: return Result.failure(IllegalArgumentException("Enter the dashboard's https address"))
         val creds = Credentials(base, clientId.trim(), secret.trim())
-        return runCatching { RelayApi(creds).health() }.map {
-            app.credentialStore.save(creds)
-            app.scheduleSync()
+        return try {
+            sessionTransition.withLock {
+                RelayApi(creds).health()
+                app.credentialStore.save(creds)
+                app.repository.beginSession()
+                app.scheduleSync()
+            }
             refresh()
+            Result.success(Unit)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure(error)
         }
     }
 
     fun signOut() {
-        viewModelScope.launch {
-            app.cancelSync()
-            app.notifier.cancelAll()
-            app.repository.clear()
-            app.credentialStore.clear()
+        // Fence callbacks and in-flight refreshes synchronously; the cleanup below suspends on
+        // WorkManager/DataStore and must not leave a window for an old result to be delivered.
+        app.repository.invalidateSession()
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            sessionTransition.withLock {
+                // A sign-in may have been waiting on the transition mutex when signOut was
+                // requested. Fence that attempt again before clearing credentials and state.
+                val invalidatedGeneration = app.repository.invalidateSession()
+                app.cancelSync()
+                app.notifier.cancelAll()
+                app.credentialStore.clear()
+                app.repository.clearInvalidated(invalidatedGeneration)
+            }
         }
     }
 
@@ -82,20 +109,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             app.repository.act(item, action, until)
                 .onSuccess { _messages.tryEmit(if (action == "done") "Marked done" else "Snoozed") }
-                .onFailure { _messages.tryEmit(describe(it)) }
+                .onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
         }
     }
 
     fun dismissAlert(key: String) {
         viewModelScope.launch {
-            app.repository.dismissAlert(key).onFailure { _messages.tryEmit(describe(it)) }
+            app.repository.dismissAlert(key).onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
         }
     }
 
     fun rankFood(date: String) {
         viewModelScope.launch {
             app.repository.rankFood(date)
-                .onFailure { _messages.tryEmit(describe(it)) }
+                .onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
         }
     }
 

@@ -10,6 +10,97 @@
 import { validateRows } from '#contract/canonical.mjs';
 import { parseRetryAfter } from './retry.mjs';
 
+const DEFAULT_LEASE_MS = 2 * 60_000;
+
+function attachClaimToken(receipt, token) {
+  // The token is an internal hand-off between runSource and its scheduler. Keep it off API JSON
+  // and source_run payloads while leaving it available to the shared poll loops.
+  Object.defineProperty(receipt, 'claim_token', { value: token, enumerable: false, configurable: true });
+  return receipt;
+}
+
+function claimReceipt(source, now, error = 'source is already being polled') {
+  return attachClaimToken({
+    source_id: source.id,
+    started_at: now,
+    finished_at: Date.now(),
+    outcome: 'skipped',
+    http_status: null,
+    bytes: 0,
+    rows_written: 0,
+    error,
+    meta: { poll_claim: 'busy' },
+    body_sha256: '',
+    tombstones: 0,
+    retry_after_ms: 0,
+    rows_parsed: 0,
+  }, null);
+}
+
+async function claimStillOwned(store, sourceId, token) {
+  if (!token || typeof store.sourceLeaseOwned !== 'function') return true;
+  return store.sourceLeaseOwned(sourceId, token, Date.now());
+}
+
+/**
+ * A fetch can outlive its lease (or lose it to a newer invocation after a Worker retry). Every
+ * state-changing stage checks the generation before touching durable state. The adapters expose
+ * the same primitive, so this applies equally to SQLite and D1.
+ */
+async function leaseLost(store, sourceId, token, receipt) {
+  if (await claimStillOwned(store, sourceId, token)) return false;
+  receipt.outcome = 'skipped';
+  receipt.rows_written = 0;
+  receipt.tombstones = 0;
+  receipt.error = 'poll claim expired or was superseded before applying result';
+  receipt.meta = { ...(receipt.meta ?? {}), poll_claim: 'lost' };
+  receipt.finished_at = Date.now();
+  return true;
+}
+
+async function applyResult(store, source, token, receipt, {
+  rows = [],
+  tombstone = false,
+  tombstoneScope = {},
+  raw = null,
+} = {}) {
+  if (typeof store.commitSourceResult === 'function') {
+    const result = await store.commitSourceResult({
+      sourceId: source.id,
+      leaseToken: token,
+      leaseNow: Date.now(),
+      shape: source.shape,
+      rows,
+      seenExternalIds: rows.map((row) => row.external_id),
+      tombstone,
+      tombstoneScope,
+      snapshot: raw?.body
+        ? { sourceId: source.id, fetchedAt: receipt.started_at, contentType: raw.contentType, body: raw.body }
+        : null,
+      receipt,
+    });
+    if (!result.applied) await leaseLost(store, source.id, token, receipt);
+    return result;
+  }
+
+  // Compatibility path for narrow test doubles and future adapters that have not adopted the
+  // atomic primitive yet. Production SQLite and D1 always use commitSourceResult above.
+  if (await leaseLost(store, source.id, token, receipt)) return { applied: false, written: 0, tombstones: 0 };
+  const written = rows.length ? await store.upsertRows(source.shape, rows) : 0;
+  const tombstones = tombstone
+    ? await store.tombstoneMissing(source.shape, source.id, rows.map((row) => row.external_id), tombstoneScope)
+    : 0;
+  if (raw?.body) {
+    if (await leaseLost(store, source.id, token, receipt)) return { applied: false, written: 0, tombstones: 0 };
+    await store.saveSnapshot({ sourceId: source.id, fetchedAt: receipt.started_at, contentType: raw.contentType, body: raw.body });
+  }
+  receipt.rows_written = written;
+  receipt.tombstones = tombstones;
+  if (await leaseLost(store, source.id, token, receipt)) return { applied: false, written: 0, tombstones: 0 };
+  await store.insertRun(receipt);
+  return { applied: true, written, tombstones };
+}
+
 /**
  * A calendar can legitimately run out of upcoming events at the end of a term. A zero-row
  * response is suspicious when the store still has an active future event for the same source,
@@ -47,10 +138,10 @@ async function unexpectedEmpty(source, store, now, parsed) {
   };
 }
 
-export async function runSource(source, store, { now = Date.now(), date = null, dryRun = false } = {}) {
+async function runClaimedSource(source, store, { now = Date.now(), date = null, dryRun = false, claimToken = null } = {}) {
   const startedAt = now;
   const ctx = { now, date, store };
-  const receipt = {
+  const receipt = attachClaimToken({
     source_id: source.id,
     started_at: startedAt,
     finished_at: startedAt,
@@ -63,7 +154,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     body_sha256: '',
     tombstones: 0,
     retry_after_ms: 0,
-  };
+  }, claimToken);
 
   let raw;
   try {
@@ -71,7 +162,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
   } catch (e) {
     receipt.error = `fetch threw: ${e.message}`;
     receipt.finished_at = Date.now();
-    if (!dryRun) await store.insertRun(receipt);
+    if (!dryRun) await applyResult(store, source, claimToken, receipt, { raw: null });
     return receipt;
   }
 
@@ -101,10 +192,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
       empty: Boolean(verdict.empty),
     };
     receipt.finished_at = Date.now();
-    if (!dryRun) {
-      await store.insertRun(receipt);
-      if (raw.body) await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
-    }
+    if (!dryRun) await applyResult(store, source, claimToken, receipt, { raw });
     return receipt;
   }
 
@@ -115,10 +203,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     receipt.outcome = 'failed';
     receipt.error = `parse threw: ${e.message}`;
     receipt.finished_at = Date.now();
-    if (!dryRun) {
-      await store.insertRun(receipt);
-      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
-    }
+    if (!dryRun) await applyResult(store, source, claimToken, receipt, { raw });
     return receipt;
   }
 
@@ -129,10 +214,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     receipt.outcome = 'failed';
     receipt.error = `contract rejected rows: ${e.message}`;
     receipt.finished_at = Date.now();
-    if (!dryRun) {
-      await store.insertRun(receipt);
-      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
-    }
+    if (!dryRun) await applyResult(store, source, claimToken, receipt, { raw });
     return receipt;
   }
 
@@ -153,10 +235,7 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
         saved_future_rows: emptyCheck.futureRows,
       };
       receipt.finished_at = Date.now();
-      if (!dryRun) {
-        await store.insertRun(receipt);
-        await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
-      }
+      if (!dryRun) await applyResult(store, source, claimToken, receipt, { raw });
       return receipt;
     }
 
@@ -166,16 +245,15 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     const tombstoneOnEmpty = typeof source.tombstoneOnEmpty === 'function'
       ? source.tombstoneOnEmpty(parsed)
       : source.tombstoneOnEmpty;
-    if (tombstoneOnEmpty && !dryRun) {
-      tombstones = await store.tombstoneMissing(source.shape, source.id, []);
-    }
+    if (tombstoneOnEmpty) receipt.tombstones = 0;
     receipt.outcome = 'empty';
     receipt.error = '';
-    receipt.tombstones = tombstones;
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      await store.insertRun(receipt);
-      await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
+      const result = await applyResult(store, source, claimToken, receipt, { tombstone: Boolean(tombstoneOnEmpty), raw });
+      if (!result.applied) return receipt;
+      tombstones = result.tombstones;
+      receipt.tombstones = tombstones;
     }
     return receipt;
   }
@@ -187,21 +265,58 @@ export async function runSource(source, store, { now = Date.now(), date = null, 
     return receipt;
   }
 
-  const written = await store.upsertRows(source.shape, rows);
   // A source may declare a partition column (the food menu's service_date). Tombstoning then
   // stays inside the partitions this run covered, so fetching another day cannot delete this one.
   const tombstoneScope = source.scopeColumn
     ? { column: source.scopeColumn, values: [...new Set(rows.map((r) => r[source.scopeColumn]))] }
     : {};
-  const tombstones = parsed.tombstone === false
-    ? 0
-    : await store.tombstoneMissing(source.shape, source.id, rows.map((r) => r.external_id), tombstoneScope);
-  await store.saveSnapshot({ sourceId: source.id, fetchedAt: now, contentType: raw.contentType, body: raw.body });
-
   receipt.outcome = 'ok';
-  receipt.rows_written = written;
-  receipt.tombstones = tombstones;
+  receipt.rows_written = rows.length;
+  receipt.tombstones = 0;
   receipt.finished_at = Date.now();
-  await store.insertRun(receipt);
+  const result = await applyResult(store, source, claimToken, receipt, {
+    rows,
+    tombstone: parsed.tombstone !== false,
+    tombstoneScope,
+    raw,
+  });
+  if (!result.applied) return receipt;
+  receipt.rows_written = result.written;
+  receipt.tombstones = result.tombstones;
   return receipt;
+}
+
+/**
+ * Shared entrypoint for cron, manual HTTP, CLI and user generated sources. The caller can hold
+ * the lease through job rescheduling by passing holdLease=true; ordinary one-off runs release it
+ * on return so existing integrations do not leave a source blocked until the timeout.
+ */
+export async function runSource(source, store, {
+  now = Date.now(),
+  date = null,
+  dryRun = false,
+  holdLease = false,
+  leaseMs = source.pollLeaseMs ?? DEFAULT_LEASE_MS,
+} = {}) {
+  if (dryRun || typeof store.claimSource !== 'function') {
+    return runClaimedSource(source, store, { now, date, dryRun, claimToken: null });
+  }
+  // `now` is the caller's run timestamp (tests and backfills may intentionally use history),
+  // while leaseNow is wall clock time so a historical run does not expire before its fetch starts.
+  const claim = await store.claimSource(source.id, { now, leaseMs, leaseNow: Date.now() });
+  if (!claim) return claimReceipt(source, now);
+  try {
+    return await runClaimedSource(source, store, { now, date, dryRun, claimToken: claim.token });
+  } catch (error) {
+    // A storage/network exception before the scheduler can record the receipt must not leave the
+    // lease occupied for its full timeout. The scheduler still owns normal result rescheduling.
+    if (holdLease && typeof store.releaseSource === 'function') {
+      await store.releaseSource(source.id, claim.token, Date.now());
+    }
+    throw error;
+  } finally {
+    if (!holdLease && typeof store.releaseSource === 'function') {
+      await store.releaseSource(source.id, claim.token, Date.now());
+    }
+  }
 }

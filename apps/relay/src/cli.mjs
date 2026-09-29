@@ -73,7 +73,25 @@ switch (cmd) {
     }
     const receipts = [];
     for (const s of targets) {
-      const r = await runSource(s, store, { now: Date.now(), date: flags.date ?? null, dryRun: Boolean(flags['dry-run']) });
+      const r = await runSource(s, store, { now: Date.now(), date: flags.date ?? null, dryRun: Boolean(flags['dry-run']), holdLease: true });
+      if (r.claim_token) {
+        try {
+          store.recordJobResult(s.id, {
+            startedAt: r.started_at,
+            finishedAt: r.finished_at,
+            outcome: r.outcome,
+            httpStatus: r.http_status,
+            retryAfterMs: r.retry_after_ms,
+            cadenceMs: s.cadenceMs,
+            rateLimitMinMs: s.rateLimitMinMs,
+            rateLimitMaxMs: s.rateLimitMaxMs,
+            now: Date.now(),
+            claimToken: r.claim_token,
+          });
+        } finally {
+          store.releaseSource(s.id, r.claim_token, Date.now());
+        }
+      }
       receipts.push(r);
     }
     out(

@@ -12,12 +12,22 @@
  * the D1 adapter can share them without dragging `node:sqlite` into a Worker bundle.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { SHAPES, SHAPE_COLUMNS, ddl, rowToParams, paramsToRow, upsertSql, CHUNK } from './schema.mjs';
 
 export function sha256(s) {
   return createHash('sha256').update(s).digest('hex');
+}
+
+function hideLeaseFields(row) {
+  if (!row) return row;
+  for (const key of ['lease_token', 'lease_expires_at']) {
+    if (!(key in row)) continue;
+    const value = row[key];
+    Object.defineProperty(row, key, { value, enumerable: false, configurable: true, writable: true });
+  }
+  return row;
 }
 
 export class SqliteStore {
@@ -43,6 +53,13 @@ export class SqliteStore {
           ALTER TABLE setting_migrated RENAME TO setting;
         `);
       }
+    } catch {}
+    // Poll leases were added after the first relay schema shipped. SQLite does not support adding
+    // more than one column in a single ALTER, so keep this deliberately small and idempotent.
+    try {
+      const cols = new Set(this.db.prepare('PRAGMA table_info(job)').all().map((c) => c.name));
+      if (!cols.has('lease_token')) this.db.exec('ALTER TABLE job ADD COLUMN lease_token TEXT');
+      if (!cols.has('lease_expires_at')) this.db.exec('ALTER TABLE job ADD COLUMN lease_expires_at INTEGER');
     } catch {}
   }
 
@@ -192,7 +209,98 @@ export class SqliteStore {
 
   /** Job table instead of Postgres LISTEN/NOTIFY or SKIP LOCKED, so D1 works too. */
   dueJobs(now) {
-    return this.db.prepare('SELECT * FROM job WHERE next_due_at <= ? ORDER BY next_due_at').all(now);
+    return this.db.prepare('SELECT * FROM job WHERE next_due_at <= ? ORDER BY next_due_at').all(now).map(hideLeaseFields);
+  }
+
+  /**
+   * Claim one source across every local process that can see this database. The conditional
+   * upsert is the lock: two cron/manual callers may read the same due row, but only one can win
+   * the lease update. A released token remains as the last generation, so a late completion can
+   * still be rejected when a newer claim has superseded it.
+   */
+  claimSource(sourceId, { now = Date.now(), leaseMs = 2 * 60_000, leaseNow = now } = {}) {
+    const token = randomUUID();
+    const row = this.db.prepare(`
+      INSERT INTO job (source_id, next_due_at, last_started_at, lease_token, lease_expires_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (source_id) DO UPDATE SET
+        last_started_at=excluded.last_started_at,
+        lease_token=excluded.lease_token,
+        lease_expires_at=excluded.lease_expires_at
+      WHERE job.lease_token IS NULL OR job.lease_expires_at IS NULL OR job.lease_expires_at <= ?
+      RETURNING lease_token, last_started_at, lease_expires_at
+    `).get(sourceId, now, now, token, leaseNow + Math.max(1, leaseMs), leaseNow);
+    return row ? { token: row.lease_token, startedAt: row.last_started_at, expiresAt: row.lease_expires_at } : null;
+  }
+
+  sourceLeaseOwned(sourceId, token, now = Date.now()) {
+    if (!token) return false;
+    return Boolean(this.db.prepare(
+      'SELECT 1 AS claimed FROM job WHERE source_id=? AND lease_token=? AND lease_expires_at > ?',
+    ).get(sourceId, token, now));
+  }
+
+  releaseSource(sourceId, token, now = Date.now()) {
+    if (!token) return false;
+    return this.db.prepare(
+      'UPDATE job SET lease_expires_at=? WHERE source_id=? AND lease_token=? AND lease_expires_at > ?',
+    ).run(now, sourceId, token, now).changes > 0;
+  }
+
+  /**
+   * Apply one complete poll while holding SQLite's write lock. The lease predicate is checked
+   * after BEGIN IMMEDIATE, so a competing claim cannot slip between the check and any row,
+   * tombstone, snapshot, or receipt write.
+   */
+  commitSourceResult({
+    sourceId,
+    leaseToken,
+    leaseNow = Date.now(),
+    shape,
+    rows = [],
+    seenExternalIds = [],
+    tombstone = false,
+    tombstoneScope = {},
+    snapshot = null,
+    receipt,
+  }) {
+    if (!leaseToken) return { applied: false, written: 0, tombstones: 0 };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.sourceLeaseOwned(sourceId, leaseToken, leaseNow)) {
+        this.db.exec('ROLLBACK');
+        return { applied: false, written: 0, tombstones: 0 };
+      }
+      const written = rows.length ? this.upsertRows(shape, rows) : 0;
+      if (!this.sourceLeaseOwned(sourceId, leaseToken, Date.now())) {
+        this.db.exec('ROLLBACK');
+        return { applied: false, written: 0, tombstones: 0 };
+      }
+      const tombstones = tombstone
+        ? this.tombstoneMissing(shape, sourceId, seenExternalIds, tombstoneScope)
+        : 0;
+      if (!this.sourceLeaseOwned(sourceId, leaseToken, Date.now())) {
+        this.db.exec('ROLLBACK');
+        return { applied: false, written: 0, tombstones: 0 };
+      }
+      if (snapshot?.body) this.saveSnapshot(snapshot);
+      if (!this.sourceLeaseOwned(sourceId, leaseToken, Date.now())) {
+        this.db.exec('ROLLBACK');
+        return { applied: false, written: 0, tombstones: 0 };
+      }
+      receipt.rows_written = written;
+      receipt.tombstones = tombstones;
+      this.insertRun(receipt);
+      if (!this.sourceLeaseOwned(sourceId, leaseToken, Date.now())) {
+        this.db.exec('ROLLBACK');
+        return { applied: false, written: 0, tombstones: 0 };
+      }
+      this.db.exec('COMMIT');
+      return { applied: true, written, tombstones };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
   }
 
   scheduleJob(sourceId, nextDueAt) {
@@ -214,8 +322,16 @@ export class SqliteStore {
     rateLimitMinMs = 30 * 60_000,
     rateLimitMaxMs = 48 * 60 * 60_000,
     now,
+    claimToken = null,
   }) {
     const prev = this.db.prepare('SELECT * FROM job WHERE source_id=?').get(sourceId);
+    // A caller that cannot prove ownership must never move a due time underneath an active poll.
+    if (!claimToken && prev?.lease_token && (prev.lease_expires_at ?? 0) > now) {
+      return { applied: false, failures: prev.consecutive_failures ?? 0, circuit: prev.circuit_state ?? 'closed', next_due_at: prev.next_due_at ?? null };
+    }
+    if (claimToken && (!prev || prev.lease_token !== claimToken || prev.last_started_at !== startedAt || (prev.lease_expires_at ?? 0) <= now)) {
+      return { applied: false, failures: prev?.consecutive_failures ?? 0, circuit: prev?.circuit_state ?? 'closed', next_due_at: prev?.next_due_at ?? null };
+    }
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
@@ -231,24 +347,30 @@ export class SqliteStore {
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)
       : now + cadenceMs;
-    this.db
-      .prepare(
-        `INSERT INTO job (source_id, next_due_at, last_started_at, last_finished_at, last_outcome, consecutive_failures, circuit_state)
-         VALUES (?,?,?,?,?,?,?)
-         ON CONFLICT (source_id) DO UPDATE SET
-           next_due_at=excluded.next_due_at,
-           last_started_at=excluded.last_started_at,
-           last_finished_at=excluded.last_finished_at,
-           last_outcome=excluded.last_outcome,
-           consecutive_failures=excluded.consecutive_failures,
-           circuit_state=excluded.circuit_state`,
-      )
-      .run(sourceId, next, startedAt, finishedAt, outcome, failures, circuit);
-    return { failures, circuit, next_due_at: next };
+    if (claimToken) {
+      const result = this.db.prepare(`
+        UPDATE job SET next_due_at=?, last_started_at=?, last_finished_at=?, last_outcome=?,
+          consecutive_failures=?, circuit_state=?
+        WHERE source_id=? AND lease_token=? AND last_started_at=? AND lease_expires_at > ?
+      `).run(next, startedAt, finishedAt, outcome, failures, circuit, sourceId, claimToken, startedAt, now);
+      return { applied: result.changes > 0, failures, circuit, next_due_at: next };
+    }
+    this.db.prepare(`
+      INSERT INTO job (source_id, next_due_at, last_started_at, last_finished_at, last_outcome, consecutive_failures, circuit_state)
+      VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (source_id) DO UPDATE SET
+        next_due_at=excluded.next_due_at,
+        last_started_at=excluded.last_started_at,
+        last_finished_at=excluded.last_finished_at,
+        last_outcome=excluded.last_outcome,
+        consecutive_failures=excluded.consecutive_failures,
+        circuit_state=excluded.circuit_state
+    `).run(sourceId, next, startedAt, finishedAt, outcome, failures, circuit);
+    return { applied: true, failures, circuit, next_due_at: next };
   }
 
   jobs() {
-    return this.db.prepare('SELECT * FROM job ORDER BY source_id').all();
+    return this.db.prepare('SELECT * FROM job ORDER BY source_id').all().map(hideLeaseFields);
   }
 
   /** Configuration rows set from the app, as { name, value, updated_at }. */

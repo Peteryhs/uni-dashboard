@@ -3,14 +3,16 @@
  * target (cron handler + fetch handler in one deployable). Automatic local polling is opt-in so a
  * deployed Worker and a laptop do not both fetch a private Google Calendar subscription.
  *
- * Auth: a bearer token per device when RELAY_TOKEN is set. Without it the server refuses to start
- * unless DEV_ALLOW_OPEN=1, so an unauthenticated instance is a decision, not an accident.
+ * Auth: a bearer token when RELAY_TOKEN is set. Open loopback development is supported;
+ * non-loopback binding requires a token or an explicit DEV_ALLOW_OPEN=1 override.
  */
 try {
   process.loadEnvFile?.();
 } catch {}
 
 import http from 'node:http';
+import { isCrossSiteWrite } from './access.mjs';
+import { assertSafeLocalBind, isLoopbackHost } from './local-auth.mjs';
 import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
@@ -61,19 +63,27 @@ export function createServer({
         .filter((s) => !s.needsSecret || (typeof s.url === 'function' ? s.url() : s.url)));
       for (const source of due) {
         const startedAt = Date.now();
-        const receipt = await runSource(source, store, { now: startedAt });
+        const receipt = await runSource(source, store, { now: startedAt, holdLease: true });
         receipts.push(receipt);
-        const job = store.recordJobResult(source.id, {
-          startedAt,
-          finishedAt: receipt.finished_at,
-          outcome: receipt.outcome,
-          httpStatus: receipt.http_status,
-          retryAfterMs: receipt.retry_after_ms,
-          cadenceMs: source.cadenceMs,
-          rateLimitMinMs: source.rateLimitMinMs,
-          rateLimitMaxMs: source.rateLimitMaxMs,
-          now: Date.now(),
-        });
+        let job = { next_due_at: Date.now(), circuit: 'closed' };
+        if (receipt.claim_token) {
+          try {
+            job = store.recordJobResult(source.id, {
+              startedAt,
+              finishedAt: receipt.finished_at,
+              outcome: receipt.outcome,
+              httpStatus: receipt.http_status,
+              retryAfterMs: receipt.retry_after_ms,
+              cadenceMs: source.cadenceMs,
+              rateLimitMinMs: source.rateLimitMinMs,
+              rateLimitMaxMs: source.rateLimitMaxMs,
+              now: Date.now(),
+              claimToken: receipt.claim_token,
+            });
+          } finally {
+            store.releaseSource(source.id, receipt.claim_token, Date.now());
+          }
+        }
         log(
           `[poll] ${source.id} -> ${receipt.outcome} rows=${receipt.rows_written}` +
             `${receipt.tombstones ? ` tombstones=${receipt.tombstones}` : ''}` +
@@ -134,6 +144,19 @@ export function createServer({
     if (token) {
       const auth = req.headers.authorization ?? '';
       if (auth !== `Bearer ${token}`) return send(401, { error: 'unauthorized' });
+    }
+
+    if (url.pathname.startsWith('/v1/')) {
+      // Reject DNS rebinding against an open loopback relay as well as cross-site writes.
+      const bound = server.address();
+      if (!token && bound && typeof bound === 'object' && isLoopbackHost(bound.address) && !isLoopbackHost(url.hostname)) {
+        return send(403, { error: 'non-local host refused' });
+      }
+      const browserRequest = {
+        method: req.method,
+        headers: { get: (name) => req.headers[name.toLowerCase()] ?? null },
+      };
+      if (isCrossSiteWrite(browserRequest, url)) return send(403, { error: 'cross-site request refused' });
     }
 
     try {
@@ -251,18 +274,25 @@ export function createServer({
           : dedupeGoogleSources(enabledSources(sources));
         const receipts = [];
         for (const s of targets) {
-          const r = await runSource(s, store, { now: Date.now() });
-          store.recordJobResult(s.id, {
-            startedAt: r.started_at,
-            finishedAt: r.finished_at,
-            outcome: r.outcome,
-            httpStatus: r.http_status,
-            retryAfterMs: r.retry_after_ms,
-            cadenceMs: s.cadenceMs,
-            rateLimitMinMs: s.rateLimitMinMs,
-            rateLimitMaxMs: s.rateLimitMaxMs,
-            now: Date.now(),
-          });
+          const r = await runSource(s, store, { now: Date.now(), holdLease: true });
+          if (r.claim_token) {
+            try {
+              store.recordJobResult(s.id, {
+                startedAt: r.started_at,
+                finishedAt: r.finished_at,
+                outcome: r.outcome,
+                httpStatus: r.http_status,
+                retryAfterMs: r.retry_after_ms,
+                cadenceMs: s.cadenceMs,
+                rateLimitMinMs: s.rateLimitMinMs,
+                rateLimitMaxMs: s.rateLimitMaxMs,
+                now: Date.now(),
+                claimToken: r.claim_token,
+              });
+            } finally {
+              store.releaseSource(s.id, r.claim_token, Date.now());
+            }
+          }
           receipts.push(r);
         }
         return send(200, { receipts });
@@ -558,7 +588,9 @@ export async function start({
   webRoot = WEB_ROOT,
   serveWeb = true,
   pollEnabled = /^(1|true|yes)$/i.test(process.env.RELAY_POLL_ENABLED ?? ''),
+  allowOpen = /^(1|true|yes)$/i.test(process.env.DEV_ALLOW_OPEN ?? ''),
 } = {}) {
+  assertSafeLocalBind({ host, token, allowOpen });
   const store = new SqliteStore(dbPath);
   const { server, pollDue, resumeAiJobs } = createServer({ store, token, log, webRoot, serveWeb, automaticPolling: pollEnabled });
 

@@ -21,7 +21,8 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             val app = application as UniDashApp
-            app.notifier.ensurePersistent(app.repository.snapshot.value)
+            val snapshot = app.repository.snapshot.value
+            app.repository.deliverIfCurrent(snapshot) { app.notifier.ensurePersistent(snapshot) }
         }
     }
 
@@ -34,8 +35,12 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             vm.session.first { it == Session.SignedIn }
             val app = application as UniDashApp
-            app.scheduleSync()
-            app.notifier.ensurePersistent(app.repository.snapshot.value)
+            val snapshot = app.repository.snapshot.value
+            val generation = app.repository.currentSessionGeneration()
+            app.repository.runIfCurrent(generation) {
+                app.scheduleSync()
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.ensurePersistent(snapshot) }
+            }
             if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) {
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -46,7 +51,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (vm.session.value == Session.SignedIn) {
             val app = application as UniDashApp
-            app.notifier.ensurePersistent(app.repository.snapshot.value)
+            val snapshot = app.repository.snapshot.value
+            val generation = app.repository.currentSessionGeneration()
+            app.repository.runIfCurrent(generation) {
+                app.scheduleSync()
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.ensurePersistent(snapshot) }
+            }
         }
     }
 }

@@ -90,7 +90,9 @@ function ddlStatements() {
     last_finished_at INTEGER,
     last_outcome TEXT NOT NULL DEFAULT '',
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
-    circuit_state TEXT NOT NULL DEFAULT 'closed'
+    circuit_state TEXT NOT NULL DEFAULT 'closed',
+    lease_token TEXT,
+    lease_expires_at INTEGER
   );`);
   // Configuration the owner can change from the app. Deliberately its own table rather than a
   // SHAPES entry: settings carry no freshness envelope and no source_id, they are not observations.

@@ -192,7 +192,16 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val key = intent.getStringExtra(Notifier.EXTRA_KEY) ?: return
         val channel = runCatching { Channel.valueOf(intent.getStringExtra(Notifier.EXTRA_CHANNEL)!!) }.getOrDefault(Channel.Classes)
-        Notifier(context).post(key, channel, intent.getStringExtra(Notifier.EXTRA_TITLE).orEmpty(), intent.getStringExtra(Notifier.EXTRA_TEXT).orEmpty())
+        val app = context.applicationContext as UniDashApp
+        val generation = app.repository.currentSessionGeneration()
+        app.repository.runIfCurrent(generation) {
+            Notifier(context).post(
+                key,
+                channel,
+                intent.getStringExtra(Notifier.EXTRA_TITLE).orEmpty(),
+                intent.getStringExtra(Notifier.EXTRA_TEXT).orEmpty(),
+            )
+        }
     }
 }
 
@@ -203,8 +212,11 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
-                app.notifier.onSnapshot(app.repository.snapshot.value, fromNetwork = false)
-                app.scheduleSync()
+                val snapshot = app.repository.snapshot.value
+                app.repository.deliverIfCurrent(snapshot) {
+                    app.notifier.onSnapshot(snapshot, fromNetwork = false)
+                    app.scheduleSync()
+                }
             } finally {
                 pending.finish()
             }

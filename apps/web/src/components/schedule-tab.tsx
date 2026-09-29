@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useId, useRef } from 'react';
+import { useState, useEffect, useCallback, useId, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bot,
@@ -26,9 +26,9 @@ import {
   type AiModelInfo,
 } from '@/lib/api';
 import { useAiJob } from '@/hooks/use-ai-job';
+import { OfficeHoursEditor } from '@/lib/office-hours-editor';
 import type {
   OfficeHourRule,
-  OfficeHoursConfig,
   OfficeHoursDraft,
   OfficeHoursDraftRule,
   PreviewOccurrence,
@@ -306,14 +306,15 @@ function EditableRuleCard({ rule, onChange, idPrefix, confidence }: EditableRule
 }
 
 export function ScheduleTab() {
+  const rootRef = useRef<HTMLDivElement>(null);
   const pasteTextId = useId();
   const courseInputId = useId();
   const modelSelectId = useId();
 
   // Saved rules state
-  const [config, setConfig] = useState<OfficeHoursConfig>({ rules: [], version: 1 });
-  const [loadingConfig, setLoadingConfig] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
+  const [editor] = useState(() => new OfficeHoursEditor({ load: getOfficeHours, save: putOfficeHours }));
+  const { config, loaded, loading: loadingConfig, saving, error: configError } = useSyncExternalStore(editor.subscribe, editor.getSnapshot, editor.getSnapshot);
+  const canSave = loaded && !loadingConfig && !saving;
 
   // Parsing inputs
   const [pastedText, setPastedText] = useState('');
@@ -352,7 +353,6 @@ export function ScheduleTab() {
   // Draft review state
   const [draft, setDraft] = useState<OfficeHoursDraft | null>(null);
   const [previewOccurrences, setPreviewOccurrences] = useState<PreviewOccurrence[]>([]);
-  const [saving, setSaving] = useState(false);
 
   // In-session Editing & Deletion state
   const [editingSavedRuleId, setEditingSavedRuleId] = useState<string | null>(null);
@@ -375,17 +375,8 @@ export function ScheduleTab() {
   }, [undoToast]);
 
   const loadSavedConfig = useCallback(async () => {
-    setLoadingConfig(true);
-    setConfigError(null);
-    try {
-      const data = await getOfficeHours();
-      setConfig(data);
-    } catch (err: any) {
-      setConfigError(err.message || 'Failed to load office hours');
-    } finally {
-      setLoadingConfig(false);
-    }
-  }, []);
+    await editor.load();
+  }, [editor]);
 
   const loadModels = useCallback(async () => {
     try {
@@ -400,9 +391,10 @@ export function ScheduleTab() {
   }, []);
 
   useEffect(() => {
-    loadSavedConfig();
-    loadModels();
-  }, [loadSavedConfig, loadModels]);
+    void loadSavedConfig();
+    void loadModels();
+    return () => editor.cancel();
+  }, [editor, loadSavedConfig, loadModels]);
 
   const handleParse = async (force = false) => {
     if (!pastedText.trim()) return;
@@ -430,8 +422,7 @@ export function ScheduleTab() {
   };
 
   const handleSaveDraft = async () => {
-    if (!draft) return;
-    setSaving(true);
+    if (!draft || !canSave) return;
     setStatusMessage('Saving rules to schedule...');
     try {
       const newRules: OfficeHourRule[] = draft.rules.map((r) => ({
@@ -441,13 +432,8 @@ export function ScheduleTab() {
         updated_at: Date.now(),
       }));
 
-      const updatedConfig: OfficeHoursConfig = {
-        version: 1,
-        rules: [...config.rules, ...newRules],
-      };
-
-      await putOfficeHours(updatedConfig);
-      setConfig(updatedConfig);
+      const saved = await editor.save((current) => ({ version: 1, rules: [...current.rules, ...newRules] }));
+      if (!saved) return;
       setDraft(null);
       setPreviewOccurrences([]);
       setPastedText('');
@@ -457,8 +443,6 @@ export function ScheduleTab() {
     } catch (err: any) {
       setParseError(`Save failed: ${err.message}`);
       setStatusMessage(`Save failed: ${err.message}`);
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -477,39 +461,30 @@ export function ScheduleTab() {
   };
 
   const handleSaveEditedRule = async () => {
-    if (!editedSavedRule) return;
-    const updatedRules = config.rules.map((r) =>
-      r.id === editedSavedRule.id ? { ...editedSavedRule, updated_at: Date.now() } : r
-    );
-    const updatedConfig: OfficeHoursConfig = {
-      version: 1,
-      rules: updatedRules,
-    };
+    if (!editedSavedRule || !canSave) return;
     try {
-      await putOfficeHours(updatedConfig);
-      setConfig(updatedConfig);
+      const saved = await editor.save((current) => ({
+        version: 1,
+        rules: current.rules.map((r) => r.id === editedSavedRule.id ? { ...editedSavedRule, updated_at: Date.now() } : r),
+      }));
+      if (!saved) return;
       setEditingSavedRuleId(null);
       setEditedSavedRule(null);
       setStatusMessage('Rule updated successfully.');
     } catch (err: any) {
-      setConfigError(`Failed to update rule: ${err.message}`);
+      setStatusMessage(`Failed to update rule: ${err.message}`);
     }
   };
 
   const handleDeleteSavedRule = async (ruleId: string) => {
+    if (!canSave) return;
     const ruleIndex = config.rules.findIndex((r) => r.id === ruleId);
     if (ruleIndex === -1) return;
     const deletedRule = config.rules[ruleIndex];
 
-    const updatedRules = config.rules.filter((r) => r.id !== ruleId);
-    const updatedConfig: OfficeHoursConfig = {
-      version: 1,
-      rules: updatedRules,
-    };
-
     try {
-      await putOfficeHours(updatedConfig);
-      setConfig(updatedConfig);
+      const saved = await editor.save((current) => ({ version: 1, rules: current.rules.filter((r) => r.id !== ruleId) }));
+      if (!saved) return;
       setConfirmDeleteId(null);
       setUndoToast({
         id: deletedRule.id,
@@ -519,30 +494,28 @@ export function ScheduleTab() {
       });
       setStatusMessage(`Deleted rule: ${deletedRule.label}.`);
     } catch (err: any) {
-      setConfigError(`Failed to delete rule: ${err.message}`);
+      setStatusMessage(`Failed to delete rule: ${err.message}`);
     }
   };
 
   const handleUndoDelete = async () => {
-    if (!undoToast) return;
-    const restored = [...config.rules];
-    restored.splice(undoToast.index, 0, undoToast.rule);
-    const updatedConfig: OfficeHoursConfig = {
-      version: 1,
-      rules: restored,
-    };
+    if (!undoToast || !canSave) return;
     try {
-      await putOfficeHours(updatedConfig);
-      setConfig(updatedConfig);
+      const saved = await editor.save((current) => {
+        const restored = current.rules.filter((r) => r.id !== undoToast.id);
+        restored.splice(undoToast.index, 0, undoToast.rule);
+        return { version: 1, rules: restored };
+      });
+      if (!saved) return;
       setUndoToast(null);
       setStatusMessage(`Restored rule: ${undoToast.label}.`);
     } catch (err: any) {
-      setConfigError(`Failed to restore rule: ${err.message}`);
+      setStatusMessage(`Failed to restore rule: ${err.message}`);
     }
   };
 
   return (
-    <div className="space-y-6 text-foreground pb-6">
+    <div ref={rootRef} className="space-y-6 text-foreground pb-6">
       {/* Accessible live announcement region */}
       <div role="status" aria-live="polite" className="sr-only">
         {statusMessage}
@@ -759,7 +732,7 @@ export function ScheduleTab() {
                 type="button"
                 size="sm"
                 onClick={handleSaveDraft}
-                disabled={saving || draft.rules.length === 0}
+                disabled={!canSave || draft.rules.length === 0}
                 className="h-8 text-xs bg-live text-black hover:bg-live/90 font-medium cursor-pointer"
               >
                 {saving ? (
@@ -790,19 +763,22 @@ export function ScheduleTab() {
               Saved recurring timetable slots and custom tutorial schedules.
             </p>
           </div>
-          <span className="text-[11px] font-mono text-zinc-500 shrink-0 pt-0.5">
+          {loaded && <span className="text-[11px] font-mono text-zinc-500 shrink-0 pt-0.5">
             {config.rules.length} {config.rules.length === 1 ? 'rule' : 'rules'}
-          </span>
+          </span>}
         </div>
 
         {configError && (
-          <div className="p-3 text-xs rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
-            {configError}
+          <div role="alert" className="flex items-center justify-between gap-3 text-xs text-red-200">
+            <span>{configError}</span>
+            {!loaded && <Button type="button" variant="ghost" size="sm" disabled={loadingConfig || saving} onClick={() => void loadSavedConfig()}>Retry</Button>}
           </div>
         )}
 
         {loadingConfig ? (
           <div className="p-6 text-center text-xs text-zinc-400">Loading saved entries...</div>
+        ) : !loaded ? (
+          <p className="text-xs text-zinc-400">Load saved office hours before making changes. Your draft is kept here.</p>
         ) : config.rules.length === 0 ? (
           <div className="settings-office-hours-empty space-y-1">
             <p className="text-xs text-zinc-400">No recurring office hours saved yet.</p>
@@ -841,6 +817,7 @@ export function ScheduleTab() {
                         type="button"
                         size="sm"
                         onClick={handleSaveEditedRule}
+                        disabled={!canSave}
                         className="h-7 text-xs bg-live text-black hover:bg-live/90 cursor-pointer font-medium"
                       >
                         Save Changes
@@ -893,6 +870,7 @@ export function ScheduleTab() {
                           size="sm"
                           variant="destructive"
                           onClick={() => handleDeleteSavedRule(rule.id)}
+                          disabled={!canSave}
                           className="h-6 px-2 text-[11px] cursor-pointer"
                         >
                           Yes
@@ -914,6 +892,7 @@ export function ScheduleTab() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleStartEditSavedRule(rule)}
+                          disabled={!canSave}
                           className="h-7 px-2 text-xs text-zinc-400 hover:text-foreground cursor-pointer"
                           aria-label={`Edit ${rule.label}`}
                         >
@@ -925,6 +904,7 @@ export function ScheduleTab() {
                           variant="ghost"
                           size="sm"
                           onClick={() => setConfirmDeleteId(rule.id)}
+                          disabled={!canSave}
                           className="h-7 px-2 text-xs text-zinc-400 hover:text-red-400 cursor-pointer"
                           aria-label={`Delete ${rule.label}`}
                         >
@@ -967,6 +947,7 @@ export function ScheduleTab() {
             <button
               type="button"
               onClick={handleUndoDelete}
+              disabled={!canSave}
               className="flex items-center gap-1.5 rounded-lg bg-live/15 hover:bg-live/25 px-2.5 py-1 text-xs font-semibold text-live transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-live shrink-0 cursor-pointer"
             >
               <span>Undo</span>
@@ -980,7 +961,8 @@ export function ScheduleTab() {
               <span className="text-xs">Dismiss</span>
             </button>
           </BlurFade>,
-          document.body
+          // Keep Undo inside the modal's pointer and keyboard interaction scope.
+          rootRef.current?.closest('[role="dialog"]') || rootRef.current || document.body
         )}
     </div>
   );

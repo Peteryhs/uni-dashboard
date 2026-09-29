@@ -30,6 +30,16 @@ async function gunzipText(bytes) {
   return new Response(stream).text();
 }
 
+function hideLeaseFields(row) {
+  if (!row) return row;
+  for (const key of ['lease_token', 'lease_expires_at']) {
+    if (!(key in row)) continue;
+    const value = row[key];
+    Object.defineProperty(row, key, { value, enumerable: false, configurable: true, writable: true });
+  }
+  return row;
+}
+
 export class D1Store {
   /** @param {D1Database} d1 Cloudflare D1 database binding (env.DB) */
   constructor(d1) {
@@ -39,7 +49,7 @@ export class D1Store {
   }
 
   /**
-   * DDL, idempotent and run at most once per isolate, behind a single probe.
+   * DDL, idempotent and run at most once per isolate, behind a schema probe.
    *
    * The probe compares the tables this schema expects against `sqlite_master`, and the DDL runs only
    * when one is missing. Two reasons it is a count and not a lookup of one known table: a cron
@@ -56,10 +66,30 @@ export class D1Store {
           .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE name IN (${placeholders})`)
           .bind(...expected)
           .first();
-        if (Number(row?.n ?? 0) === expected.length) return;
-        // Prepared one statement at a time and batched: D1's exec() runs a statement per line, so a
-        // CREATE TABLE wrapped across lines arrives truncated.
-        await this.db.batch(ddlStatements().map((sql) => this.db.prepare(sql)));
+        if (Number(row?.n ?? 0) !== expected.length) {
+          // Prepared one statement at a time and batched: D1's exec() runs a statement per line, so a
+          // CREATE TABLE wrapped across lines arrives truncated.
+          await this.db.batch(ddlStatements().map((sql) => this.db.prepare(sql)));
+        }
+        // Existing D1 databases may have the job table from before source leases were added, even
+        // when another table or index was also missing. This probe therefore follows both the
+        // fresh DDL and the self-healing DDL path.
+        const columns = await this.db.prepare('PRAGMA table_info(job)').all();
+        const names = new Set((columns.results || []).map((column) => column.name));
+        const migrations = [];
+        if (!names.has('lease_token')) migrations.push(this.db.prepare('ALTER TABLE job ADD COLUMN lease_token TEXT'));
+        if (!names.has('lease_expires_at')) migrations.push(this.db.prepare('ALTER TABLE job ADD COLUMN lease_expires_at INTEGER'));
+        if (migrations.length) {
+          try {
+            await this.db.batch(migrations);
+          } catch (error) {
+            // Two cold isolates can observe the same old schema. One may add the columns while
+            // the other is preparing its batch; accept that race only once both columns exist.
+            const after = await this.db.prepare('PRAGMA table_info(job)').all();
+            const finalNames = new Set((after.results || []).map((column) => column.name));
+            if (!finalNames.has('lease_token') || !finalNames.has('lease_expires_at')) throw error;
+          }
+        }
       })();
     }
     return this._initPromise;
@@ -228,7 +258,163 @@ export class D1Store {
 
   async dueJobs(now) {
     const res = await this.db.prepare('SELECT * FROM job WHERE next_due_at <= ? ORDER BY next_due_at').bind(now).all();
-    return res.results || [];
+    return (res.results || []).map(hideLeaseFields);
+  }
+
+  /** Atomically claim a source so cron, manual requests and separate Worker invocations serialize. */
+  async claimSource(sourceId, { now = Date.now(), leaseMs = 2 * 60_000, leaseNow = now } = {}) {
+    const token = crypto.randomUUID();
+    const row = await this.db.prepare(`
+      INSERT INTO job (source_id, next_due_at, last_started_at, lease_token, lease_expires_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (source_id) DO UPDATE SET
+        last_started_at=excluded.last_started_at,
+        lease_token=excluded.lease_token,
+        lease_expires_at=excluded.lease_expires_at
+      WHERE job.lease_token IS NULL OR job.lease_expires_at IS NULL OR job.lease_expires_at <= ?
+      RETURNING lease_token, last_started_at, lease_expires_at
+    `).bind(sourceId, now, now, token, leaseNow + Math.max(1, leaseMs), leaseNow).first();
+    return row ? { token: row.lease_token, startedAt: row.last_started_at, expiresAt: row.lease_expires_at } : null;
+  }
+
+  async sourceLeaseOwned(sourceId, token, now = Date.now()) {
+    if (!token) return false;
+    const row = await this.db.prepare(
+      'SELECT 1 AS claimed FROM job WHERE source_id=? AND lease_token=? AND lease_expires_at > ?',
+    ).bind(sourceId, token, now).first();
+    return Boolean(row);
+  }
+
+  async releaseSource(sourceId, token, now = Date.now()) {
+    if (!token) return false;
+    const result = await this.db.prepare(
+      'UPDATE job SET lease_expires_at=? WHERE source_id=? AND lease_token=? AND lease_expires_at > ?',
+    ).bind(now, sourceId, token, now).run();
+    return (result?.meta?.changes ?? 0) > 0;
+  }
+
+  /**
+   * Apply a poll as one D1 batch. Every write carries the lease predicate, and D1 batches execute
+   * in one SQLite transaction, so a newer claim cannot interleave between the upsert, sweep,
+   * snapshot, and receipt.
+   */
+  async commitSourceResult({
+    sourceId,
+    leaseToken,
+    leaseNow = Date.now(),
+    shape,
+    rows = [],
+    seenExternalIds = [],
+    tombstone = false,
+    tombstoneScope = {},
+    snapshot = null,
+    receipt,
+  }) {
+    if (!leaseToken) return { applied: false, written: 0, tombstones: 0 };
+    const statements = [];
+    const lease = 'EXISTS (SELECT 1 FROM job WHERE source_id=? AND lease_token=? AND lease_expires_at>?)';
+    const spec = SHAPES[shape];
+    if (!spec) throw new Error(`unknown shape ${shape}`);
+
+    if (rows.length) {
+      const { cols } = upsertSql(shape);
+      // The lease predicate contributes three bound values to every statement. Keep the row
+      // tuples under D1's 100-parameter limit after those guard values are included.
+      const perStatement = Math.max(1, Math.floor((100 - 3) / cols.length));
+      const projection = cols.map((_, index) => `column${index + 1}`).join(',');
+      const updates = cols
+        .filter((column) => column !== 'source_id' && column !== 'external_id')
+        .map((column) => `${column}=excluded.${column}`)
+        .join(', ');
+      for (let i = 0; i < rows.length; i += perStatement) {
+        const slice = rows.slice(i, i + perStatement);
+        const tuple = `(${cols.map(() => '?').join(',')})`;
+        const values = Array.from({ length: slice.length }, () => tuple).join(',');
+        const sql = `INSERT INTO ${shape} (${cols.join(',')})
+          SELECT ${projection} FROM (VALUES ${values})
+          WHERE ${lease}
+          ON CONFLICT (source_id, external_id) DO UPDATE SET ${updates}, deleted=0`;
+        statements.push(this.db.prepare(sql).bind(
+          ...slice.flatMap((row) => rowToParams(shape, row)),
+          sourceId,
+          leaseToken,
+          leaseNow,
+        ));
+      }
+    }
+
+    let tombstoneIndex = -1;
+    if (tombstone) {
+      const { column = null, values = [] } = tombstoneScope;
+      const scoped = column && values.length > 0;
+      const scopeWhere = scoped ? ` AND ${column} IN (${values.map(() => '?').join(',')})` : '';
+      // json_each keeps the tombstone statement below D1's bound parameter limit even when a
+      // calendar source reports hundreds of IDs. The JSON extension is part of D1's SQLite build.
+      const sql = `UPDATE ${shape} SET deleted=1
+        WHERE source_id=? AND deleted=0${scopeWhere}
+          AND external_id NOT IN (SELECT value FROM json_each(?))
+          AND ${lease}`;
+      statements.push(this.db.prepare(sql).bind(
+        sourceId,
+        ...(scoped ? values : []),
+        JSON.stringify(seenExternalIds),
+        sourceId,
+        leaseToken,
+        leaseNow,
+      ));
+      tombstoneIndex = statements.length - 1;
+    }
+
+    let snapshotIndex = -1;
+    if (snapshot && snapshot.body != null) {
+      const hash = await sha256Hex(snapshot.body);
+      // Avoid compressing an unchanged body on every poll. The guarded INSERT is still used
+      // when the hash is new, so a lease cannot be lost between this probe and the batch write.
+      if (!(await this.hasSnapshot(hash))) {
+        const bodyGz = await gzipBytes(snapshot.body);
+        const sql = `INSERT INTO raw_snapshot (sha256, source_id, fetched_at, content_type, body_gz)
+          SELECT ?,?,?,?,? WHERE ${lease}
+          ON CONFLICT (sha256) DO NOTHING`;
+        statements.push(this.db.prepare(sql).bind(
+          hash,
+          snapshot.sourceId ?? sourceId,
+          snapshot.fetchedAt,
+          snapshot.contentType ?? '',
+          bodyGz,
+          sourceId,
+          leaseToken,
+          leaseNow,
+        ));
+        snapshotIndex = statements.length - 1;
+      }
+    }
+
+    const receiptSql = `INSERT INTO source_run
+      (source_id, started_at, finished_at, outcome, http_status, bytes, rows_written, error, body_sha256, meta_json)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${lease}`;
+    statements.push(this.db.prepare(receiptSql).bind(
+      receipt.source_id,
+      receipt.started_at,
+      receipt.finished_at,
+      receipt.outcome,
+      receipt.http_status ?? null,
+      receipt.bytes ?? 0,
+      rows.length,
+      receipt.error ?? '',
+      receipt.body_sha256 ?? '',
+      JSON.stringify(receipt.meta ?? {}),
+      sourceId,
+      leaseToken,
+      leaseNow,
+    ));
+    const receiptIndex = statements.length - 1;
+    const results = await this.db.batch(statements);
+    const applied = (results[receiptIndex]?.meta?.changes ?? 0) > 0;
+    const written = applied ? rows.length : 0;
+    const tombstones = applied && tombstoneIndex >= 0 ? (results[tombstoneIndex]?.meta?.changes ?? 0) : 0;
+    receipt.rows_written = written;
+    receipt.tombstones = tombstones;
+    return { applied, written, tombstones, snapshot: snapshotIndex >= 0 };
   }
 
   async scheduleJob(sourceId, nextDueAt) {
@@ -251,8 +437,15 @@ export class D1Store {
     rateLimitMinMs = 30 * 60_000,
     rateLimitMaxMs = 48 * 60 * 60_000,
     now,
+    claimToken = null,
   }) {
     const prev = await this.db.prepare('SELECT * FROM job WHERE source_id=?').bind(sourceId).first();
+    if (!claimToken && prev?.lease_token && (prev.lease_expires_at ?? 0) > now) {
+      return { applied: false, failures: prev.consecutive_failures ?? 0, circuit: prev.circuit_state ?? 'closed', next_due_at: prev.next_due_at ?? null };
+    }
+    if (claimToken && (!prev || prev.lease_token !== claimToken || prev.last_started_at !== startedAt || (prev.lease_expires_at ?? 0) <= now)) {
+      return { applied: false, failures: prev?.consecutive_failures ?? 0, circuit: prev?.circuit_state ?? 'closed', next_due_at: prev?.next_due_at ?? null };
+    }
     const failures = ['ok', 'empty', 'skipped'].includes(outcome)
       ? 0
       : (prev?.consecutive_failures ?? 0) + 1;
@@ -266,26 +459,31 @@ export class D1Store {
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)
       : now + cadenceMs;
-    await this.db
-      .prepare(
-        `INSERT INTO job (source_id, next_due_at, last_started_at, last_finished_at, last_outcome, consecutive_failures, circuit_state)
-         VALUES (?,?,?,?,?,?,?)
-         ON CONFLICT (source_id) DO UPDATE SET
-           next_due_at=excluded.next_due_at,
-           last_started_at=excluded.last_started_at,
-           last_finished_at=excluded.last_finished_at,
-           last_outcome=excluded.last_outcome,
-           consecutive_failures=excluded.consecutive_failures,
-           circuit_state=excluded.circuit_state`,
-      )
-      .bind(sourceId, next, startedAt, finishedAt, outcome, failures, circuit)
-      .run();
-    return { failures, circuit, next_due_at: next };
+    if (claimToken) {
+      const result = await this.db.prepare(`
+        UPDATE job SET next_due_at=?, last_started_at=?, last_finished_at=?, last_outcome=?,
+          consecutive_failures=?, circuit_state=?
+        WHERE source_id=? AND lease_token=? AND last_started_at=? AND lease_expires_at > ?
+      `).bind(next, startedAt, finishedAt, outcome, failures, circuit, sourceId, claimToken, startedAt, now).run();
+      return { applied: (result?.meta?.changes ?? 0) > 0, failures, circuit, next_due_at: next };
+    }
+    await this.db.prepare(`
+      INSERT INTO job (source_id, next_due_at, last_started_at, last_finished_at, last_outcome, consecutive_failures, circuit_state)
+      VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (source_id) DO UPDATE SET
+        next_due_at=excluded.next_due_at,
+        last_started_at=excluded.last_started_at,
+        last_finished_at=excluded.last_finished_at,
+        last_outcome=excluded.last_outcome,
+        consecutive_failures=excluded.consecutive_failures,
+        circuit_state=excluded.circuit_state
+    `).bind(sourceId, next, startedAt, finishedAt, outcome, failures, circuit).run();
+    return { applied: true, failures, circuit, next_due_at: next };
   }
 
   async jobs() {
     const res = await this.db.prepare('SELECT * FROM job ORDER BY source_id').all();
-    return res.results || [];
+    return (res.results || []).map(hideLeaseFields);
   }
 
   /** Configuration rows set from the app, as { name, value, updated_at }. */

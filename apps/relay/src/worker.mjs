@@ -137,19 +137,26 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
 
   for (const source of due) {
     const startedAt = Date.now();
-    const receipt = await runSource(source, store, { now: startedAt });
+    const receipt = await runSource(source, store, { now: startedAt, holdLease: true });
     receipts.push(receipt);
-    await store.recordJobResult(source.id, {
-      startedAt,
-      finishedAt: receipt.finished_at,
-      outcome: receipt.outcome,
-      httpStatus: receipt.http_status,
-      retryAfterMs: receipt.retry_after_ms,
-      cadenceMs: source.cadenceMs,
-      rateLimitMinMs: source.rateLimitMinMs,
-      rateLimitMaxMs: source.rateLimitMaxMs,
-      now: Date.now(),
-    });
+    if (receipt.claim_token) {
+      try {
+        await store.recordJobResult(source.id, {
+          startedAt,
+          finishedAt: receipt.finished_at,
+          outcome: receipt.outcome,
+          httpStatus: receipt.http_status,
+          retryAfterMs: receipt.retry_after_ms,
+          cadenceMs: source.cadenceMs,
+          rateLimitMinMs: source.rateLimitMinMs,
+          rateLimitMaxMs: source.rateLimitMaxMs,
+          now: Date.now(),
+          claimToken: receipt.claim_token,
+        });
+      } finally {
+        await store.releaseSource(source.id, receipt.claim_token, Date.now());
+      }
+    }
   }
 
   // Sources that have never run get scheduled on the first pass, so a fresh D1 fills itself.
@@ -298,18 +305,25 @@ async function handleFetch(request, env, ctx) {
     if (id) {
       const source = sourceById(id, SOURCES);
       if (!source) return json({ error: `unknown source ${id}` }, 404);
-      const receipt = await runSource(source, store, { now: Date.now() });
-      await store.recordJobResult(source.id, {
-        startedAt: receipt.started_at,
-        finishedAt: receipt.finished_at,
-        outcome: receipt.outcome,
-        httpStatus: receipt.http_status,
-        retryAfterMs: receipt.retry_after_ms,
-        cadenceMs: source.cadenceMs,
-        rateLimitMinMs: source.rateLimitMinMs,
-        rateLimitMaxMs: source.rateLimitMaxMs,
-        now: Date.now(),
-      });
+      const receipt = await runSource(source, store, { now: Date.now(), holdLease: true });
+      if (receipt.claim_token) {
+        try {
+          await store.recordJobResult(source.id, {
+            startedAt: receipt.started_at,
+            finishedAt: receipt.finished_at,
+            outcome: receipt.outcome,
+            httpStatus: receipt.http_status,
+            retryAfterMs: receipt.retry_after_ms,
+            cadenceMs: source.cadenceMs,
+            rateLimitMinMs: source.rateLimitMinMs,
+            rateLimitMaxMs: source.rateLimitMaxMs,
+            now: Date.now(),
+            claimToken: receipt.claim_token,
+          });
+        } finally {
+          await store.releaseSource(source.id, receipt.claim_token, Date.now());
+        }
+      }
       return json({ receipts: [receipt], deferred: [] });
     }
     // A manual poll obeys the same query budget as the cron, because the cap is a platform limit
