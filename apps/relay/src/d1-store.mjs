@@ -12,6 +12,7 @@
  * The pure parts (shapes, DDL, row converters, batch size) come from `schema.mjs`.
  */
 import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, INDEXES, CHUNK } from './schema.mjs';
+import { CHANGE_RETENTION_MS } from './calendar-changes.mjs';
 
 /** Web Crypto sha256, hex encoded. Same value the Node adapter produces for the same bytes. */
 async function sha256Hex(text) {
@@ -209,6 +210,11 @@ export class D1Store {
     return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
   }
 
+  async calendarChanges(since) {
+    const result = await this.db.prepare('SELECT payload_json FROM calendar_change WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 1000').bind(since).all();
+    return (result.results || []).map(row => JSON.parse(row.payload_json));
+  }
+
   /**
    * True when this exact body is already archived, so the caller can skip the gzip. Compressing a
    * 290 KB menu page on every poll is CPU a Worker does not have: 10 ms per invocation on Free,
@@ -308,6 +314,7 @@ export class D1Store {
     tombstone = false,
     tombstoneScope = {},
     snapshot = null,
+    calendarChanges = [],
     receipt,
   }) {
     if (!leaseToken) return { applied: false, written: 0, tombstones: 0 };
@@ -315,6 +322,16 @@ export class D1Store {
     const lease = 'EXISTS (SELECT 1 FROM job WHERE source_id=? AND lease_token=? AND lease_expires_at>?)';
     const spec = SHAPES[shape];
     if (!spec) throw new Error(`unknown shape ${shape}`);
+
+    if (calendarChanges.length) {
+      statements.push(this.db.prepare(`INSERT OR IGNORE INTO calendar_change (id, source_id, observed_at, payload_json)
+        SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.observed_at'), value FROM json_each(?) WHERE ${lease}`)
+        .bind(sourceId, JSON.stringify(calendarChanges), sourceId, leaseToken, leaseNow));
+    }
+    if (shape === 'timeline_event' && ['ok', 'empty'].includes(receipt.outcome)) {
+      statements.push(this.db.prepare(`DELETE FROM calendar_change WHERE observed_at < ? AND ${lease}`)
+        .bind(receipt.started_at - CHANGE_RETENTION_MS, sourceId, leaseToken, leaseNow));
+    }
 
     if (rows.length) {
       const { cols } = upsertSql(shape);

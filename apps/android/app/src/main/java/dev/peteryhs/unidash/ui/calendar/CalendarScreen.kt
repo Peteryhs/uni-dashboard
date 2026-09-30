@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.data.CalendarEvent
+import dev.peteryhs.unidash.data.CalendarChangeAlert
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
@@ -85,6 +86,9 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
             item(key = "src:${s.id}") { EmptyNote("${s.id}: ${if (s.status == "failed") "last fetch failed" else "not configured"}") }
         }
         var shown = 0
+        calendar.alerts.filter { it.kind in setOf("cancelled", "removed") }.forEach { change ->
+            item(key = "change:${change.id}") { EmptyNote("${change.title}. ${change.body}") }
+        }
         calendar.days.forEach { day ->
             val events = day.events.filter { filter.categories.isEmpty() || it.category in filter.categories }
             if (events.isEmpty()) return@forEach
@@ -102,7 +106,7 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
             items(events, key = { "ev:${day.date}:${it.occurrenceId}" }) { ev ->
                 EventRow(ev, now, expanded == ev.occurrenceId, onToggle = {
                     expanded = if (expanded == ev.occurrenceId) null else ev.occurrenceId
-                }, Modifier.animateItem())
+                }, Modifier.animateItem(), calendar.alerts.filter { it.eventId == ev.id })
             }
         }
         if (shown == 0) item { EmptyNote("Nothing scheduled.") }
@@ -110,7 +114,7 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
 }
 
 @Composable
-private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, alerts: List<CalendarChangeAlert> = emptyList()) {
     val past = ev.endsAt < now
     val happening = !ev.allDay && now in ev.startsAt..ev.endsAt
     val (accent, label) = categoryStyle(ev)
@@ -139,7 +143,10 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
                 },
                 headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = {
-                    Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
+                    Column {
+                        Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
+                        alerts.forEach { Text(if (expanded) it.body else it.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+                    }
                 },
                 trailingContent = {
                     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -250,6 +257,7 @@ private fun DetailLine(label: String, value: String) {
 @Composable
 private fun categoryStyle(ev: CalendarEvent): Pair<Color, String> {
     val c = MaterialTheme.colorScheme
+    if (ev.attendance == "replaced") return c.tertiary to "Replaced by online work"
     return when (ev.category) {
         // The course is usually the start of the title already ("MATH 115 LEC 001"); say what it is instead.
         "class" -> c.primary to (ev.course?.takeUnless { ev.title.startsWith(it) } ?: classKind(ev.title))

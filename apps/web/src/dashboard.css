@@ -361,3 +361,8 @@
 @media (prefers-reduced-motion: reduce) {
   .dashboard-app *, .dashboard-app *::before, .dashboard-app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+.calendar-change-tag { font-size: 11px; color: #f1c77a; }
+.calendar-event-detail .calendar-change-text { color: #f1c77a; }
+.calendar-change-summary { margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.5; color: #f1c77a; }
+.calendar-change-summary span { flex: 1 1 280px; }
+.calendar-change-summary a { display: inline-flex; align-items: center; gap: 4px; text-decoration: underline; }

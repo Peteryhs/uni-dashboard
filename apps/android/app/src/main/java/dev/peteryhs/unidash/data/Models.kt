@@ -265,6 +265,7 @@ data class CalendarEvent(
     @SerialName("syllabus_scope") val syllabusScope: String? = null,
     @SerialName("due_at") val dueAt: Long? = null,
     @SerialName("observed_at") val observedAt: Long? = null,
+    val attendance: String = "scheduled",
     @SerialName("starts_at") val startsAt: Long,
     @SerialName("ends_at") val endsAt: Long,
     @SerialName("all_day") val allDay: Boolean = false,
@@ -284,6 +285,26 @@ data class CalendarDay(val date: String, val events: List<CalendarEvent> = empty
 data class CalendarSource(val id: String, val status: String, @SerialName("last_run_at") val lastRunAt: Long? = null)
 
 @Serializable
+data class CalendarChangeAlert(
+    val id: String,
+    @SerialName("event_id") val eventId: String? = null,
+    val kind: String,
+    val title: String,
+    val body: String = "",
+    val course: String? = null,
+    @SerialName("starts_at") val startsAt: Long,
+    @SerialName("ends_at") val endsAt: Long,
+    @SerialName("observed_at") val observedAt: Long,
+    val location: String = "",
+    @SerialName("previous_location") val previousLocation: String = "",
+    val url: String? = null,
+    val confidence: String = "check",
+    val evidence: String = "",
+    @SerialName("source_label") val sourceLabel: String = "",
+    val state: CardState = CardState.Live,
+)
+
+@Serializable
 data class Calendar(
     val timezone: String = "America/Toronto",
     @SerialName("generated_at") val generatedAt: Long,
@@ -292,6 +313,7 @@ data class Calendar(
     val days: List<CalendarDay> = emptyList(),
     val count: Int = 0,
     val sources: List<CalendarSource> = emptyList(),
+    val alerts: List<CalendarChangeAlert> = emptyList(),
 )
 
 @Serializable

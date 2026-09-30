@@ -1,6 +1,7 @@
 /** Unified calendar response, validated at the API and client boundaries. */
 import { z } from 'zod';
 import { EPOCH_MS } from './canonical.mjs';
+import { CalendarChangeAlert } from './calendar-changes.mjs';
 
 const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const CalendarEvent = z.object({
@@ -32,6 +33,7 @@ export const CalendarEvent = z.object({
   syllabus_evidence: z.array(z.string()).default([]),
   syllabus_scope: z.enum(['date', 'period']).nullable().default(null),
   due_at: EPOCH_MS.nullable().optional().default(null),
+  attendance: z.enum(['scheduled', 'check_instructions', 'replaced']).default('scheduled'),
 });
 
 export const CalendarLearning = z.object({
@@ -57,6 +59,7 @@ export const CalendarResponse = z.object({
   })).default([]),
   count: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  alerts: z.array(CalendarChangeAlert).default([]),
   sources: z.array(z.object({
     id: z.string().min(1),
     status: z.enum(['ok', 'unconfigured', 'pending', 'failed']),

@@ -9,6 +9,7 @@
  */
 import { validateRows } from '#contract/canonical.mjs';
 import { parseRetryAfter } from './retry.mjs';
+import { detectCalendarChanges } from './calendar-changes.mjs';
 
 const DEFAULT_LEASE_MS = 2 * 60_000;
 
@@ -63,8 +64,16 @@ async function applyResult(store, source, token, receipt, {
   tombstone = false,
   tombstoneScope = {},
   raw = null,
+  changeContext = {},
 } = {}) {
   if (typeof store.commitSourceResult === 'function') {
+    let calendarChanges = [];
+    if (source.shape === 'timeline_event' && ['ok', 'empty'].includes(receipt.outcome)) {
+      const previous = await store.rows('timeline_event', { where: 'source_id = ?', params: [source.id], limit: 10001 });
+      if (previous.length <= 10000) calendarChanges = detectCalendarChanges(previous, rows, {
+        sourceId: source.id, now: receipt.started_at, complete: tombstone, ...changeContext,
+      });
+    }
     const result = await store.commitSourceResult({
       sourceId: source.id,
       leaseToken: token,
@@ -78,6 +87,7 @@ async function applyResult(store, source, token, receipt, {
         ? { sourceId: source.id, fetchedAt: receipt.started_at, contentType: raw.contentType, body: raw.body }
         : null,
       receipt,
+      calendarChanges,
     });
     if (!result.applied) await leaseLost(store, source.id, token, receipt);
     return result;
@@ -116,13 +126,16 @@ async function unexpectedEmpty(source, store, now, parsed) {
   const eventCount = Number(parsed?.meta?.events ?? 0);
   const cancelledCount = Number(parsed?.meta?.cancelled ?? 0);
   if (eventCount > 0 && cancelledCount >= eventCount) return null;
+  const cancelledIds = new Set(parsed?.changeContext?.cancelledIds || []);
+  const cancelledUids = new Set(parsed?.changeContext?.cancelledUids || []);
+  const explicitExceptions = parsed?.tombstone !== false && (cancelledIds.size || cancelledUids.size);
 
   let futureRows;
   try {
     futureRows = (await store.rows(source.shape, {
       where: 'source_id = ? AND starts_at > ?',
       params: [source.id, now],
-      limit: 1,
+      limit: explicitExceptions ? 10001 : 1,
     })) ?? [];
   } catch (error) {
     return {
@@ -132,6 +145,7 @@ async function unexpectedEmpty(source, store, now, parsed) {
   }
 
   if (!futureRows.length) return null;
+  if (explicitExceptions && futureRows.length <= 10000 && futureRows.every(row => cancelledIds.has(row.external_id) || cancelledUids.has(row.uid))) return null;
   return {
     reason: 'feed returned no rows while saved future calendar events remain',
     futureRows: true,
@@ -250,7 +264,7 @@ async function runClaimedSource(source, store, { now = Date.now(), date = null, 
     receipt.error = '';
     receipt.finished_at = Date.now();
     if (!dryRun) {
-      const result = await applyResult(store, source, claimToken, receipt, { tombstone: Boolean(tombstoneOnEmpty), raw });
+      const result = await applyResult(store, source, claimToken, receipt, { tombstone: Boolean(tombstoneOnEmpty), raw, changeContext: parsed.changeContext });
       if (!result.applied) return receipt;
       tombstones = result.tombstones;
       receipt.tombstones = tombstones;
@@ -279,6 +293,7 @@ async function runClaimedSource(source, store, { now = Date.now(), date = null, 
     tombstone: parsed.tombstone !== false,
     tombstoneScope,
     raw,
+    changeContext: parsed.changeContext,
   });
   if (!result.applied) return receipt;
   receipt.rows_written = result.written;

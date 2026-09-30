@@ -376,6 +376,7 @@ private fun kindLabel(kind: String?): String = when (kind) {
 
 /** A deadline counts down; a window says whether it is on now, ahead, or already over. */
 private fun recTime(rec: Recommendation, now: Long): String? {
+    if (rec.kind == "change") return rec.startsAt?.let { "Affects ${Format.whenLabel(it, now)}" }
     rec.dueAt?.let { return "${rec.timeLabel ?: "Due"} ${Format.whenLabel(it, now)}" }
     val start = rec.startsAt ?: return null
     val end = rec.endsAt

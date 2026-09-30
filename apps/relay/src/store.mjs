@@ -15,6 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { SHAPES, SHAPE_COLUMNS, ddl, rowToParams, paramsToRow, upsertSql, CHUNK } from './schema.mjs';
+import { CHANGE_RETENTION_MS } from './calendar-changes.mjs';
 
 export function sha256(s) {
   return createHash('sha256').update(s).digest('hex');
@@ -166,6 +167,11 @@ export class SqliteStore {
     return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
   }
 
+  calendarChanges(since) {
+    return this.db.prepare('SELECT payload_json FROM calendar_change WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 1000')
+      .all(since).map(row => JSON.parse(row.payload_json));
+  }
+
   /**
    * True when this exact body is already archived. The caller checks first, because gzipping a
    * 290 KB menu page on every poll is CPU a Worker does not have to spend: on Workers Free an
@@ -262,6 +268,7 @@ export class SqliteStore {
     tombstone = false,
     tombstoneScope = {},
     snapshot = null,
+    calendarChanges = [],
     receipt,
   }) {
     if (!leaseToken) return { applied: false, written: 0, tombstones: 0 };
@@ -272,6 +279,13 @@ export class SqliteStore {
         return { applied: false, written: 0, tombstones: 0 };
       }
       const written = rows.length ? this.upsertRows(shape, rows) : 0;
+      if (calendarChanges.length) {
+        const insert = this.db.prepare('INSERT OR IGNORE INTO calendar_change (id, source_id, observed_at, payload_json) VALUES (?,?,?,?)');
+        for (const change of calendarChanges) insert.run(change.id, sourceId, change.observed_at, JSON.stringify(change));
+      }
+      if (shape === 'timeline_event' && ['ok', 'empty'].includes(receipt.outcome)) {
+        this.db.prepare('DELETE FROM calendar_change WHERE observed_at < ?').run(receipt.started_at - CHANGE_RETENTION_MS);
+      }
       if (!this.sourceLeaseOwned(sourceId, leaseToken, Date.now())) {
         this.db.exec('ROLLBACK');
         return { applied: false, written: 0, tombstones: 0 };

@@ -32,10 +32,10 @@ function item(kind, key, values) {
     action: null, topics: [], readings: [], reason: '', evidence: '', source_label: '', state: 'live', can_complete: false, ...rest };
 }
 function linkFor(event, course, entry = null) {
-  const preferred = /quiz/i.test(event?.title || entry?.title || '') ? ['quiz', 'submit', 'module', 'discussion'] : ['submit', 'quiz', 'module', 'discussion'];
+  const preferred = /quiz/i.test(event?.title || entry?.title || '') ? ['quiz', 'crowdmark', 'submit', 'module', 'discussion'] : ['crowdmark', 'submit', 'quiz', 'module', 'discussion'];
   for (const kind of preferred) {
     const found = event?.links?.find(link => link.kind === kind && safeUrl(link.url));
-    if (found) return { label: { quiz: 'Open quiz', submit: 'Open submission', module: 'Open content', discussion: 'Open discussion' }[kind], url: safeUrl(found.url) };
+    if (found) return { label: { crowdmark: 'Open Crowdmark', quiz: 'Open quiz', submit: 'Open submission', module: 'Open content', discussion: 'Open discussion' }[kind], url: safeUrl(found.url) };
   }
   if (safeUrl(entry?.url)) return { label: 'Open syllabus link', url: safeUrl(entry.url) };
   if (safeUrl(event?.url)) return { label: /\/calendar\//.test(event.url) ? 'View calendar entry' : 'Open event link', url: safeUrl(event.url) };
@@ -81,7 +81,7 @@ function taskItem(event, entry, course, now) {
   const overdue = !ongoingExam && (due != null ? due < now : date < day(now));
   const topics = entry?.topics?.length ? entry.topics : descriptionCoverage(event), readings = entry?.readings || [];
   const coverage = topics.length ? ` Coverage: ${topics.join('; ')}.` : /quiz|exam|midterm/i.test(title) ? ' Coverage has not been provided; check the course instructions.' : '';
-  const noExact = !event?.links?.some(link => ['quiz', 'submit'].includes(link.kind));
+  const noExact = !event?.links?.some(link => ['quiz', 'submit', 'crowdmark'].includes(link.kind));
   return item('task', event?.id || `${course?.course}:${entry.id}`, {
     revision_seed: [sourceTitle, due, date, topics, readings],
     title: ongoingExam ? `Now: ${title}` : overdue ? `Confirm ${exam ? 'assessment' : 'submission'}: ${title}` : title,
@@ -119,6 +119,27 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   const today = day(now), tomorrow = shift(today, 1), candidates = [], warnings = [];
   const courses = new Map((calendar.courses || []).map(course => [course.course, course]));
   const events = [...new Map(calendar.days.flatMap(date => date.events).map(event => [event.id, event])).values()];
+  const changes = [...(calendar.alerts || [])].sort((a, b) => a.starts_at - b.starts_at || b.observed_at - a.observed_at);
+  const changeRecommendations = new Map();
+  const seenChanges = new Set();
+  for (const change of changes) {
+    // One recurring series can move twenty future meetings in a single update. Surface its
+    // nearest affected session, while the calendar retains each occurrence's warning.
+    const key = `${change.course}:${change.kind}:${change.observed_at}:${change.previous_location}:${change.location}`;
+    if (seenChanges.has(key) || change.ends_at <= now || change.starts_at > now + 14 * DAY) continue;
+    seenChanges.add(key);
+    const soon = change.starts_at <= now + 3 * HOUR;
+    const recommendation = item('change', change.id, {
+      revision_seed: [change.id, change.body], title: change.title, body: change.body,
+      priority: Math.min(['stale', 'dead'].includes(change.state) ? 720 : Infinity, soon ? (change.confidence === 'confirmed' ? 1160 : 1060) : change.starts_at <= now + DAY ? 960 : change.starts_at <= now + 3 * DAY ? 810 : 620),
+      course: change.course, starts_at: change.starts_at, ends_at: change.ends_at, time_label: 'Scheduled',
+      action: safeUrl(change.url) ? { label: change.kind === 'tutorial_work' ? 'Check tutorial work' : 'Check source', url: safeUrl(change.url) } : linkFor(null, courses.get(change.course)),
+      source_label: change.source_label, state: change.state,
+      reason: change.confidence === 'confirmed' ? 'A confirmed schedule change affects an upcoming commitment.' : 'Check this exception before making plans; a cancellation is not assumed.', evidence: change.evidence,
+    });
+    candidates.push(recommendation);
+    if (change.event_id) changeRecommendations.set(change.event_id, recommendation);
+  }
   const tasks = [];
   const matched = new Set(), seenEvents = [];
   const deadlineEvents = events.filter(event => ['deadline', 'exam'].includes(event.category))
@@ -148,16 +169,18 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   };
   const activeTasks = tasks.filter(isVisible);
   candidates.push(...activeTasks);
-  const blocks = events.filter(event => ['class', 'exam', 'event'].includes(event.category) &&
+  const blocks = events.filter(event => event.attendance !== 'replaced' && ['class', 'exam', 'event'].includes(event.category) &&
     !(event.source_id === 'uw-learn-ics' && event.category === 'event') &&
     !event.all_day && event.ends_at > now && event.starts_at < clock(tomorrow, 0)).sort((a, b) => a.starts_at - b.starts_at);
   for (const event of blocks.filter(event => event.category === 'class')) {
     const current = event.starts_at <= now, until = event.starts_at - now;
     const learning = learningFor(event.course, day(event.starts_at), syllabi);
+    if (changeRecommendations.has(event.id) && isVisible(changeRecommendations.get(event.id))) continue;
+    const notice = changes.find(change => change.event_id === event.id && ['room', 'unusual_room', 'tutorial_work'].includes(change.kind));
     candidates.push(item('class', event.id, {
       revision_seed: [event.id, event.title, event.starts_at, event.ends_at, event.location, learning.topics, learning.readings],
       title: `${current ? 'Now' : until <= 15 * MIN ? 'Starting soon' : 'Next today'}: ${event.title}`,
-      body: `${displayTime(event.starts_at)}–${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.${learning.topics.length ? ` ${learning.period ? 'Syllabus topics for this period' : 'Learning today'}: ${learning.topics.join('; ')}.` : ' No dated syllabus topic has been imported for this class.'}`,
+      body: `${displayTime(event.starts_at)}–${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.${notice ? ` ${notice.body}` : ''}${learning.topics.length ? ` ${learning.period ? 'Syllabus topics for this period' : 'Learning today'}: ${learning.topics.join('; ')}.` : ' No dated syllabus topic has been imported for this class.'}`,
       priority: current ? 1100 : until <= 15 * MIN ? 1080 : until <= HOUR ? 980 : until <= 3 * HOUR ? 800 : 630,
       course: event.course, starts_at: event.starts_at, ends_at: event.ends_at, time_label: 'Starts', topics: learning.topics, readings: learning.readings,
       action: linkFor(event, courses.get(event.course)), source_label: `${event.source_label}${learning.entries.length ? ' + syllabus' : ''}`, state: event.state,

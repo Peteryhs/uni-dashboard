@@ -22,7 +22,7 @@ import { validateRecommendations as validateRecommendationsJs } from '#contract/
 export interface RecommendationItem {
   id: string;
   revision: string;
-  kind: 'class' | 'task' | 'learning' | 'office_hours' | 'focus' | 'conflict' | 'food' | 'weather';
+  kind: 'class' | 'task' | 'learning' | 'office_hours' | 'focus' | 'conflict' | 'food' | 'weather' | 'change';
   priority: number;
   title: string;
   body: string;
@@ -141,6 +141,16 @@ export interface CalendarEvent {
   observed_at: number;
   state: 'live' | 'ageing' | 'stale' | 'dead';
   due_at?: number | null;
+  attendance?: 'scheduled' | 'check_instructions' | 'replaced';
+}
+
+export interface CalendarChangeAlert {
+  id: string; event_id: string | null;
+  kind: 'room' | 'unusual_room' | 'time' | 'deadline' | 'cancelled' | 'removed' | 'tutorial_work';
+  title: string; body: string; course: string | null;
+  starts_at: number; ends_at: number; observed_at: number;
+  location: string; previous_location: string; url: string | null;
+  confidence: 'confirmed' | 'check'; evidence: string; source_label: string; state: 'live' | 'ageing' | 'stale' | 'dead';
 }
 
 export interface CalendarData {
@@ -153,6 +163,7 @@ export interface CalendarData {
   courses: { course: string; learn_url: string | null; event_ids: string[]; class_count: number; deadline_count: number; office_hours_count: number; resources: CourseResource[] }[];
   count: number;
   truncated: boolean;
+  alerts: CalendarChangeAlert[];
   sources: { id: string; status: 'ok' | 'unconfigured' | 'pending' | 'failed'; last_run_at: number | null }[];
 }
 

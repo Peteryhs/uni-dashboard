@@ -25,12 +25,13 @@ function recommendationBody(item: RecommendationItem): string {
   return item.kind === 'food' ? item.body.replace(/^AI picks?:\s*/i, '') : item.body;
 }
 function kindLabel(item: RecommendationItem): string {
-  return ({ office_hours: 'Office hours', focus: 'Study window', learning: 'Learning', food: 'Lunch' } as Record<string, string>)[item.kind] ?? item.kind;
+  return ({ office_hours: 'Office hours', focus: 'Study window', learning: 'Learning', food: 'Lunch', change: 'Schedule update' } as Record<string, string>)[item.kind] ?? item.kind;
 }
 function isAiFood(item: RecommendationItem): boolean {
   return item.kind === 'food' && item.source_label === 'Cached dining recommendation';
 }
 function timing(item: RecommendationItem, now: number): string {
+  if (item.kind === 'change') return `${item.state === 'stale' || item.state === 'dead' ? 'Cached update · ' : ''}Affects ${item.starts_at ? formatShortDay(item.starts_at) : 'your schedule'}`;
   if (item.starts_at && item.ends_at && item.starts_at <= now && item.ends_at > now) return 'In progress, ends ' + formatTime(item.ends_at);
   if (item.due_at) {
     const dueDay = campusDate(item.due_at);
@@ -39,7 +40,7 @@ function timing(item: RecommendationItem, now: number): string {
     const label = dueDay === today ? 'today' : dueDay === tomorrow ? 'tomorrow' : formatShortDay(item.due_at);
     return 'Due ' + label + ' at ' + formatTime(item.due_at);
   }
-  if (item.starts_at) return 'Starts in ' + countdown(item.starts_at, now) + ' at ' + formatTime(item.starts_at);
+  if (item.starts_at) return 'Starts ' + countdown(item.starts_at, now) + ' at ' + formatTime(item.starts_at);
   if (item.scheduled_date) return (item.kind === 'task' ? 'Due ' : 'Scheduled ') + formatShortDay(Date.parse(item.scheduled_date + 'T12:00:00Z')) + (item.kind === 'task' ? ' · time not supplied' : '');
   return 'For today';
 }
@@ -52,6 +53,7 @@ function shortTiming(item: RecommendationItem, now: number): string {
   return day === tomorrow ? 'Tomorrow' : formatShortDay(at);
 }
 function progress(item: RecommendationItem, now: number): number | null {
+  if (item.kind === 'change') return null;
   if (!item.starts_at || !item.ends_at || now < item.starts_at || now > item.ends_at) return null;
   return Math.round(((now - item.starts_at) / (item.ends_at - item.starts_at)) * 100);
 }
@@ -361,14 +363,16 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         <span className="calendar-event-title">
           <strong>{cleanTitle(event.title)}</strong>
           <span className="course-tag">{event.course || 'Course not identified'}</span>
-          <span className={'event-tag event-' + event.category}>{calendarKind(event)}</span>
+          <span className={'event-tag event-' + event.category}>{event.attendance === 'replaced' ? 'Replaced' : calendarKind(event)}</span>
+          {event.attendance !== 'replaced' && data?.alerts?.some(alert => alert.event_id === event.id) && <span className="calendar-change-tag">{data.alerts.find(alert => alert.event_id === event.id)?.kind === 'unusual_room' ? `Different room · ${event.location}` : data.alerts.find(alert => alert.event_id === event.id)?.kind === 'room' ? `Room changed · ${event.location || 'check source'}` : event.attendance === 'check_instructions' ? 'Check instructions' : 'Updated'}</span>}
         </span>
         <ChevronRight className="calendar-item-chevron" size={14} />
       </>}>
         {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
         {event.category === 'opens' && event.due_at && <p><strong>Due:</strong> {formatShortDay(event.due_at)} · {formatTime(event.due_at)}</p>}
         {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
-        {event.location && <p>{event.location}</p>}
+        {event.location && !data?.alerts?.some(alert => alert.event_id === event.id && ['room', 'unusual_room'].includes(alert.kind)) && <p>{event.attendance === 'replaced' ? 'Original room · ' : ''}{event.location}</p>}
+        {data?.alerts?.filter(alert => alert.event_id === event.id).map(alert => <p className="calendar-change-text" key={alert.id}>{alert.body}{['stale', 'dead'].includes(alert.state) ? ' · Cached update; confirm in the source.' : ''}</p>)}
         {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
         {event.description && <CalendarMarkdown description={event.description} />}
         {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
@@ -402,6 +406,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
       {pending && <p className="empty-state">Loading calendar…</p>}
       {error && !data && <p className="empty-state" role="alert">Calendar is unavailable right now.</p>}
       {data && calendarRows.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
+      {data?.alerts?.filter(alert => ['cancelled', 'removed'].includes(alert.kind) && campusDate(alert.starts_at) < shiftDate(rangeStart ?? today, rangeLength)).map(alert => <p className="calendar-change-summary" key={alert.id}><strong>{alert.title}</strong><span>{alert.body}</span>{alert.url && <a href={alert.url} target="_blank" rel="noopener noreferrer">Check source <ExternalLink size={12} /></a>}</p>)}
       <div className="calendar-day-list" id="calendar-day-list">
       {calendarRows.map(row => {
         if (row.kind === 'weekend') {
@@ -536,12 +541,12 @@ function CoursesSection({ data, pending, error, onManageCourse }: { data?: Calen
     {error && !data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Courses are unavailable right now.</BlurFade>}
     {data && data.courses.length === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No courses are in the calendar feed. Add your schedule in Settings.</BlurFade>}
     {data && data.courses.length > 0 && <div className="courses-grid">{data.courses.map(course => {
-      const upcoming = events.filter(event => event.course === course.course).slice(0, 3);
+      const upcoming = [...new Map(events.filter(event => event.course === course.course).map(event => [event.id, event])).values()].slice(0, 3);
       return <BlurFade as="article" className="course-card" key={course.course} inView duration={0.45} offset={10} blur="6px">
         <div className="course-card-head"><h3>{course.course}</h3>{course.learn_url && <a href={course.learn_url} target="_blank" rel="noopener noreferrer">Open course <ExternalLink size={14} /></a>}</div>
         <p className="course-counts">In this range · {countLabel(course.class_count, 'class', 'classes')} · {countLabel(course.deadline_count, 'deadline')} · {countLabel(course.office_hours_count, 'office hour')}</p>
         {course.resources.length > 0 && <div className="course-links">{course.resources.map(resource => <a href={resource.url} key={resource.url} target="_blank" rel="noopener noreferrer">{resource.title} <ExternalLink size={12} /></a>)}</div>}
-        <div className="course-upcoming"><span>Coming up</span>{upcoming.length ? upcoming.map(event => <div key={event.id}><small>{formatShortDay(event.starts_at)} · {event.all_day ? 'Date only' : formatTime(event.starts_at)}</small><strong>{cleanTitle(event.title)}</strong></div>) : <p>Nothing scheduled in this range.</p>}</div>
+        <div className="course-upcoming"><span>Coming up</span>{upcoming.length ? upcoming.map(event => <div key={event.id}><small>{formatShortDay(event.starts_at)} · {event.all_day ? 'Date only' : formatTime(event.starts_at)}</small><strong>{event.attendance === 'replaced' ? 'Replaced · ' : ''}{cleanTitle(event.title)}</strong></div>) : <p>Nothing scheduled in this range.</p>}</div>
         <button type="button" className="course-manage" onClick={() => onManageCourse(course.course)}>Manage in Settings <ChevronRight size={14} /></button>
       </BlurFade>;
     })}</div>}
@@ -676,7 +681,7 @@ export default function App() {
         <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
-            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.course || recommendationBody(featured).split('.')[0]}</p><ChevronRight size={18} /></button>
+            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' ? recommendationBody(featured) : featured.course || recommendationBody(featured).split('.')[0]}</p><ChevronRight size={18} /></button>
             {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>

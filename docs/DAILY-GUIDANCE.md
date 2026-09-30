@@ -1,5 +1,7 @@
 # Daily guidance backend
 
+Schedule changes, unusual rooms and tutorial replacements also feed this ranking. See [Schedule change alerts](SCHEDULE-CHANGES.md) for their evidence rules, reminders and freshness limits.
+
 `GET /v1/recommendations?section=1&group=4` returns a server-ranked view of the current day for the web client and a future Android client. It reads the unified calendar, reviewed syllabi, current menu, the cached dining recommendation and cached weather. It makes no network or AI request during a read. The response includes a headline, ranked suggestions, separate large and smaller task lists, source freshness, a reason and source evidence for each suggestion. Refresh at most once a minute while the app is visible. `POST /v1/recommendations/actions` accepts a suggestion `id` with `done`, `undo` or `snooze` (`until` in epoch milliseconds); the backend saves this state across devices.
 
 Ranking changes with the clock. A class in progress and an imminent quiz outrank lunch. Food moves up near lunch only when today's menu exists. Larger assignments appear several days before their deadline. Schedule gaps suggest a possible study window without claiming it is enough time to finish the work. A scheduled office hour becomes relevant when the same course has an approaching task. Overlapping events get a conflict warning. Weather appears from the cached forecast when rain, cold, heat or wind may affect the next trip. Old or failed source data stays labeled.

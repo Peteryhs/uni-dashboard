@@ -9,6 +9,7 @@ import { courseOf } from './cards.mjs';
 import { SOURCES, readiness } from '#sources/registry.mjs';
 import { courseLibrary, learnHomeFromEvents } from './course-library.mjs';
 import { listCourseSyllabi, syllabusAssessmentMatches } from './syllabus.mjs';
+import { calendarChangeAlerts, tutorialAttendanceAlerts, CHANGE_RETENTION_MS } from './calendar-changes.mjs';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 31;
@@ -144,8 +145,8 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
   const fromMs = zonedToEpoch(from.year, from.month, from.day, 0, 0, 0, config.timezone);
   const untilMs = zonedToEpoch(until.year, until.month, until.day, 0, 0, 0, config.timezone);
   const rows = await store.rows('timeline_event', {
-    where: '(starts_at < ? AND (COALESCE(ends_at, starts_at) > ? OR starts_at >= ?)) OR (source_id = ? AND starts_at >= ? AND starts_at < ?)',
-    params: [untilMs, fromMs, fromMs, 'uw-learn-ics', fromMs - 30 * 86400000, fromMs],
+    where: '(starts_at < ? AND (COALESCE(ends_at, starts_at) > ? OR starts_at >= ?)) OR (source_id = ? AND starts_at < ? AND (starts_at >= ? OR json_extract(payload_json, \'$.due_at\') >= ?))',
+    params: [untilMs, fromMs, fromMs, 'uw-learn-ics', fromMs, fromMs - 30 * 86400000, fromMs],
     limit: MAX_EVENTS + 1,
     orderBy: 'starts_at',
   });
@@ -303,6 +304,22 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
       resources: library[course] || [],
     };
   }).sort((a, b) => a.course.localeCompare(b.course));
+  const [changes, scheduleRows] = await Promise.all([
+    store.calendarChanges ? store.calendarChanges(now - CHANGE_RETENTION_MS) : [],
+    store.rows('timeline_event', { where: 'source_id = ? AND starts_at < ? AND COALESCE(ends_at, starts_at) >= ?',
+      params: ['uw-portal-ics', now + 60 * 86400000, now - 14 * 86400000], limit: MAX_EVENTS }),
+  ]);
+  const alertEventMap = new Map([...rows, ...scheduleRows, ...learnRows].map(row => [ `${row.source_id}:${row.external_id}`, toEvent(row, now) ]));
+  for (const event of inferredDeadlines) alertEventMap.set(event.id, event);
+  const alertEvents = [...alertEventMap.values()];
+  const alerts = calendarChangeAlerts({ changes, events: alertEvents, now, from: fromMs, until: untilMs, section, group,
+    failedSources: new Set(sources.filter(source => source.status === 'failed').map(source => source.id)),
+    sourceObservedAt: new Map(sources.map(source => [source.id, source.last_run_at])) });
+  const attendanceAlerts = tutorialAttendanceAlerts(alertEvents, { now, section, group }).filter(alert => alert.starts_at >= fromMs && alert.starts_at < untilMs);
+  const attendance = new Map(attendanceAlerts.map(alert => [alert.event_id, alert.attendance]));
+  alerts.push(...attendanceAlerts);
+  for (const day of groups) for (const event of day.events) event.attendance = attendance.get(event.id) || 'scheduled';
+  for (const course of courses) course.class_count -= [...byCourse.get(course.course).values()].filter(event => event.category === 'class' && attendance.get(event.id) === 'replaced').length;
   return CalendarResponse.parse({
     schema_version: 1,
     timezone: config.timezone,
@@ -314,5 +331,6 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
     count: visible.size,
     truncated,
     sources,
+    alerts,
   });
 }

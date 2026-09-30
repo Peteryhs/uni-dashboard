@@ -41,7 +41,7 @@ class Notifier(private val context: Context) {
             // Android freezes a channel's importance when it is first created, so a code change that
             // raises one only reaches an existing install if the channel is deleted and recreated.
             // Only a quieter-than-intended channel is repaired; that resets its per-channel override.
-            if ((manager.getNotificationChannel(c.id)?.importance ?: importance) < importance) {
+            if ((manager.getNotificationChannel(c.id)?.importance ?: importance) in NotificationManager.IMPORTANCE_MIN until importance) {
                 manager.deleteNotificationChannel(c.id)
             }
             manager.createNotificationChannel(NotificationChannel(c.id, c.label, importance).apply { description = c.description })
@@ -52,8 +52,9 @@ class Notifier(private val context: Context) {
         get() = Build.VERSION.SDK_INT < 33 ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    fun post(key: String, channel: Channel, title: String, text: String, bigText: String? = null) {
-        if (!canPost) return
+    fun post(key: String, channel: Channel, title: String, text: String, bigText: String? = null): Boolean {
+        if (!canPost || !NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+        if (context.getSystemService(NotificationManager::class.java).getNotificationChannel(channel.id)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val n = NotificationCompat.Builder(context, channel.id)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -65,8 +66,10 @@ class Notifier(private val context: Context) {
             .build()
         try {
             NotificationManagerCompat.from(context).notify(key.hashCode(), n)
+            return true
         } catch (_: SecurityException) {
             // Permission revoked between the check and the call.
+            return false
         }
     }
 
@@ -93,11 +96,28 @@ class Notifier(private val context: Context) {
     fun onSnapshot(snapshot: Snapshot, now: Long = System.currentTimeMillis(), fromNetwork: Boolean = true) {
         ensurePersistent(snapshot, now)
         scheduleReminders(NotificationPlanner.plan(snapshot.calendar, now))
+        if (fromNetwork) {
+            val shown = prefs.getStringSet(KEY_CHANGES, emptySet()).orEmpty().toMutableSet()
+            val active = snapshot.calendar?.alerts.orEmpty().map { it.id }.toSet()
+            shown.retainAll(active)
+            for (change in NotificationPlanner.changesToShow(snapshot.calendar, shown, now)) {
+                if (post("change:${change.id}", Channel.Changes, change.title, change.body)) {
+                    // Coalesce changes to an entire recurring series in the same poll.
+                    snapshot.calendar?.alerts.orEmpty().filter {
+                        it.course == change.course && it.kind == change.kind && it.observedAt == change.observedAt &&
+                            it.location == change.location && it.previousLocation == change.previousLocation && it.kind != "unusual_room"
+                    }.forEach { shown.add(it.id) }
+                    shown.add(change.id)
+                }
+            }
+            prefs.edit { putStringSet(KEY_CHANGES, shown) }
+        }
         val alert = snapshot.bundle?.card("alert")?.payload<Alert>()
         NotificationPlanner.alertToShow(alert, prefs.getString(KEY_ALERT, null))?.let { a ->
             val notice = a.notices.firstOrNull()
-            post("alert:${a.key}", Channel.Alerts, notice?.title ?: "Campus alert", a.summary.ifBlank { notice?.body ?: "" }, notice?.body)
-            prefs.edit { putString(KEY_ALERT, a.key) }
+            if (post("alert:${a.key}", Channel.Alerts, notice?.title ?: "Campus alert", a.summary.ifBlank { notice?.body ?: "" }, notice?.body)) {
+                prefs.edit { putString(KEY_ALERT, a.key) }
+            }
         }
         if (fromNetwork) prefs.edit { putBoolean(KEY_AUTH_WARNED, false) }
     }
@@ -105,8 +125,7 @@ class Notifier(private val context: Context) {
     /** Once per failure streak, not every 15 minutes. */
     fun onUnauthorized(message: String) {
         if (prefs.getBoolean(KEY_AUTH_WARNED, false)) return
-        post("account", Channel.Account, "Uni Dashboard can't connect", message)
-        prefs.edit { putBoolean(KEY_AUTH_WARNED, true) }
+        if (post("account", Channel.Account, "Uni Dashboard can't connect", message)) prefs.edit { putBoolean(KEY_AUTH_WARNED, true) }
     }
 
     private fun scheduleReminders(reminders: List<Reminder>) {
@@ -171,6 +190,7 @@ class Notifier(private val context: Context) {
         const val EXTRA_TEXT = "text"
         private const val KEY_SCHEDULED = "scheduled"
         private const val KEY_ALERT = "last_alert_key"
+        private const val KEY_CHANGES = "schedule_change_ids"
         private const val KEY_AUTH_WARNED = "auth_warned"
         private const val PERSISTENT_NOTIFICATION_ID = 0x554E49
         private const val PERSISTENT_FALLBACK = "Background reminders are enabled"
@@ -184,7 +204,7 @@ class Notifier(private val context: Context) {
  * unit tested, so a channel cannot go silent by accident again.
  */
 internal fun channelImportance(c: Channel): Int = when (c) {
-    Channel.Classes, Channel.Alerts -> NotificationManager.IMPORTANCE_HIGH
+    Channel.Classes, Channel.Alerts, Channel.Changes -> NotificationManager.IMPORTANCE_HIGH
     else -> NotificationManager.IMPORTANCE_DEFAULT
 }
 

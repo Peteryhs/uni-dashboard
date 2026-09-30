@@ -5,7 +5,7 @@ import { EPOCH_MS } from './canonical.mjs';
 export const RecommendationItem = z.object({
   id: z.string().min(1).max(240),
   revision: z.string(),
-  kind: z.enum(['class', 'task', 'learning', 'office_hours', 'focus', 'conflict', 'food', 'weather']),
+  kind: z.enum(['class', 'task', 'learning', 'office_hours', 'focus', 'conflict', 'food', 'weather', 'change']),
   priority: z.number(),
   title: z.string(),
   body: z.string(),

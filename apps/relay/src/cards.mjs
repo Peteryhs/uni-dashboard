@@ -10,6 +10,9 @@ import { config } from './config.mjs';
 import { taskContext, phaseOf, groupScope, cleanDisplayTitle, isSameAssessment } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 import { alertIdentity, alertSummaryFor, ALERT_SUMMARY_SETTING, ALERT_DISMISSED_SETTING } from './alert-summary.mjs';
+import { courseOf } from './course-code.mjs';
+import { tutorialAttendanceAlerts, sessionEvidenceEvents } from './calendar-changes.mjs';
+export { courseOf } from './course-code.mjs';
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -80,7 +83,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
    * schedule feed goes first, and a deadline only takes the hero slot when nothing is scheduled
    * ahead, which is the honest fallback rather than a permanent override.
    */
-  const schedule = (
+  let schedule = (
     await store.rows('timeline_event', {
       where: 'source_id = ? AND starts_at >= ?',
       params: [SCHEDULE_SOURCE, now - 5 * MIN],
@@ -88,6 +91,13 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
       orderBy: 'starts_at',
     })
   ).sort((a, b) => a.starts_at - b.starts_at);
+
+  if (schedule.some(row => /\b(?:tutorial|tut)\b/i.test(row.title))) {
+    const learnRows = await store.rows('timeline_event', { where: 'source_id = ?', params: ['uw-learn-ics'], limit: 2000 });
+    const attendance = tutorialAttendanceAlerts(sessionEvidenceEvents([...schedule, ...learnRows], now), { now });
+    const replaced = new Set(attendance.filter(alert => alert.attendance === 'replaced').map(alert => alert.event_id));
+    schedule = schedule.filter(row => !replaced.has(`${row.source_id}:${row.external_id}`));
+  }
 
   const deadlines = (
     await store.rows('timeline_event', {
@@ -375,15 +385,6 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
       );
     },
   );
-}
-
-const COURSE_RE = /^([A-Z]{2,6}\s?\d{2,3}[A-Z]?)\b/;
-
-export function courseOf(title, location = '') {
-  const m = COURSE_RE.exec(title ?? '');
-  if (m) return m[1].toUpperCase();
-  if (/(?:^|[\s\b])(?:CFE|r[ée]sum[ée]|resume)(?:[\s\b]|$)/i.test(title ?? '') || /\bCFE\b/i.test(location ?? '')) return 'CFE';
-  return 'Other';
 }
 
 /**

@@ -26,6 +26,7 @@ const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
  * appear in, because "Open the dropbox" is the thing a student wants and "View event" is not.
  */
 const LINK_KINDS = [
+  { kind: 'crowdmark', test: /^https:\/\/(?:[a-z0-9-]+\.)?crowdmark\.com\//i },
   { kind: 'submit', test: /\/d2l\/lms\/dropbox\// },
   { kind: 'quiz', test: /\/d2l\/lms\/quizzing\// },
   { kind: 'module', test: /\/d2l\/le\/content\// },
@@ -35,6 +36,7 @@ const LINK_KINDS = [
 ];
 
 const KIND_LABELS = {
+  crowdmark: 'Open Crowdmark',
   submit: 'Open the dropbox',
   quiz: 'Open the quiz',
   module: 'Open the module',

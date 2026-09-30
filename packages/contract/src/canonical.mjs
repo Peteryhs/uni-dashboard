@@ -29,6 +29,8 @@ export const TimelineEvent = z.object({
   all_day: z.boolean().default(false),
   starts_at: EPOCH_MS,
   ends_at: EPOCH_MS,
+  // Cached instruction-derived due time keeps an old opening event in the query window.
+  due_at: EPOCH_MS.nullable().optional(),
   url: z.string().default(''),
   /**
    * The feed's own text for this event. It matters more than it looks: LEARN puts the task's links

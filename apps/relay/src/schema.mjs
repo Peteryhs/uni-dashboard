@@ -7,7 +7,7 @@
  */
 
 const CHUNK = 25; // rows per statement, keeps bound params well under any dialect's limit
-const INDEXES = ['idx_timeline_starts', 'idx_menu_date', 'idx_source_run_source_id', 'idx_source_run_finished', 'idx_source_run_body_sha', 'idx_raw_snapshot_fetched'];
+const INDEXES = ['idx_timeline_starts', 'idx_menu_date', 'idx_source_run_source_id', 'idx_source_run_finished', 'idx_source_run_body_sha', 'idx_raw_snapshot_fetched', 'idx_calendar_change_observed'];
 
 const SHAPES = {
   timeline_event: {
@@ -45,6 +45,11 @@ const SHAPES = {
 
 function ddlStatements() {
   const parts = [];
+  parts.push(`CREATE TABLE IF NOT EXISTS calendar_change (
+    id TEXT PRIMARY KEY, source_id TEXT NOT NULL, observed_at INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+  );`);
+  parts.push('CREATE INDEX IF NOT EXISTS idx_calendar_change_observed ON calendar_change (observed_at);');
   for (const [shape, spec] of Object.entries(SHAPES)) {
     const typed = spec.cols
       .map((c) => {
@@ -221,6 +226,6 @@ const SHAPE_COLUMNS = SHAPES;
  * table would have missed exactly that case: the table exists, the new one does not, and the DDL
  * never runs again.
  */
-const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage'];
+const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage', 'calendar_change'];
 
 export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, TABLES, INDEXES, CHUNK };

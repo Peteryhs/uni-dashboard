@@ -8,6 +8,7 @@
  */
 import { parseIcs, expandRecurrence, DEFAULT_TZ } from './parse.mjs';
 import { classifyLearnEvent } from './learn-classification.mjs';
+import { parseDescriptionDueDate } from '../../apps/relay/src/task-context.mjs';
 import { parseRetryAfter } from '../../apps/relay/src/retry.mjs';
 
 export const shape = 'timeline_event';
@@ -120,6 +121,7 @@ export function makeIcsSource({
       const masters = events.filter((event) => event.recurrenceId == null);
       const overrides = events.filter((event) => event.recurrenceId != null);
       const cancelledSeries = new Set(masters.filter((event) => event.status.toUpperCase() === 'CANCELLED').map((event) => event.uid));
+      const cancelledIds = new Set();
       const overridden = new Set();
       const skipped = [...skippedEvents];
 
@@ -127,7 +129,9 @@ export function makeIcsSource({
         if (!Number.isFinite(occ.start) || !Number.isFinite(occ.end)) {
           throw new Error(`invalid occurrence date on ${event.uid}`);
         }
-        if (occ.end < windowStart || occ.start > windowEnd) return;
+        const dueAt = this.role === 'learn' && /\bAvailable\s*$/i.test(event.summary || '')
+          ? parseDescriptionDueDate(event.description || '', { eventStart: occ.start })?.due_at ?? null : null;
+        if ((occ.end < windowStart || occ.start > windowEnd) && !(dueAt != null && dueAt >= windowStart && dueAt <= windowEnd)) return;
         const externalId = `${event.uid}#${new Date(originalStart).toISOString()}`;
         target.set(externalId, {
           source_id: this.id,
@@ -147,6 +151,7 @@ export function makeIcsSource({
           ends_at: occ.end,
           url: event.url ?? '',
           description: event.description ?? '',
+          ...(dueAt != null ? { due_at: dueAt } : {}),
         });
       };
 
@@ -170,6 +175,7 @@ export function makeIcsSource({
         const originalId = `${event.uid}#${event.recurrenceId}`;
         if (event.status.toUpperCase() === 'CANCELLED') {
           overridden.add(originalId);
+          cancelledIds.add(`${event.uid}#${new Date(event.recurrenceId).toISOString()}`);
           continue;
         }
         if (processEvent(event, (staged) => {
@@ -180,6 +186,7 @@ export function makeIcsSource({
         if (cancelledSeries.has(event.uid)) continue;
         processEvent(event, (staged) => {
           const excluded = new Set(event.exdates);
+          for (const start of excluded) cancelledIds.add(`${event.uid}#${new Date(start).toISOString()}`);
           const occurrences = expandRecurrence(event, {
             windowStart,
             windowEnd,
@@ -206,6 +213,7 @@ export function makeIcsSource({
         // A partial calendar cannot establish that any previously saved event disappeared.
         // The next fully parsed run can reconcile deletions safely.
         tombstone: skipped.length === 0,
+        changeContext: { cancelledIds: [...cancelledIds], cancelledUids: [...cancelledSeries] },
       };
     },
   };

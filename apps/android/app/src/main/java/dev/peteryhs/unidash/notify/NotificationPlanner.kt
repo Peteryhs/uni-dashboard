@@ -3,6 +3,8 @@ package dev.peteryhs.unidash.notify
 import dev.peteryhs.unidash.data.Alert
 import dev.peteryhs.unidash.data.Calendar
 import dev.peteryhs.unidash.data.CalendarEvent
+import dev.peteryhs.unidash.data.CalendarChangeAlert
+import dev.peteryhs.unidash.data.CardState
 import dev.peteryhs.unidash.data.CAMPUS_ZONE
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -12,6 +14,7 @@ enum class Channel(val id: String, val label: String, val description: String) {
     Classes("classes", "Class reminders", "Before each class, exam and office hour"),
     Deadlines("deadlines", "Deadlines", "A day and two hours before work is due"),
     Alerts("alerts", "Campus alerts", "Campus and IT outages as they are reported"),
+    Changes("schedule_changes", "Schedule changes", "Changed times, unusual rooms and tutorial work"),
     Account("account", "Connection", "When the app can no longer reach your dashboard"),
     Persistent("persistent", "Uni Dashboard", "The dashboard status notification"),
 }
@@ -35,10 +38,26 @@ object NotificationPlanner {
     fun plan(calendar: Calendar?, now: Long): List<Reminder> {
         if (calendar == null) return emptyList()
         val events = calendar.days.flatMap { it.events }.distinctBy { it.occurrenceId }
-        return events.flatMap { remindersFor(it) }
+        val roomAlerts = calendar.alerts.filter { it.kind in setOf("room", "unusual_room") }.associateBy { it.eventId }
+        val tutorialAlerts = calendar.alerts.filter { it.kind == "tutorial_work" }.associateBy { it.eventId }
+        return events.filter { it.attendance != "replaced" && it.state in setOf(CardState.Live, CardState.Ageing) }.flatMap { event ->
+            remindersFor(event).map { reminder ->
+                val room = roomAlerts[event.id]?.let { " · ${if (it.kind == "room") "Room changed" else "Different room"} (usually ${it.previousLocation})" }.orEmpty()
+                val tutorial = tutorialAlerts[event.id]?.let { " · Check tutorial instructions before attending" }.orEmpty()
+                reminder.copy(text = reminder.text + room + tutorial)
+            }
+        }
             .filter { it.fireAt > now && it.fireAt <= now + HORIZON_MS }
             .sortedBy { it.fireAt }
     }
+
+    /** Only upcoming, fresh evidence triggers a push. The stable IDs survive ordinary syncs. */
+    fun changesToShow(calendar: Calendar?, shown: Set<String>, now: Long): List<CalendarChangeAlert> =
+        calendar?.alerts.orEmpty()
+            .filter { it.id !in shown && it.endsAt >= now && it.startsAt <= now + HORIZON_MS && it.state in setOf(CardState.Live, CardState.Ageing) }
+            .sortedBy { it.startsAt }
+            .distinctBy { "${it.course}:${it.kind}:${if (it.kind == "unusual_room") it.startsAt else it.observedAt}:${it.previousLocation}:${it.location}" }
+            .take(3)
 
     private fun remindersFor(e: CalendarEvent): List<Reminder> = when {
         e.allDay -> emptyList()

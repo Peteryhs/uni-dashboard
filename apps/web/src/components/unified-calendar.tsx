@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, ExternalLink, MapPin } from 'l
 import { fetchCalendar, previewCourseImport, readCachedCalendar, saveCourseResources } from '@/lib/api';
 import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, formatTime } from '@/lib/time';
-import type { CalendarData, CalendarEvent, CourseResource } from '@/lib/contract';
+import type { CalendarData, CalendarEvent, CalendarChangeAlert, CourseResource } from '@/lib/contract';
 import { cn } from '@/lib/utils';
 import { CalendarMarkdown, calendarMarkdownPreview } from '@/components/calendar-markdown';
 
@@ -34,7 +34,7 @@ const categoryTone: Record<CalendarEvent['category'], string> = {
   event: 'border-white/15 bg-secondary/40 text-zinc-300',
 };
 
-function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelectCourse: (course: string) => void }) {
+function CalendarItem({ event, alerts = [], onSelectCourse }: { event: CalendarEvent; alerts?: CalendarChangeAlert[]; onSelectCourse: (course: string) => void }) {
   const time = event.all_day ? 'All day' : event.continues_from_previous ? 'Ongoing' : formatTime(event.starts_at);
   return (
     <li className={cn('grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2 border-t border-border/50 py-2.5 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-3',
@@ -43,7 +43,7 @@ function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelec
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', categoryTone[event.category])}>
-            {categoryLabel[event.category]}
+            {event.attendance === 'replaced' ? 'Replaced' : categoryLabel[event.category]}
           </span>
           {event.course && <button type="button" onClick={() => onSelectCourse(event.course!)} className="text-[11px] font-semibold text-live hover:underline">{event.course}</button>}
           <span className="text-[10px] text-zinc-500">{event.source_label}</span>
@@ -54,6 +54,7 @@ function CalendarItem({ event, onSelectCourse }: { event: CalendarEvent; onSelec
           )}
         </div>
         <p className="mt-1 text-sm font-medium leading-snug text-foreground">{event.title}</p>
+        {alerts.map(alert => <p key={alert.id} className="mt-1 text-xs text-amber-300">{alert.body}</p>)}
         {(event.subtitle || event.location) && (
           <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-zinc-400">
             {distinctSubtitle(event) && <>{distinctSubtitle(event)}{event.location ? ' · ' : ''}</>}
@@ -180,7 +181,7 @@ export function UnifiedCalendar({ now }: { now: number }) {
                 {day.date === today ? 'Today · ' : ''}{dateLabel.format(dateAtNoon(day.date))}
                 <span className="ml-2 font-normal normal-case tracking-normal text-zinc-500">{events.length || 'No events'}</span>
               </h3>
-               {events.length > 0 && <ul className="mt-1">{events.map((event) => <CalendarItem key={event.id} event={event} onSelectCourse={setSelectedCourse} />)}</ul>}
+               {events.length > 0 && <ul className="mt-1">{events.map((event) => <CalendarItem key={event.id} event={event} alerts={query.data?.alerts?.filter(alert => alert.event_id === event.id)} onSelectCourse={setSelectedCourse} />)}</ul>}
             </div>
           );
         })}
