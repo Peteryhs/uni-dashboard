@@ -31,7 +31,7 @@ function isAiFood(item: RecommendationItem): boolean {
   return item.kind === 'food' && item.source_label === 'Cached dining recommendation';
 }
 function timing(item: RecommendationItem, now: number): string {
-  if (item.kind === 'change') return `${item.state === 'stale' || item.state === 'dead' ? 'Cached update · ' : ''}Affects ${item.starts_at ? formatShortDay(item.starts_at) : 'your schedule'}`;
+  if (item.kind === 'change') return `${item.state === 'stale' || item.state === 'dead' ? 'Cached · ' : ''}${item.starts_at ? formatShortDay(item.starts_at) : 'Schedule update'}`;
   if (item.starts_at && item.ends_at && item.starts_at <= now && item.ends_at > now) return 'In progress, ends ' + formatTime(item.ends_at);
   if (item.due_at) {
     const dueDay = campusDate(item.due_at);
@@ -372,7 +372,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         {event.category === 'opens' && event.due_at && <p><strong>Due:</strong> {formatShortDay(event.due_at)} · {formatTime(event.due_at)}</p>}
         {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
         {event.location && !data?.alerts?.some(alert => alert.event_id === event.id && ['room', 'unusual_room'].includes(alert.kind)) && <p>{event.attendance === 'replaced' ? 'Original room · ' : ''}{event.location}</p>}
-        {data?.alerts?.filter(alert => alert.event_id === event.id).map(alert => <p className="calendar-change-text" key={alert.id}>{alert.body}{['stale', 'dead'].includes(alert.state) ? ' · Cached update; confirm in the source.' : ''}</p>)}
+        {data?.alerts?.filter(alert => alert.event_id === event.id).map(alert => <p className="calendar-change-text" key={alert.id}>{alert.body}{['stale', 'dead'].includes(alert.state) ? ' · Cached; check source.' : ''}</p>)}
         {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
         {event.description && <CalendarMarkdown description={event.description} />}
         {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}

@@ -135,7 +135,7 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
       course: change.course, starts_at: change.starts_at, ends_at: change.ends_at, time_label: 'Scheduled',
       action: safeUrl(change.url) ? { label: change.kind === 'tutorial_work' ? 'Check tutorial work' : 'Check source', url: safeUrl(change.url) } : linkFor(null, courses.get(change.course)),
       source_label: change.source_label, state: change.state,
-      reason: change.confidence === 'confirmed' ? 'A confirmed schedule change affects an upcoming commitment.' : 'Check this exception before making plans; a cancellation is not assumed.', evidence: change.evidence,
+      reason: change.confidence === 'confirmed' ? 'Confirmed schedule change.' : 'Check course instructions; cancellation is unconfirmed.', evidence: change.evidence,
     });
     candidates.push(recommendation);
     if (change.event_id) changeRecommendations.set(change.event_id, recommendation);

@@ -117,8 +117,8 @@ export function tutorialAttendanceAlerts(events, { now, section = null, group = 
     if (!work) continue;
     const replaced = work.instructions.confirmed && explicitTutorialDate(work.instructions, work.event) === dateKey(session.starts_at);
     result.push(alert({ id: `attendance:${session.id}:${fingerprint(work.instructions.evidence + work.event.title)}`, event_id: session.id, kind: 'tutorial_work',
-      attendance: replaced ? 'replaced' : 'check_instructions', title: `${session.course}: ${replaced ? 'Tutorial replaced by online work' : 'Check before attending tutorial'}`,
-      body: `${work.event.title} is listed as online tutorial work. ${replaced ? 'The instructions explicitly replace this dated tutorial; complete the listed work instead.' : 'Check the course instructions before attending; the affected tutorial date is not confirmed.'}`,
+      attendance: replaced ? 'replaced' : 'check_instructions', title: `${session.course}: ${replaced ? 'Tutorial replaced' : 'Check tutorial instructions'}`,
+      body: `${work.event.title}: ${replaced ? 'Complete this online work instead of attending.' : 'Online tutorial work; session date unconfirmed. Check before attending.'}`,
       course: session.course, starts_at: session.starts_at, ends_at: session.ends_at, observed_at: work.event.observed_at,
       source_label: work.event.source_label, url: work.event.links?.find(link => link.kind === 'crowdmark')?.url || work.event.url,
       confidence: replaced ? 'confirmed' : 'check', evidence: work.instructions.evidence, state: work.event.state }));
@@ -166,12 +166,12 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     if (kinds.includes('room')) parts.push(`${change.before.location || 'Room not listed'} → ${value.location || 'Room not listed'}`);
     if (kinds.some(kind => ['time', 'deadline'].includes(kind))) {
       const oldTime = stamp(change.before.due_at ?? change.before.starts_at, change.before.all_day), newTime = stamp(value.due_at ?? value.starts_at, value.all_day);
-      parts.push(removedDue ? `The previously stated due time (${oldTime}) is no longer in the instructions. Confirm the deadline in the course.` : oldTime === newTime && change.before.ends_at !== value.ends_at ? `End time: ${stamp(change.before.ends_at)} → ${stamp(value.ends_at)}` : `${oldTime} → ${newTime}`);
+      parts.push(removedDue ? `Due time (${oldTime}) removed. Confirm the deadline.` : oldTime === newTime && change.before.ends_at !== value.ends_at ? `End time: ${stamp(change.before.ends_at)} → ${stamp(value.ends_at)}` : `${oldTime} → ${newTime}`);
     }
-    if (cancelled) parts.push(`The calendar explicitly cancelled this session (${stamp(value.starts_at)}).`);
-    if (removed) parts.push(`No longer in the latest calendar (${stamp(value.starts_at)}). Confirm the course instructions before changing your plans.`);
+    if (cancelled) parts.push(`Cancelled in calendar (${stamp(value.starts_at)}).`);
+    if (removed) parts.push(`Missing from calendar (${stamp(value.starts_at)}). Confirm course instructions.`);
     result.push(alert({ id: change.id, event_id: current.has(`${change.event_id}:due`) && kinds.includes('deadline') ? `${change.event_id}:due` : change.event_id, kind: cancelled ? 'cancelled' : removed ? 'removed' : kinds.includes('room') ? 'room' : kinds[0],
-      title: `${value.course}: ${cancelled ? 'Session cancelled' : removed ? 'Session removed from calendar' : kinds.includes('room') ? 'Room changed' : removedDue ? 'Check deadline' : kinds.includes('deadline') ? 'Deadline changed' : 'Time changed'}`,
+      title: `${value.course}: ${cancelled ? 'Session cancelled' : removed ? 'Removed from calendar' : kinds.includes('room') ? 'Room changed' : removedDue ? 'Check deadline' : kinds.includes('deadline') ? 'Deadline changed' : 'Time changed'}`,
       body: `${value.title}. ${parts.join(' · ')}`, course: value.course, starts_at: removedDue ? change.before.due_at : Math.min(value.due_at ?? value.starts_at, change.before.due_at ?? change.before.starts_at), ends_at: change.ends_at,
       observed_at: change.observed_at, location: value.location, previous_location: change.before.location, source_label: label(change.source_id),
       url: event?.url || value.url, confidence: removed || removedDue ? 'check' : 'confirmed', evidence: 'Compared two successfully parsed calendar snapshots.',
@@ -193,8 +193,8 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     if (effectiveEnd < now || effectiveTime < from || effectiveTime >= until || !inScope(event.group_scope, section, group)) continue;
     const instructions = tutorialInstructions(event);
     if (instructions) result.push(alert({ id: `tutorial:${event.id}:${fingerprint(clean(event.description) + event.title)}`, event_id: event.id, kind: 'tutorial_work',
-      title: `${event.course}: ${instructions.confirmed ? 'Tutorial replaced by online work' : 'Check tutorial assignment instructions'}`,
-      body: `${event.title}. ${instructions.confirmed ? 'The instructions describe replacement work; check its submission requirements.' : 'Online tutorial work is listed. An in-person cancellation is not confirmed.'}`,
+      title: `${event.course}: ${instructions.confirmed ? 'Tutorial replaced' : 'Check tutorial instructions'}`,
+      body: `${event.title}. ${instructions.confirmed ? 'Online work replaces a tutorial. Check submission requirements.' : 'Online tutorial work; cancellation is not confirmed.'}`,
       course: event.course, starts_at: effectiveTime, ends_at: effectiveEnd, observed_at: event.observed_at,
       source_label: event.source_label, url: event.links?.find(link => /(^|\.)crowdmark\.com$/i.test((() => { try { return new URL(link.url).hostname; } catch { return ''; } })()))?.url || event.url,
       confidence: instructions.confirmed ? 'confirmed' : 'check', evidence: instructions.evidence,
@@ -210,7 +210,7 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     const [usualKey, usual] = [...counts.entries()].sort((a, b) => b[1].count - a[1].count)[0];
     if (usual.count < 3 || usual.count / (peers.length + 1) < 0.75 || usualKey === roomKey(event.location)) continue;
     result.push(alert({ id: `unusual:${event.id}:${roomKey(event.location)}`, event_id: event.id, kind: 'unusual_room',
-      title: `${event.course}: Different room for this session`, body: `${event.title}: ${event.location}; usually ${usual.room} for this recurring session. Check the room before heading over.`,
+      title: `${event.course}: Different room`, body: `${event.title}: ${event.location}; usually ${usual.room}. Confirm before attending.`,
       course: event.course, starts_at: event.starts_at, ends_at: event.ends_at, observed_at: event.observed_at,
       location: event.location, previous_location: usual.room, source_label: event.source_label, url: event.url,
       confidence: 'check', evidence: `${usual.count} of ${peers.length} other occurrences of this session list ${usual.room}.`,
