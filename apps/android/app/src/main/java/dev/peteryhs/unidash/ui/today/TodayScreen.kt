@@ -195,7 +195,8 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
 private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?, now: Long) {
     val start = next.startsAt
     val end = next.endsAt
-    val happening = start != null && end != null && now in start..end
+    val progress = next.eventProgress(now)
+    val happening = start != null && end != null && end > start && now >= start && now < end
     val label = when {
         happening -> "Now · ends ${Format.relative(end!!, now)}"
         start != null -> "Next ${kindLabel(next.kind)} · ${Format.whenLabel(start, now)}"
@@ -213,17 +214,28 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
             Text(label, style = MaterialTheme.typography.labelLarge)
             Text(next.title, style = MaterialTheme.typography.headlineMediumEmphasized)
             if (next.subtitle.isNotBlank()) Text(next.subtitle, style = MaterialTheme.typography.bodyLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                if (start != null) {
-                    Text(
-                        Format.time(start) + (end?.let { " – ${Format.time(it)}" } ?: ""),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
+            val weather = next.weather?.takeIf { it.show && it.tempC != null }
+            if ((start != null && progress == null) || next.location.isNotBlank() || weather != null) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    if (start != null && progress == null) {
+                        Text(
+                            Format.time(start) + (end?.let { " – ${Format.time(it)}" } ?: ""),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    if (next.location.isNotBlank()) IconText(Icons.Outlined.Place, next.location)
+                    weather?.let { w ->
+                        IconText(Icons.Outlined.Thermostat, "${w.tempC!!.toInt()}°" + (w.reason.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""))
+                    }
                 }
-                if (next.location.isNotBlank()) IconText(Icons.Outlined.Place, next.location)
-                next.weather?.takeIf { it.show && it.tempC != null }?.let { w ->
-                    IconText(Icons.Outlined.Thermostat, "${w.tempC!!.toInt()}°" + (w.reason.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""))
-                }
+            }
+            progress?.let {
+                EventTimeline(
+                    progress = it,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
             }
             next.following?.let { f ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
@@ -288,6 +300,7 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                     if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val repeatsTime = time != null && rec.timeLabel != null && rec.body.startsWith(rec.timeLabel) && rec.body.length < 48
                     if (rec.body.isNotBlank() && !repeatsTime) Text(rec.body, style = MaterialTheme.typography.bodyMedium)
+                    rec.eventProgress(now)?.let { EventTimeline(it, Modifier.padding(vertical = Spacing.xs)) }
                     // Why this was picked: the web shows it as blue text; here it is the primary role.
                     if (rec.reason.isNotBlank()) Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     FreshnessLabel(rec.state, null, now)
