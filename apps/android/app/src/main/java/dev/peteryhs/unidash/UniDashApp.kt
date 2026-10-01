@@ -8,7 +8,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import dev.peteryhs.unidash.data.CredentialStore
 import dev.peteryhs.unidash.data.DashboardRepository
+import dev.peteryhs.unidash.data.OAuthClient
 import dev.peteryhs.unidash.data.RelayApi
+import dev.peteryhs.unidash.data.TokenManager
 import dev.peteryhs.unidash.notify.Notifier
 import dev.peteryhs.unidash.sync.SyncWorker
 import java.io.File
@@ -22,13 +24,19 @@ class UniDashApp : Application() {
         private set
     lateinit var notifier: Notifier
         private set
+    lateinit var oauthClient: OAuthClient
+        private set
+    lateinit var tokenManager: TokenManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
         credentialStore = CredentialStore(this)
+        oauthClient = OAuthClient()
+        tokenManager = TokenManager(credentialStore, oauthClient)
         repository = DashboardRepository(
             cacheDir = File(filesDir, "dashboard"),
-            apiFor = { credentialStore.current()?.let { RelayApi(it) } },
+            apiFor = { credentialStore.current()?.let { RelayApi(it, tokenManager = tokenManager) } },
         )
         notifier = Notifier(this).also { it.createChannels() }
     }

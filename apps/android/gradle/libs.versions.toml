@@ -15,6 +15,7 @@ okhttp = "5.5.0"
 serialization = "1.11.0"
 coroutines = "1.11.0"
 junit = "4.13.2"
+appauth = "0.11.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +37,7 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+appauth = { group = "net.openid", name = "appauth", version.ref = "appauth" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -10,8 +10,8 @@
  *    shipped a bug where epoch milliseconds arrived as the string "1789997400000.0"; validating at
  *    this boundary turns that class of bug into a visible error instead of a wrong-looking card.
  *
- * Auth is a bearer token in a header, never a query parameter, so it cannot land in a log or a
- * Referer. The token is optional: the relay only demands one when RELAY_TOKEN is set.
+ * Deployed dashboards use the browser's same-origin Cloudflare Access cookie. A local relay may
+ * additionally require a bearer token when RELAY_TOKEN is set; it is never put in a URL.
  */
 import {
   validateBundle,
@@ -70,6 +70,12 @@ export class RelayError extends Error {
   }
 }
 
+function signInError(): RelayError {
+  return new RelayError(getToken()
+    ? 'Connection token rejected. Check Connections in Settings.'
+    : 'Sign-in required. Open the dashboard again to sign in.', 401);
+}
+
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, {
     signal,
@@ -77,8 +83,9 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     cache: 'no-store',
   });
   if (res.status === 401) {
-    throw new RelayError('relay rejected the device token', 401);
+    throw signInError();
   }
+  if (res.redirected && res.headers.get('content-type')?.includes('text/html')) throw signInError();
   if (!res.ok) {
     throw new RelayError(`relay returned ${res.status}`, res.status);
   }
@@ -222,7 +229,8 @@ export async function triggerPoll(sourceId?: string): Promise<PollResult> {
     method: 'POST',
     headers: { accept: 'application/json', ...authHeaders() },
   });
-  if (res.status === 401) throw new RelayError('Device token rejected. Check Connections in Settings.', 401);
+  if (res.status === 401) throw signInError();
+  if (res.redirected && res.headers.get('content-type')?.includes('text/html')) throw signInError();
   if (!res.ok) {
     const body = await res.json().catch(() => null) as { error?: string } | null;
     throw new RelayError(body?.error || `Refresh returned ${res.status}.`, res.status);

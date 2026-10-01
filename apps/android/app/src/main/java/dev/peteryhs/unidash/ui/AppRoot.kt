@@ -33,6 +33,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
+import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
+import dev.peteryhs.unidash.ui.setup.hasSeenMobileGuide
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -59,19 +62,27 @@ enum class Tab(val label: String, val selected: ImageVector, val unselected: Ima
 }
 
 @Composable
-fun AppRoot(vm: MainViewModel) {
+fun AppRoot(
+    vm: MainViewModel,
+    onBrowserSignIn: (String) -> Unit,
+    onReauthenticate: (String) -> Unit,
+) {
     val session by vm.session.collectAsStateWithLifecycle()
+    val browser by vm.browserState.collectAsStateWithLifecycle()
     when (session) {
         Session.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
-        Session.SignedOut -> SetupScreen(vm)
-        Session.SignedIn -> Dashboard(vm)
+        Session.SignedOut -> SetupScreen(vm, browser, onBrowserSignIn)
+        Session.SignedIn -> Dashboard(vm, onReauthenticate)
     }
 }
 
 @Composable
-private fun Dashboard(vm: MainViewModel) {
+private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
+    val context = LocalContext.current
+    var guideOpen by rememberSaveable { mutableStateOf(!hasSeenMobileGuide(context)) }
     val snapshot by vm.snapshot.collectAsStateWithLifecycle()
     val baseUrl by vm.baseUrl.collectAsStateWithLifecycle()
+    val managedOAuth by vm.managedOAuth.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
     val snackbar = remember { SnackbarHostState() }
     val now = rememberNow()
@@ -96,10 +107,12 @@ private fun Dashboard(vm: MainViewModel) {
                 Tab.Today -> TodayScreen(vm, snapshot, now, snackbar)
                 Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar)
                 Tab.Food -> FoodScreen(vm, snapshot, now, snackbar)
-                Tab.Settings -> SettingsScreen(vm, snapshot, now, snackbar, baseUrl)
+                Tab.Settings -> SettingsScreen(vm, snapshot, now, snackbar, baseUrl, managedOAuth, onReauthenticate)
             }
         }
     }
+
+    if (guideOpen) MobileSetupGuide(dashboardAddress = baseUrl, onDismiss = { guideOpen = false })
 
     // Bar on phones, rail from 600dp (tablets, unfolded foldables, landscape).
     BoxWithConstraints(Modifier.fillMaxSize()) {

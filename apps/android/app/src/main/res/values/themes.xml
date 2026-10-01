@@ -2,4 +2,5 @@
 <resources>
     <!-- Only the window before Compose draws; the real theme is MaterialExpressiveTheme. -->
     <style name="Theme.UniDash" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Transparent" parent="android:style/Theme.Translucent.NoTitleBar" />
 </resources>

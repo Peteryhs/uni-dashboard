@@ -27,6 +27,7 @@ import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
+import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oauth-callback.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -177,6 +178,9 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
 async function handleFetch(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
+
+  // A code handoff only: no credentials or data are returned, and /v1 remains Access-gated.
+  if (path === ANDROID_OAUTH_CALLBACK_PATH) return androidOAuthCallback(request);
 
   if (path === '/healthz') return json({ ok: true, uptime_s: Math.round((Date.now() - STARTED_AT) / 1000) });
 

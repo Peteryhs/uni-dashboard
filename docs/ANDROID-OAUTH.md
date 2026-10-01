@@ -1,0 +1,121 @@
+# Android sign-in with Cloudflare Access Managed OAuth
+
+The Android client uses Cloudflare Access as an OAuth 2.0 authorization server for the deployed
+dashboard. The dashboard origin is entered during setup. For an origin such as
+`https://dashboard.example.com`, the only redirect URI registered in Access for this client is:
+
+```text
+https://dashboard.example.com/oauth/android/callback
+```
+
+The URI is exact. It is not a wildcard, localhost allowance, or custom app-scheme redirect. The
+Worker serves that HTTPS route and returns only `code`, `state`, `error`, and optional `iss` to
+the Android app scheme `dev.peteryhs.unidash:/oauth/callback`. The native client checks the active
+state and uses its PKCE verifier for the exchange; the bridge never forwards access or refresh
+tokens.
+
+## Deployment configuration
+
+Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in the shell running the deployment tool.
+The token needs Cloudflare Access Apps and Policies Read permission for preview and Write
+permission for `--apply`.
+
+```text
+npm run access:oauth -- --dashboard https://dashboard.example.com --app-id <access-app-id>
+npm run access:oauth -- --dashboard https://dashboard.example.com --app-id <access-app-id> --apply
+```
+
+The first command performs a read and previews the effective changes. The second fetches the
+current Access application, preserves its full configuration, and sends a full update. It enables
+Managed OAuth and dynamic client registration, appends the exact callback URI to existing allowed
+URIs, and configures a 15-minute access token with a 336-hour grant session. Existing policies,
+destinations, redirect URIs, and localhost/loopback settings stay in place. The tool refuses a
+dashboard whose origin, root, and callback are not already covered by the selected Access
+application.
+
+The application ID can be omitted when `ACCESS_AUD` is present in `wrangler.toml` or the shell;
+the tool discovers exactly one matching Access application. The tool never stores or prints the
+API token and is preview-only unless `--apply` is supplied.
+
+### Choose the refresh session duration
+
+The web Settings setup guide prepares owner instructions for **1, 2, or 3 weeks**. A three-week
+grant is `504h`; the Android app still refreshes its 15-minute access tokens normally. Changing
+the selection in the guide does not modify Cloudflare or extend an existing grant. The owner
+must save the configuration in the Access application's Advanced settings or apply the tool:
+
+```text
+npm run access:oauth -- --dashboard https://dashboard.example.com --grant-weeks 3
+npm run access:oauth -- --dashboard https://dashboard.example.com --grant-weeks 3 --apply
+```
+
+Without `--grant-weeks`, the tool retains its two-week default. Cloudflare recommends 1–2 weeks;
+three weeks requests a longer session and must be accepted by Cloudflare. The application cannot
+promise uninterrupted access: policies and revocation may require an earlier sign-in. Sign in
+again on the phone after changing the configuration to obtain a fresh grant.
+
+### Interactive setup guides
+
+Web and Android show the guide on first use and provide a **Setup guide** button in Settings.
+Both remember only the current instruction, so private calendar URLs are never copied into
+guide progress. Web steps save feeds using the existing credentials endpoint and show reported
+source health separately from configured status. Steps can be skipped; finishing does not claim
+that an unconfigured feed or phone is connected. Android's guide links to the web guide with
+`?setup=mobile`, explains owner configuration, and can fill the connection screen with the chosen
+dashboard origin. Reminder permission remains optional.
+
+Deploy the updated Worker (including its static-asset routing configuration) before testing with
+the updated Android app. Managed OAuth must be enabled on the Access application covering the
+same origin that the user enters. Other dashboard origins need their own exact callback entry.
+
+## Authorization and refresh
+
+Android discovers the authorization and token endpoints from the dashboard's
+`/.well-known/oauth-authorization-server` metadata, creates a one-time PKCE verifier and state,
+and opens the authorization endpoint in the system browser. The state value binds the callback to
+the active login attempt. The app exchanges the returned code with the verifier, stores the
+resulting refresh credential in Android Keystore-backed storage, and uses the short-lived access
+token for API calls.
+
+When an access token expires, Android refreshes it in the background. Cloudflare re-evaluates the
+Access policy on refresh. When the configured grant expires, a policy changes, or Cloudflare
+revokes the grant, the refresh fails and the next sign-in returns to the browser. A 336-hour grant
+is the configured upper session duration, not a guarantee that every login lasts the full two
+weeks.
+
+## Sign-out and revocation
+
+App sign-out is local: it invalidates the app's session, removes its refresh credential and local
+dashboard data, and prevents delayed callbacks from repopulating that session. It does not revoke
+the Cloudflare grant held by another device and does not promise to invalidate a token already
+present in a different client.
+
+For a broader response, revoke the user's Access application tokens or remove the matching Access
+policy in Zero Trust. A global Cloudflare logout affects Cloudflare sessions across applications,
+while deleting a service token only revokes the service-token fallback for that device.
+
+## Service-token fallback
+
+Deployments that cannot open a browser may keep using an Access service token. Add a Service Auth
+policy to the same Access application and configure the Android client with its client ID and
+secret. This path is independent of the Managed OAuth grant and should be revoked in Zero Trust
+when the device is retired.
+
+## Verify a deployment
+
+1. Enter the deployed dashboard address in Android. Confirm the system browser opens the expected
+   Cloudflare Access login and returns to the app after authentication.
+2. Close the browser before finishing; confirm Android offers another attempt. Repeat with app
+   rotation and with Android reclaiming the app process while the browser is open.
+3. Allow the short-lived access token to expire. Confirm foreground and background sync renew it
+   without another prompt. Revoke the grant or remove the user's policy and confirm the app offers
+   sign-in again while keeping its cached dashboard readable.
+4. Disconnect while sync or browser sign-in is in progress. Confirm delayed results cannot restore
+   the connection or cached data.
+5. Confirm the web dashboard still accepts its normal browser login and an existing service-token
+   connection still works through Advanced.
+
+The repository tests cover protocol requests, callback validation, token renewal, and the Worker's
+API gate. A real Access account and Android device are required to verify the complete browser and
+Cloudflare edge flow.
+

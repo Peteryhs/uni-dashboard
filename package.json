@@ -14,6 +14,7 @@
     "bundle": "node apps/relay/src/cli.mjs bundle",
     "health": "node apps/relay/src/cli.mjs health",
     "inspect": "node tools/inspect-db.mjs",
+    "access:oauth": "node tools/configure-access-oauth.mjs",
     "serve": "node apps/relay/src/cli.mjs serve",
     "fixtures": "node tools/fetch-fixtures.mjs",
     "bench": "node tools/menu-parse-bench.mjs fixtures/food-$(date +%F).html 500",

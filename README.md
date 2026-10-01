@@ -82,7 +82,7 @@ npm run web:dev         # terminal 2: http://127.0.0.1:5173, proxies /v1 to 8787
 One origin serves both the app shell and `/v1`, which is what Workers static assets gives for
 free, so there is no CORS path anywhere and no dev-only workaround to remove at deploy time.
 
-The web calendar and future Android client can read the same server-built agenda at
+The web calendar and Android client read the same server-built agenda at
 `GET /v1/calendar`. See [Unified calendar API](docs/UNIFIED-CALENDAR.md) for date-range parameters,
 event fields, and the source window.
 
@@ -93,6 +93,13 @@ reviewed syllabus imports and cross-device completion/snooze state. See
 The client is Vite + React + Tailwind v4 + shadcn/ui. It imports the age ladder and the
 skip-unknown-card rule from `packages/contract` rather than restating them, so the web and Android
 clients cannot drift from the server.
+
+The native Android app lives in `apps/android` and uses Material 3 Expressive. Enter the deployed
+dashboard address and select **Sign in** to use Cloudflare Access in the system browser. The app
+renews its short-lived access token automatically and keeps cached data available when offline.
+Existing service-token connections remain supported under **Advanced**, and Settings offers a
+switch to browser sign-in. The deployment must enable Managed OAuth first; see
+[Android sign-in and deployment setup](docs/ANDROID-OAUTH.md).
 
 Two visible design rules:
 
@@ -145,6 +152,7 @@ repo. `DESIGN.md` stays, because it is this project's direction, and the filter 
 - `BUILD_SPEC.md` v1 scope, the four signed-in checks, and the verify list
 - `docs/PLAN.md` the architecture plan
 - `docs/DEPLOYMENT.md` targets, Cloudflare limits, self-hosting, pins
+- `docs/ANDROID-OAUTH.md` native browser sign-in, Access configuration, renewal, and verification
 - `docs/MEASUREMENTS.md` measured numbers with method
 
 ## Next

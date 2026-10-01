@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.AlertDialog
@@ -42,7 +43,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.peteryhs.unidash.data.Health
+import dev.peteryhs.unidash.data.RelayError
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
@@ -51,14 +54,28 @@ import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import dev.peteryhs.unidash.ui.theme.Spacing
+import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
 
 @Composable
-fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState, baseUrl: String?) {
+fun SettingsScreen(
+    vm: MainViewModel,
+    snapshot: Snapshot,
+    now: Long,
+    snackbar: SnackbarHostState,
+    baseUrl: String?,
+    managedOAuth: Boolean,
+    onReauthenticate: (String) -> Unit,
+) {
     val context = LocalContext.current
+    val browser by vm.browserState.collectAsStateWithLifecycle()
     var health by remember { mutableStateOf<Result<Health>?>(null) }
     var reload by remember { mutableIntStateOf(0) }
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    var guideOpen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(reload) { health = vm.health() }
+    val healthError = health?.exceptionOrNull()
+    val needsReauthentication = managedOAuth && (snapshot.error is RelayError.ReauthRequired || healthError is RelayError.ReauthRequired)
+    val dashboardOffline = snapshot.error is RelayError.Offline || healthError is RelayError.Offline
 
     // Permission state changes in system settings, so re-read it whenever the screen returns.
     var notificationsOn by remember { mutableStateOf(true) }
@@ -74,6 +91,13 @@ fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         item { SectionHeader("Connection") }
         item {
             ListItem(
+                headlineContent = { Text("Setup guide") },
+                supportingContent = { Text("Web calendar feeds, Cloudflare sign-in and phone reminders") },
+                trailingContent = { TextButton(onClick = { guideOpen = true }) { Text("Open guide") } },
+            )
+        }
+        item {
+            ListItem(
                 leadingContent = { Icon(Icons.Outlined.Link, null) },
                 headlineContent = { Text(baseUrl ?: "Not connected") },
                 supportingContent = {
@@ -83,9 +107,46 @@ fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         }
         item {
             ListItem(
+                leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                headlineContent = {
+                    Text(
+                        when {
+                            needsReauthentication -> "Sign-in required"
+                            dashboardOffline -> "Dashboard unavailable"
+                            managedOAuth -> "Managed sign-in"
+                            else -> "Browser sign-in"
+                        },
+                    )
+                },
+                supportingContent = {
+                    Text(
+                        when {
+                            browser.error != null -> "${browser.error} Try again when you are ready."
+                            needsReauthentication -> "Your dashboard needs a new sign-in. Sign in again to keep it current."
+                            dashboardOffline -> "The dashboard could not be reached. Cached data remains available; try again when you are online."
+                            !managedOAuth -> "Switch this phone to your browser login when your dashboard supports it. Your current connection stays available until sign-in succeeds."
+                            else -> "This phone uses Cloudflare Access in the system browser. No service token is stored."
+                        },
+                    )
+                },
+                trailingContent = {
+                    TextButton(
+                        onClick = { baseUrl?.let(onReauthenticate) },
+                        enabled = baseUrl != null && !browser.busy,
+                    ) { Text(if (browser.busy) "Opening…" else if (managedOAuth) "Sign in again" else "Use browser") }
+                },
+            )
+        }
+        item {
+            ListItem(
                 leadingContent = { Icon(Icons.Outlined.Logout, null) },
                 headlineContent = { Text("Disconnect this phone") },
-                supportingContent = { Text("Removes the service token and saved data. Revoke the token in Zero Trust to lock it out entirely.") },
+                    supportingContent = {
+                        Text(
+                            if (managedOAuth) "Removes this phone's saved sign-in and cached dashboard data. Your Cloudflare browser login stays active."
+                            else "Removes the service token and saved dashboard data. Revoke the token in Zero Trust to lock it out entirely."
+                        )
+                    },
                 trailingContent = { TextButton(onClick = { confirmSignOut = true }) { Text("Disconnect") } },
             )
         }
@@ -133,11 +194,17 @@ fun SettingsScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         item { AboutSection(baseUrl, health) }
     }
 
+    if (guideOpen) MobileSetupGuide(
+        dashboardAddress = baseUrl,
+        onDismiss = { guideOpen = false },
+        onNotifications = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) },
+    )
+
     if (confirmSignOut) {
         AlertDialog(
             onDismissRequest = { confirmSignOut = false },
             title = { Text("Disconnect this phone?") },
-            text = { Text("You'll need the client ID and secret to connect again.") },
+             text = { Text("This removes the saved connection and cached dashboard data. You can sign in again from the setup screen.") },
             confirmButton = { TextButton(onClick = { confirmSignOut = false; vm.signOut() }) { Text("Disconnect") } },
             dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
         )

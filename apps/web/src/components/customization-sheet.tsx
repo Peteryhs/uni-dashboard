@@ -58,6 +58,8 @@ import { SourcesPanel } from './sources-panel';
 import { useHealth, useHealthz } from '@/hooks/use-dashboard';
 import type { CalendarData } from '@/lib/contract';
 import './customization-sheet.css';
+import { SetupGuide } from '@/components/setup-guide';
+import { readGuideProgress } from '@/lib/setup-guide';
 
 const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'all', label: 'All items' },
@@ -152,6 +154,8 @@ export function CustomizationSheet({
   resetPreferences: () => void;
 }) {
   const { undismissTask } = usePreferences();
+  const [guideOpen, setGuideOpen] = useState(() => !readGuideProgress().seen || new URLSearchParams(window.location.search).get('setup') === 'mobile');
+  const [guideStart, setGuideStart] = useState<number | undefined>(() => new URLSearchParams(window.location.search).get('setup') === 'mobile' ? 3 : undefined);
   const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule' | 'about'>('taste');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
@@ -264,7 +268,11 @@ export function CustomizationSheet({
   };
 
   useEffect(() => {
-    if (open && focusCourse) setActiveTab('courses');
+    if (open && focusCourse) {
+      setGuideOpen(false);
+      setGuideStart(undefined);
+      setActiveTab('courses');
+    }
   }, [open, focusCourse]);
 
   useEffect(() => {
@@ -407,12 +415,13 @@ export function CustomizationSheet({
           <SheetHeader className="settings-heading p-0 text-left">
             <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
           </SheetHeader>
+          {!guideOpen && <Button variant="outline" className="settings-guide-entry" onClick={() => setGuideOpen(true)}>Setup guide</Button>}
         </BlurFade>
         <SheetClose className="settings-close close-detail" aria-label="Close settings">
           <X size={17} />
         </SheetClose>
 
-        <Tabs
+        {guideOpen ? <SetupGuide initialStep={guideStart} onExit={() => { setGuideStart(undefined); setGuideOpen(false); }} onSettings={(tab) => { setGuideStart(undefined); setActiveTab(tab); setGuideOpen(false); }} /> : <Tabs
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule' | 'about')}
           className="settings-tabs-wrap mt-5"
@@ -760,7 +769,7 @@ export function CustomizationSheet({
               <AboutTab />
             </BlurFade>
           </TabsContent>
-        </Tabs>
+        </Tabs>}
       </SheetContent>
     </Sheet>
   );

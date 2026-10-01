@@ -28,6 +28,8 @@ ACCESS_AUD = "89094f50761aeba9685fa28a5bb0fb32bfddbbc4835411eed56020e7fff40ae3"
 directory = "apps/web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# The HTTPS OAuth handoff must reach the Worker instead of the SPA asset fallback.
+run_worker_first = ["/oauth/android/callback"]
 
 # Canonical rows. D1 is SQLite, which is the dialect the storage interface was written against.
 # The schema is created by D1Store.init() on first use (CREATE TABLE IF NOT EXISTS), so there is no

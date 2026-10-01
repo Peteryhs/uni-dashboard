@@ -14,6 +14,10 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        // The reverse-DNS scheme is the local leg of the OAuth bridge callback. The dashboard
+        // hostname is entered at runtime and is never guessed or embedded in the APK.
+        manifestPlaceholders["appAuthRedirectScheme"] = "dev.peteryhs.unidash"
     }
 
     buildTypes {
@@ -67,6 +71,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    // AppAuth follows RFC 8252 native-app browser flows and provides the PKCE request/receiver.
+    implementation(libs.appauth)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

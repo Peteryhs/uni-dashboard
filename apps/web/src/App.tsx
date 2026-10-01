@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, Star, WifiOff, X } from 'lucide-react';
 import { CustomizationSheet } from '@/components/customization-sheet';
+import { readGuideProgress } from '@/lib/setup-guide';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
 import { CalendarMarkdown } from '@/components/calendar-markdown';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/components/cards/food';
 import { matchDiningDish, matchDiningOutlet, useDiningRecommendation } from '@/components/use-dining-recommendation';
-import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, readCachedCalendar, readCachedRecommendations, saveRecommendationAction, triggerPoll } from '@/lib/api';
+import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, getToken, readCachedCalendar, readCachedRecommendations, RelayError, saveRecommendationAction, triggerPoll } from '@/lib/api';
 import { useDashboard, useNow } from '@/hooks/use-dashboard';
 import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge } from '@/lib/time';
@@ -556,9 +557,17 @@ function CoursesSection({ data, pending, error, onManageCourse }: { data?: Calen
 export default function App() {
   const queryClient = useQueryClient();
   const now = useNow(30_000);
-  const { cards, offline, refetch } = useDashboard();
+  const { cards, offline, error: dashboardError, refetch } = useDashboard();
   const { preferences, setDietaryFilter, setOnlyFavorites, toggleFavoriteDish, updateTasteProfile, resetPreferences } = usePreferences();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (!readGuideProgress().seen || new URLSearchParams(window.location.search).get('setup') === 'mobile') setSettingsOpen(true);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('setup') === 'mobile') {
+      url.searchParams.delete('setup');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, []);
   const [settingsCourse, setSettingsCourse] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -594,6 +603,8 @@ export default function App() {
     staleTime: 60_000,
   });
   const settingsCalendar = calendarPage === 0 ? calendar : courseCalendar;
+  const signInRequired = [dashboardError, recs.error, calendar.error].some(error => error instanceof RelayError && error.status === 401);
+  const usesConnectionToken = Boolean(getToken());
   const weather = useQuery({ queryKey: ['current-weather'], queryFn: ({ signal }) => fetchCurrentWeather(signal), staleTime: 15 * 60_000, refetchInterval: 15 * 60_000 });
   const items = recs.data?.items ?? [];
   const featured = items[0];
@@ -674,6 +685,12 @@ export default function App() {
         </div>
       </BlurFade>
       {activeAlert && <BlurFade as="section" className={'alert-detail' + (isAlertClosing ? ' is-closing' : '')} duration={0.34} offset={8} blur="5px" aria-label="Campus alert details"><div className="alert-list">{activeAlert.notices?.map((notice, index) => <article key={index}><div><span className="alert-severity">{notice.severity}</span><strong>{notice.title}</strong></div>{notice.incident_status && <small>{notice.incident_status}</small>}{notice.body && <p>{notice.body}</p>}{notice.components.length > 0 && <p>Affected: {notice.components.join(', ')}</p>}{notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">View status <ExternalLink size={13} /></a>}</article>)}{activeAlert.checked_at && <small>Checked {shortAge(activeAlert.checked_at, now)} ago</small>}</div><div className="alert-actions">{activeAlert.key && <button onClick={async () => { try { await dismissAlert(activeAlert.key); setAlertOpen(false); refetch(); } catch { setAlertError('Could not dismiss alert.'); } }}>Dismiss</button>}</div>{alertError && <p role="alert">{alertError}</p>}</BlurFade>}
+      {signInRequired && <div className="state-panel" role="alert">
+        {usesConnectionToken ? 'Your connection token was refused. ' : 'Sign in again to update your dashboard. '}
+        <button type="button" className="inline-link" onClick={() => usesConnectionToken ? setSettingsOpen(true) : window.location.reload()}>
+          {usesConnectionToken ? 'Check connection' : 'Sign in again'}
+        </button>
+      </div>}
       {recs.isPending && <BlurFade as="div" className="state-panel hero-loading" duration={0.42} offset={10} blur="5px" aria-busy="true">Finding your next move…</BlurFade>}
       {recs.isError && !recs.data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Recommendations are unavailable. <button className="inline-link" onClick={() => void recs.refetch()}>Try again</button></BlurFade>}
       {recs.data && !featured && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">{recs.data.headline}.</BlurFade>}

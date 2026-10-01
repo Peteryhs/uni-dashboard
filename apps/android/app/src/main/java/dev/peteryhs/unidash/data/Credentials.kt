@@ -18,9 +18,15 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** The Worker's origin plus the Cloudflare Access service token the app authenticates with. */
+/** The Worker's origin plus either a legacy service token or managed OAuth state. */
 @Serializable
-data class Credentials(val baseUrl: String, val clientId: String, val clientSecret: String) {
+data class Credentials(
+    val baseUrl: String,
+    val clientId: String,
+    val clientSecret: String,
+    /** Present for managed OAuth; null keeps the original service-token format intact. */
+    val oauth: OAuthCredentials? = null,
+) {
     companion object {
         /**
          * Normalises what a person pastes: trims, adds https://, drops a trailing slash or path.
@@ -49,18 +55,63 @@ private val Context.credentialStore by preferencesDataStore(name = "credentials"
  * leaves secure hardware, so the stored bytes are useless off this device, and backups are
  * excluded in data_extraction_rules.xml.
  */
-class CredentialStore(private val context: Context) {
+class CredentialStore(private val context: Context) : OAuthCredentialStore {
     private val blobKey = stringPreferencesKey("blob")
+    private val pendingBlobKey = stringPreferencesKey("pending_blob")
 
     val credentials: Flow<Credentials?> = context.credentialStore.data.map { prefs ->
         prefs[blobKey]?.let { decrypt(it) }
     }
 
-    suspend fun current(): Credentials? = credentials.first()
+    override suspend fun current(): Credentials? = credentials.first()
 
     suspend fun save(value: Credentials) {
         val blob = encrypt(ContractJson.encodeToString(value))
         context.credentialStore.edit { it[blobKey] = blob }
+    }
+
+    /**
+     * Atomically replaces an OAuth credential set only when the token that prompted the refresh is
+     * still the one in storage. A sign-out or a newer refresh therefore cannot be resurrected by a
+     * delayed network response.
+     */
+    override suspend fun compareAndSave(
+        value: Credentials,
+        expectedAccessToken: String?,
+        expectedOwner: Credentials?,
+    ): Boolean {
+        val blob = encrypt(ContractJson.encodeToString(value))
+        var saved = false
+        context.credentialStore.edit { prefs ->
+            val current = prefs[blobKey]?.let(::decrypt)
+            // A nullable expected token is meaningful only for an existing OAuth owner. It must
+            // never turn an empty store, a signed-out store, or a legacy service-token record
+            // into a newly persisted OAuth session after a delayed refresh returns.
+            if (current != null && current.oauth != null &&
+                current.oauth.accessToken == expectedAccessToken &&
+                (expectedOwner == null || current.sameOAuthOwner(expectedOwner))
+            ) {
+                prefs[blobKey] = blob
+                saved = true
+            }
+        }
+        return saved
+    }
+
+    suspend fun compareAndSave(value: Credentials, expectedAccessToken: String?): Boolean =
+        compareAndSave(value, expectedAccessToken, null)
+
+    suspend fun savePending(value: OAuthPendingAuthorization) {
+        val blob = encrypt(ContractJson.encodeToString(value))
+        context.credentialStore.edit { it[pendingBlobKey] = blob }
+    }
+
+    suspend fun currentPending(): OAuthPendingAuthorization? = context.credentialStore.data
+        .map { prefs -> prefs[pendingBlobKey]?.let(::decryptPending) }
+        .first()
+
+    suspend fun clearPending() {
+        context.credentialStore.edit { it.remove(pendingBlobKey) }
     }
 
     suspend fun clear() {
@@ -96,9 +147,26 @@ class CredentialStore(private val context: Context) {
         ContractJson.decodeFromString<Credentials>(String(plain))
     }.getOrNull()
 
+    private fun decryptPending(blob: String): OAuthPendingAuthorization? = runCatching {
+        val bytes = Base64.decode(blob, Base64.NO_WRAP)
+        val cipher = Cipher.getInstance(TRANSFORM)
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES))
+        val plain = cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES)
+        ContractJson.decodeFromString<OAuthPendingAuthorization>(String(plain))
+    }.getOrNull()
+
     private companion object {
         const val ALIAS = "unidash-credentials"
         const val TRANSFORM = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
     }
 }
+
+/** Stable account/resource identity used to fence token refreshes across account switches. */
+internal fun Credentials.sameOAuthOwner(other: Credentials): Boolean =
+    baseUrl == other.baseUrl &&
+        clientId == other.clientId &&
+        oauth?.clientId == other.oauth?.clientId &&
+        oauth?.resource == other.oauth?.resource &&
+        oauth?.issuer == other.oauth?.issuer &&
+        oauth?.sessionId == other.oauth?.sessionId

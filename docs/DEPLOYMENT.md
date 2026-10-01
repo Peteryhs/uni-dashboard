@@ -58,13 +58,63 @@ Access attaches (`Cf-Access-Jwt-Assertion`: RS256 signature against the team's c
 audience, expiry), so the `*.workers.dev` hostname or a route without a policy is still closed.
 
 - **Web:** sign in to Access in the browser. Same-origin fetches carry the cookie.
-- **Android:** a non-expiring Access service token. Add a Service Auth policy for it to the
-  Access application; the app sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`.
+- **Android:** Managed OAuth is the normal path. The browser completes the Access login and returns
+  through the exact HTTPS bridge callback `${dashboardOrigin}/oauth/android/callback`. Android then
+  exchanges the authorization code with PKCE. The Worker bridge passes only `code`,
+  `state`, `error`, and optional `iss` to the app scheme; it does not forward an Access cookie or token.
+- **Android fallback:** a Cloudflare Access service token remains supported for deployments that
+  cannot use a browser login. Add a Service Auth policy for it to the Access application; the app
+  sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`.
 - **Fails closed:** without `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, every `/v1` route answers 503.
   `ACCESS_DISABLED=1` turns the check off and exists only for `npm run worker:dev` and tests.
 - **Cross-site writes refused:** a non-GET with a foreign `Origin` or `Sec-Fetch-Site: cross-site`
   gets 403, because cookie auth would otherwise let another page post as you.
-- **Revoking the phone:** delete its service token in Zero Trust.
+- **Revoking OAuth access:** revoke the user's Access application tokens in Zero Trust or remove
+  the user's matching Access policy. App sign-out clears the phone's local tokens; it does not
+  revoke Cloudflare's grant for every device. A global Cloudflare logout or token revocation has
+  that broader effect.
+
+When a browser session needs renewal, the web dashboard shows **Sign in again** and keeps cached
+information visible. The action reloads the dashboard through Access's normal browser login;
+Android's OAuth grant duration does not change the web cookie's configured session duration.
+
+### Configure Managed OAuth for Android
+
+The Android redirect URI is derived from the dashboard address at configuration time. The command
+requires an HTTPS origin at runtime, so a deployment never inherits a hardcoded hostname:
+
+```text
+# Preview (GET only; no Access application mutation)
+$env:CLOUDFLARE_ACCOUNT_ID = "..."
+$env:CLOUDFLARE_API_TOKEN = "..." # Access Apps and Policies Read/Write
+npm run access:oauth -- --dashboard https://dashboard.example.com --app-id <access-app-id>
+
+# Apply after reviewing the preview
+npm run access:oauth -- --dashboard https://dashboard.example.com --app-id <access-app-id> --apply
+```
+
+If `--app-id` is omitted, the tool reads `ACCESS_AUD` from `wrangler.toml` (or the
+`ACCESS_AUD` environment variable) and asks the account API for the one matching Access app.
+The preview performs a GET and builds the complete GET-derived PUT body. `--apply` sends that body,
+preserving existing policies, domains, destinations, and unrelated settings while enabling
+Managed OAuth, enabling dynamic client registration, appending the exact callback URI, and setting
+the 15-minute access-token lifetime and 336-hour grant session duration. Existing redirect URIs
+and localhost/loopback settings are retained; the command does not add wildcards or localhost
+allowances.
+
+The setup guide includes a selectable three-week refresh session. To apply that selection through
+the tool, add `--grant-weeks 3` to both preview and apply commands (`504h`); `1` and `2` are also
+supported. Selecting a duration in the guide prepares instructions, rather than changing the
+Cloudflare account. Cloudflare must accept the configuration, and the phone needs a new sign-in
+to obtain a fresh grant. The tool's default remains two weeks.
+
+Cloudflare documents this API workflow and the Managed OAuth fields in
+<https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/>.
+The 336-hour value is the configured grant duration, not an absolute promise that every user will
+remain signed in for two weeks: Access policies, global session settings, and revocation can end
+access sooner. Android refreshes access tokens in the background and sends the user through the
+browser again when the grant expires or Access requires reauthentication. See
+[`docs/ANDROID-OAUTH.md`](ANDROID-OAUTH.md) for the native flow and sign-out semantics.
 
 The local Node relay (`server.mjs`) has no Access in front of it. It still binds 127.0.0.1 and keeps
 its optional `RELAY_TOKEN` for the LAN case.
@@ -216,8 +266,8 @@ Dual-target is cheap now and expensive later. Concretely:
   page. That is the difference between a $0 deployment for other people and a $5 one.
 - **Secrets behind one interface.** Worker secrets on Cloudflare, `0600` env file or a podman
   secret on containers. The collector is the only reader either way.
-- **Auth is per-device bearer tokens on both targets.** Cloudflare Access is optional sugar
-  in front, never a dependency of the app.
+- **Auth is deployment-specific.** Cloudflare Access Managed OAuth provides browser-mediated
+  per-user Android sessions; service tokens remain available as an explicit per-device fallback.
 
 ## How someone else hosts their own copy
 
