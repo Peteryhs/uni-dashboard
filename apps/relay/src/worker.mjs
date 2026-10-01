@@ -28,6 +28,7 @@ import { syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
 import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oauth-callback.mjs';
+import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -190,7 +191,7 @@ async function handleFetch(request, env, ctx) {
    */
   if (!path.startsWith('/v1/')) {
     if (env.ASSETS) return env.ASSETS.fetch(request);
-    return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
+    return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/setup', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
   }
 
   /**
@@ -233,6 +234,11 @@ async function handleFetch(request, env, ctx) {
 
   if (path === '/v1/dashboard') {
     return json(await buildDashboard(store, { now: Date.now() }));
+  }
+
+  if (path === '/v1/setup') {
+    if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
+    return json(await getSetupStatus(store, { sources: SOURCES }));
   }
 
   if (path === '/v1/alerts/dismiss' && request.method === 'POST') {
@@ -465,6 +471,7 @@ async function handleFetch(request, env, ctx) {
         },
         cloudflare: {
           configured: Boolean(env.AI || (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN)),
+          mode: env.AI ? 'binding' : 'api',
           account_id: env.AI ? 'native Workers AI binding' : '',
           name: 'Cloudflare Workers AI',
           role: 'Daily menu ranking and dish highlights (bound, no key needed)',
@@ -492,9 +499,19 @@ async function handleFetch(request, env, ctx) {
         if (!SETTING_KEYS.includes(name)) continue;
         if (typeof value !== 'string') return json({ error: `${name} must be a string` }, 400);
         const trimmed = value.trim();
+        const previous = await store.getSetting(name);
+        const wasConfigured = name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL'
+          ? (process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || previous || '')
+          : (process.env[name] || previous || '');
+        const valueChanged = wasConfigured !== trimmed;
+        const changedAt = Date.now();
         if (!trimmed) {
           await store.deleteSetting(name); // an empty value clears it, same as the local .env path
           delete process.env[name];
+          if (valueChanged) {
+            const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
+            if (marker) await store.setSetting(marker, String(changedAt), changedAt);
+          }
           stored.push({ name, cleared: true });
           continue;
         }
@@ -504,7 +521,11 @@ async function handleFetch(request, env, ctx) {
             400,
           );
         }
-        await store.setSetting(name, trimmed, Date.now());
+        await store.setSetting(name, trimmed, changedAt);
+        if (valueChanged) {
+          const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
+          if (marker) await store.setSetting(marker, String(changedAt), changedAt);
+        }
         if (name !== 'OFFICE_HOURS_JSON') {
           process.env[name] = trimmed;
         }
@@ -534,7 +555,7 @@ async function handleFetch(request, env, ctx) {
   return json(
     {
       error: 'not found',
-      routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
+      routes: ['/healthz', '/v1/dashboard', '/v1/setup', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
     },
     404,
   );

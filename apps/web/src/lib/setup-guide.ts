@@ -18,7 +18,7 @@ export function readGuideProgress(): GuideProgress {
   catch { return parseGuideProgress(null); }
 }
 
-export function saveGuideProgress(step: number, finished = false) {
+export function saveGuideProgress(step: number, finished = readGuideProgress().finished) {
   try { localStorage.setItem(SETUP_GUIDE_KEY, JSON.stringify({ seen: true, step, finished })); }
   catch { /* Private browsing can disable storage; the guide still works. */ }
 }

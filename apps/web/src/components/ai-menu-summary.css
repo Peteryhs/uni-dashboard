@@ -60,17 +60,27 @@
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 0 2px;
+  gap: 6px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: #8dbaff;
   font: inherit;
   font-size: 11px;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration: none;
   cursor: pointer;
 }
 
+.ai-menu-summary__rank-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
 .ai-menu-summary__rank-again:hover:not(:disabled) {
+  background: rgb(52 120 235 / 10%);
   color: #bfd8ff;
 }
 
@@ -120,5 +130,6 @@
     float: right;
     min-height: 44px;
     margin: -8px 0 0 10px;
+    padding-inline: 8px;
   }
 }

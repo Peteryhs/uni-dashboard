@@ -59,7 +59,6 @@ import { useHealth, useHealthz } from '@/hooks/use-dashboard';
 import type { CalendarData } from '@/lib/contract';
 import './customization-sheet.css';
 import { SetupGuide } from '@/components/setup-guide';
-import { readGuideProgress } from '@/lib/setup-guide';
 
 const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'all', label: 'All items' },
@@ -129,6 +128,7 @@ export function CustomizationSheet({
   courseDataPending,
   courseDataError,
   focusCourse,
+  guideRequest,
   onRetryCourseData,
   onCourseDataSaved,
   setDietaryFilter,
@@ -145,6 +145,7 @@ export function CustomizationSheet({
   courseDataPending: boolean;
   courseDataError: boolean;
   focusCourse?: string | null;
+  guideRequest?: { step: number; key: number };
   onRetryCourseData: () => void;
   onCourseDataSaved: () => void;
   setDietaryFilter: (f: DietaryPreference) => void;
@@ -154,7 +155,7 @@ export function CustomizationSheet({
   resetPreferences: () => void;
 }) {
   const { undismissTask } = usePreferences();
-  const [guideOpen, setGuideOpen] = useState(() => !readGuideProgress().seen || new URLSearchParams(window.location.search).get('setup') === 'mobile');
+  const [guideOpen, setGuideOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'mobile');
   const [guideStart, setGuideStart] = useState<number | undefined>(() => new URLSearchParams(window.location.search).get('setup') === 'mobile' ? 3 : undefined);
   const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule' | 'about'>('taste');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
@@ -164,6 +165,36 @@ export function CustomizationSheet({
   const [tasteProfileSyncReady, setTasteProfileSyncReady] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [aiModels, setAiModels] = useState<AiModelInfo[]>(AI_MODEL_OPTIONS);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const guideReturnFocus = useRef<HTMLElement | null>(null);
+  const guideReturnScroll = useRef(0);
+
+  const openGuideAt = (step?: number) => {
+    guideReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    guideReturnScroll.current = sheetRef.current?.scrollTop ?? 0;
+    setGuideStart(step);
+    setGuideOpen(true);
+  };
+
+  const exitGuide = (tab?: 'taste' | 'schedule' | 'courses' | 'credentials') => {
+    setGuideStart(undefined);
+    setGuideOpen(false);
+    if (tab) setActiveTab(tab);
+    requestAnimationFrame(() => {
+      const sheet = sheetRef.current;
+      sheet?.scrollTo({ top: tab ? 0 : guideReturnScroll.current, behavior: 'instant' });
+      const previous = guideReturnFocus.current;
+      const target = !tab && previous?.isConnected && sheet?.contains(previous)
+        ? previous : sheet?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      target?.focus({ preventScroll: true });
+    });
+  };
+
+  useEffect(() => {
+    if (!guideRequest) return;
+    setGuideStart(guideRequest.step);
+    setGuideOpen(true);
+  }, [guideRequest?.key, guideRequest?.step]);
 
   useEffect(() => {
     let isMounted = true;
@@ -388,7 +419,11 @@ export function CustomizationSheet({
 
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => {
-      if (!nextOpen) flushTasteProfileSave();
+      if (!nextOpen) {
+        flushTasteProfileSave();
+        setGuideOpen(false);
+        setGuideStart(undefined);
+      }
       onOpenChange?.(nextOpen);
     }}>
       {!hideTrigger && <SheetTrigger asChild>
@@ -401,7 +436,7 @@ export function CustomizationSheet({
           <span className="hidden sm:inline">Settings</span>
         </Button>
       </SheetTrigger>}
-      <SheetContent showCloseButton={false} className="settings-sheet w-full sm:max-w-[44rem] border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
+      <SheetContent ref={sheetRef} showCloseButton={false} className="settings-sheet w-full sm:max-w-[44rem] border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
         <BlurFade
           as="div"
           className="settings-heading-entry"
@@ -413,15 +448,17 @@ export function CustomizationSheet({
           inView
         >
           <SheetHeader className="settings-heading p-0 text-left">
-            <SheetTitle className="text-base font-semibold">Settings</SheetTitle>
+            <SheetTitle className="text-base font-semibold">{guideOpen ? 'Setup guide' : 'Settings'}</SheetTitle>
           </SheetHeader>
-          {!guideOpen && <Button variant="outline" className="settings-guide-entry" onClick={() => setGuideOpen(true)}>Setup guide</Button>}
         </BlurFade>
         <SheetClose className="settings-close close-detail" aria-label="Close settings">
           <X size={17} />
         </SheetClose>
 
-        {guideOpen ? <SetupGuide initialStep={guideStart} onExit={() => { setGuideStart(undefined); setGuideOpen(false); }} onSettings={(tab) => { setGuideStart(undefined); setActiveTab(tab); setGuideOpen(false); }} /> : <Tabs
+        {guideOpen && <SetupGuide initialStep={guideStart} onExit={() => exitGuide()} onSettings={exitGuide} />}
+        <Tabs
+          hidden={guideOpen}
+          style={{ display: guideOpen ? 'none' : undefined }}
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule' | 'about')}
           className="settings-tabs-wrap mt-5"
@@ -664,18 +701,25 @@ export function CustomizationSheet({
               direction="up"
               inView
             >
-            <CredentialsManager />
+            <CredentialsManager onGuideRequest={openGuideAt} active={!guideOpen} />
             <div className="space-y-3">
               <div className="space-y-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                  Relay Data Sources
-                </h3>
+                <div className="settings-section-label-row">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                    Relay Data Sources
+                  </h3>
+                  <button type="button" className="settings-context-help" onClick={() => openGuideAt(4)} aria-label="What’s this? Relay data source connection">What’s this?</button>
+                </div>
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   Real-time feed scraper health, latency, and circuit status.
                 </p>
               </div>
               <SourceStatus />
             </div>
+            <button type="button" className="settings-help-row" aria-label="Open setup guide" onClick={() => openGuideAt()}>
+              <span><strong>Setup guide</strong><span>Help with calendar feeds, preferences, and Android sign-in.</span></span>
+              <span className="settings-help-action">Open guide</span>
+            </button>
             <div className="space-y-3">
               <div className="space-y-0.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
@@ -769,15 +813,17 @@ export function CustomizationSheet({
               <AboutTab />
             </BlurFade>
           </TabsContent>
-        </Tabs>}
+        </Tabs>
       </SheetContent>
     </Sheet>
   );
 }
 
-function CredentialsManager() {
+function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?: number) => void; active: boolean }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<CredentialsStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statusError, setStatusError] = useState('');
   const [saving, setSaving] = useState(false);
   const [portalUrl, setPortalUrl] = useState('');
   const [learnUrl, setLearnUrl] = useState('');
@@ -790,18 +836,19 @@ function CredentialsManager() {
   const loadStatus = async () => {
     try {
       setLoading(true);
+      setStatusError('');
       const data = await fetchCredentialsStatus();
       setStatus(data);
-    } catch {
-      // Backend may not have loaded or offline
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : 'Could not check saved connections.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadStatus();
-  }, []);
+    if (active) void loadStatus();
+  }, [active]);
 
   if (loading && !status) {
     return (
@@ -811,6 +858,16 @@ function CredentialsManager() {
       </div>
     );
   }
+
+  if (statusError || !status) {
+    return <div className="space-y-3" role="alert">
+      {feedback && <p className="text-sm">{feedback.message}</p>}
+      <p className="text-sm text-muted-foreground">Your saved connections could not be checked. You do not need to enter them again.</p>
+      <p className="text-sm text-destructive">{statusError || 'The backend is unavailable.'}</p>
+      <Button variant="ghost" disabled={loading} onClick={() => void loadStatus()}>{loading ? 'Checking…' : 'Try again'}</Button>
+    </div>;
+  }
+  const usesAiBinding = status.cloudflare?.mode === 'binding' || status.cloudflare?.account_id === 'native Workers AI binding';
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -830,11 +887,12 @@ function CredentialsManager() {
     try {
       const payload: {
         PORTAL_ICS_URL?: string;
+        GOOGLE_CALENDAR_ICS_URL?: string;
         LEARN_ICS_URL?: string;
         CLOUDFLARE_ACCOUNT_ID?: string;
         CLOUDFLARE_API_TOKEN?: string;
       } = {};
-      if (cleanPortal) payload.PORTAL_ICS_URL = cleanPortal;
+      if (cleanPortal) { payload.PORTAL_ICS_URL = cleanPortal; payload.GOOGLE_CALENDAR_ICS_URL = cleanPortal; }
       if (cleanLearn) payload.LEARN_ICS_URL = cleanLearn;
       if (cfAccountId.trim()) payload.CLOUDFLARE_ACCOUNT_ID = cfAccountId.trim();
       if (cfApiToken.trim()) payload.CLOUDFLARE_API_TOKEN = cfApiToken.trim();
@@ -846,17 +904,22 @@ function CredentialsManager() {
       }
 
       await updateCredentials(payload);
-      await triggerPoll();
-
-      setFeedback({
-        type: 'success',
-        message: 'Saved. Sync started.',
-      });
       setPortalUrl('');
       setLearnUrl('');
       setCfAccountId('');
       setCfApiToken('');
       await loadStatus();
+      await queryClient.invalidateQueries({ queryKey: ['setup-credentials'] });
+      await queryClient.invalidateQueries({ queryKey: ['setup-status'] });
+      let refreshError = '';
+      try { await triggerPoll(); }
+      catch (error) { refreshError = error instanceof Error ? error.message : 'Refresh is unavailable.'; }
+      await Promise.all(['setup-status', 'dashboard', 'full-calendar', 'recommendations', 'health'].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
+
+      setFeedback({
+        type: refreshError ? 'error' : 'success',
+        message: refreshError ? `Connections saved. ${refreshError}` : 'Connections saved and refreshed.',
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save credentials';
       setFeedback({ type: 'error', message: msg });
@@ -867,6 +930,7 @@ function CredentialsManager() {
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">Connections are saved on your backend and kept across redeploys. Saved URLs stay hidden for privacy. Leave a field empty to keep its current value.</p>
       {feedback && (
         <div
           className={cn(
@@ -900,9 +964,12 @@ function CredentialsManager() {
           <div className="space-y-3 pt-1">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <Label htmlFor="portal-url" className="text-xs text-zinc-300 font-medium">
-                  Google Calendar or Portal URL
-                </Label>
+                  <div className="settings-label-with-help">
+                    <Label htmlFor="portal-url" className="text-xs text-zinc-300 font-medium">
+                      Google Calendar or Portal URL
+                    </Label>
+                    <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Google Calendar or Portal URL">What’s this?</button>
+                  </div>
                 {status?.portal.configured ? (
                   <span className="font-mono text-[10px] text-emerald-400">Configured</span>
                 ) : (
@@ -925,9 +992,12 @@ function CredentialsManager() {
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <Label htmlFor="learn-url" className="text-xs text-zinc-300 font-medium">
-                  LEARN Deliverables Feed URL
-                </Label>
+                  <div className="settings-label-with-help">
+                    <Label htmlFor="learn-url" className="text-xs text-zinc-300 font-medium">
+                      LEARN Deliverables Feed URL
+                    </Label>
+                    <button type="button" className="settings-context-help" onClick={() => onGuideRequest(1)} aria-label="What’s this? LEARN Deliverables Feed URL">What’s this?</button>
+                  </div>
                 {status?.learn.configured ? (
                   <span className="font-mono text-[10px] text-emerald-400">Configured</span>
                 ) : (
@@ -954,16 +1024,17 @@ function CredentialsManager() {
         <section className="space-y-3 pt-1">
           <div className="space-y-0.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Workers AI Connection</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Optional Cloudflare API credentials for serverless model inference.
-            </p>
+            <p className="text-xs text-zinc-400 leading-relaxed">{usesAiBinding ? 'Workers AI is connected through your deployment. No Account ID or API token is needed here.' : 'Optional API credentials for a local backend. These are separate from dashboard sign-in.'}</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          {!usesAiBinding && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
             <div className="space-y-1">
-              <Label htmlFor="cf-account" className="text-[11px] text-zinc-400">
-                Account ID
-              </Label>
+              <div className="settings-label-with-help">
+                <Label htmlFor="cf-account" className="text-[11px] text-zinc-400">
+                  Account ID
+                </Label>
+                <button type="button" className="settings-context-help" onClick={() => onGuideRequest(2)} aria-label="What’s this? Workers AI Account ID">What’s this?</button>
+              </div>
               <Input
                 id="cf-account"
                 type="text"
@@ -974,9 +1045,12 @@ function CredentialsManager() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="cf-token" className="text-[11px] text-zinc-400">
-                API Token
-              </Label>
+              <div className="settings-label-with-help">
+                <Label htmlFor="cf-token" className="text-[11px] text-zinc-400">
+                  API Token
+                </Label>
+                <button type="button" className="settings-context-help" onClick={() => onGuideRequest(2)} aria-label="What’s this? Workers AI API Token">What’s this?</button>
+              </div>
               <Input
                 id="cf-token"
                 type="password"
@@ -986,7 +1060,7 @@ function CredentialsManager() {
                 className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
               />
             </div>
-          </div>
+          </div>}
         </section>
 
         {/* Submit button */}

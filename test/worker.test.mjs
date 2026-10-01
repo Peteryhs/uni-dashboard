@@ -351,6 +351,91 @@ test('credentials saved from the app land in D1 and configure the feeds', async 
   assert.ok(!JSON.stringify(status).includes('token=abc'));
 });
 
+test('saved feed settings survive separate Worker requests without environment credentials', async (t) => {
+  t.after(clearEnvSettings);
+  clearEnvSettings();
+  const { api } = createMockD1();
+  const env = { ACCESS_DISABLED: '1', DB: api };
+  const portal = 'https://calendar.example.test/private.ics?token=stored-portal';
+  const learn = 'https://learn.example.test/private.ics?token=stored-learn';
+
+  const saved = await worker.fetch(new Request('https://dash.test/v1/credentials', {
+    method: 'POST',
+    body: JSON.stringify({ PORTAL_ICS_URL: portal, LEARN_ICS_URL: learn }),
+  }), env, {});
+  assert.equal(saved.status, 200);
+
+  // Simulate a fresh isolate/request boundary where no Worker secret was injected in process.env.
+  clearEnvSettings();
+  const settings = await (await worker.fetch(new Request('https://dash.test/v1/credentials'), env, {})).json();
+  assert.equal(settings.portal.configured, true);
+  assert.equal(settings.portal.source, 'saved in the app');
+  assert.equal(settings.learn.configured, true);
+  assert.equal(settings.learn.source, 'saved in the app');
+  assert.ok(!JSON.stringify(settings).includes(portal));
+  assert.ok(!JSON.stringify(settings).includes(learn));
+  assert.ok(!JSON.stringify(settings).includes('stored-portal'));
+  assert.ok(!JSON.stringify(settings).includes('stored-learn'));
+
+  // A later request reapplies the D1 settings to source readiness as well, still without secrets
+  // arriving from the request payload or being echoed by the status API.
+  clearEnvSettings();
+  const health = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
+  assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').ready, true);
+  assert.equal(health.sources.find((source) => source.id === 'uw-learn-ics').ready, true);
+});
+
+test('Worker setup state persists in D1 and requires a new sync after replacing a feed', async (t) => {
+  clearEnvSettings();
+  t.after(clearEnvSettings);
+  const { api, db, counter } = createMockD1();
+  t.after(() => db.close());
+  const env = { ACCESS_DISABLED: '1', DB: api };
+  const readSetup = async () => {
+    const before = counter.prepares;
+    const response = await worker.fetch(new Request('https://dash.test/v1/setup'), env, {});
+    assert.equal(response.status, 200);
+    assert.ok(counter.prepares - before < 50, 'setup stays within the Worker query budget');
+    return response.json();
+  };
+  const saveFeeds = async (payload) => {
+    const response = await worker.fetch(new Request('https://dash.test/v1/credentials', {
+      method: 'POST', body: JSON.stringify(payload),
+    }), env, {});
+    assert.equal(response.status, 200);
+    clearEnvSettings();
+  };
+
+  assert.equal((await readSetup()).first_run, true);
+  assert.equal((await readSetup()).first_run, false, 'the marker survives a separate request');
+  const schedule = 'https://calendar.test/private.ics?token=schedule-secret';
+  const learn = 'https://learn.test/private.ics?token=learn-secret';
+  await saveFeeds({ PORTAL_ICS_URL: schedule, GOOGLE_CALENDAR_ICS_URL: schedule, LEARN_ICS_URL: learn });
+  const saved = await readSetup();
+  assert.equal(saved.schedule_configured, true);
+  assert.equal(saved.learn_configured, true);
+  assert.equal(saved.schedule_synced, false);
+  assert.equal(saved.setup_needed, true);
+  assert.ok(!JSON.stringify(saved).includes('secret'), 'private feed values stay out of setup status');
+
+  const store = new D1Store(api);
+  const syncTime = Date.now();
+  for (const source_id of ['uw-portal-ics', 'uw-learn-ics']) {
+    await store.insertRun({ source_id, started_at: syncTime, finished_at: syncTime, outcome: 'empty', rows_written: 0 });
+  }
+  assert.equal((await readSetup()).setup_needed, false, 'valid empty feeds complete setup');
+
+  const replacement = 'https://calendar.test/replacement.ics';
+  await saveFeeds({ PORTAL_ICS_URL: replacement, GOOGLE_CALENDAR_ICS_URL: replacement });
+  // Make the old receipt unambiguously older than the persisted change marker, even if both
+  // requests happen within one clock tick.
+  db.prepare('UPDATE source_run SET started_at = 1 WHERE source_id = ?').run('uw-portal-ics');
+  const replaced = await readSetup();
+  assert.equal(replaced.schedule_synced, false);
+  assert.equal(replaced.learn_synced, true);
+  assert.equal(replaced.setup_needed, true);
+});
+
 test('the saved feeds actually configure the sources', async (t) => {
   t.after(clearEnvSettings);
   const { api } = createMockD1();

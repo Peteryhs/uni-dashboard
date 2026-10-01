@@ -210,6 +210,14 @@ export class D1Store {
     return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
   }
 
+  async lastRun(sourceId) {
+    const row = await this.db
+      .prepare('SELECT * FROM source_run WHERE source_id = ? ORDER BY id DESC LIMIT 1')
+      .bind(sourceId)
+      .first();
+    return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
+  }
+
   async calendarChanges(since) {
     const result = await this.db.prepare('SELECT payload_json FROM calendar_change WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 1000').bind(since).all();
     return (result.results || []).map(row => JSON.parse(row.payload_json));

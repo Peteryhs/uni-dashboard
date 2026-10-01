@@ -167,6 +167,11 @@ export class SqliteStore {
     return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
   }
 
+  lastRun(sourceId) {
+    const row = this.db.prepare('SELECT * FROM source_run WHERE source_id = ? ORDER BY id DESC LIMIT 1').get(sourceId);
+    return row ? { ...row, meta: JSON.parse(row.meta_json || '{}') } : null;
+  }
+
   calendarChanges(since) {
     return this.db.prepare('SELECT payload_json FROM calendar_change WHERE observed_at >= ? ORDER BY observed_at DESC LIMIT 1000')
       .all(since).map(row => JSON.parse(row.payload_json));

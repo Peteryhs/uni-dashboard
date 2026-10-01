@@ -30,6 +30,7 @@ import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { getCachedWeather, syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { buildRecommendations } from './recommendations.mjs';
+import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 
 export function createServer({
   store,
@@ -186,6 +187,10 @@ export function createServer({
       if (url.pathname === '/v1/dashboard') {
         const bundle = await buildDashboard(store, { now: Date.now() });
         return send(200, bundle);
+      }
+      if (url.pathname === '/v1/setup') {
+        if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+        return send(200, await getSetupStatus(store, { sources }));
       }
       if (url.pathname === '/v1/alerts/dismiss' && req.method === 'POST') {
         const chunks = [];
@@ -463,8 +468,11 @@ export function createServer({
           }
           let changed = false;
           const scheduleInput = GOOGLE_CALENDAR_ICS_URL !== undefined ? GOOGLE_CALENDAR_ICS_URL : PORTAL_ICS_URL;
+          const scheduleBefore = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
+          let scheduleChanged = false;
           if (typeof scheduleInput === 'string') {
             const trimmed = scheduleInput.trim();
+            scheduleChanged = scheduleBefore !== trimmed;
             if (trimmed) {
               process.env.PORTAL_ICS_URL = trimmed;
               process.env.GOOGLE_CALENDAR_ICS_URL = trimmed;
@@ -475,8 +483,10 @@ export function createServer({
               changed = true;
             }
           }
+          let learnChanged = false;
           if (typeof LEARN_ICS_URL === 'string') {
             const trimmed = LEARN_ICS_URL.trim();
+            learnChanged = (process.env.LEARN_ICS_URL || '') !== trimmed;
             if (trimmed) {
               process.env.LEARN_ICS_URL = trimmed;
               changed = true;
@@ -485,6 +495,9 @@ export function createServer({
               changed = true;
             }
           }
+          const changedAt = Date.now();
+          if (scheduleChanged) store.setSetting(SETUP_SCHEDULE_CHANGED_AT, String(changedAt), changedAt);
+          if (learnChanged) store.setSetting(SETUP_LEARN_CHANGED_AT, String(changedAt), changedAt);
           if (typeof CLOUDFLARE_ACCOUNT_ID === 'string') {
             const trimmed = CLOUDFLARE_ACCOUNT_ID.trim();
             if (trimmed) {
@@ -567,7 +580,7 @@ export function createServer({
       }
       return send(404, {
         error: 'not found',
-        routes: ['/healthz', '/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
+        routes: ['/healthz', '/v1/dashboard', '/v1/setup', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'],
         web: serveStatic ? 'GET / serves apps/web/dist when it has been built' : 'web client disabled',
       });
     } catch (e) {

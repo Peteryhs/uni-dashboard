@@ -104,16 +104,16 @@ fun MobileSetupGuide(
                                         GuideText("Dining preferences, course details and office hours are optional. Keep checking course pages for deadlines that are not in LEARN’s calendar.")
                                     }
                                     1 -> {
-                                        GuideText("The dashboard owner enables Managed OAuth and dynamic client registration in the Cloudflare Access application’s Advanced settings. It must protect the full dashboard hostname and allow its /oauth/android/callback HTTPS address.")
-                                        GuideText("The web guide’s owner setup lets you request a refresh session of 1, 2, or 3 weeks. Three weeks is 504 hours. The owner must apply it in Cloudflare; selecting a duration in the guide does not extend a phone’s current sign-in.")
-                                        GuideText("Access tokens renew automatically, normally every 15 minutes. Policies, revocation or an expired refresh session can require an earlier sign-in. Sign in again after the owner changes the session setting.")
+                                        GuideText("This is a one-time owner step. In the Cloudflare dashboard, open Zero Trust → Access controls → Applications. Find the application for the full dashboard hostname, open its three-dot menu, choose Edit, then open Advanced settings.")
+                                        GuideText("Under Managed OAuth, enable it, add the exact HTTPS redirect URI https://dashboard.example.com/oauth/android/callback (replace the origin with your dashboard), set Access token lifetime to 15 minutes and Grant session duration to 336 hours (2 weeks), then choose Save. Keep existing redirect URIs and Access policies.")
+                                        GuideText("After the owner saves this once, phone users only enter the public dashboard address and use Sign in. They do not need a Cloudflare account API token, client ID, or client secret. Access tokens renew automatically; policies or revocation can still require another sign-in.")
                                         TextButton(onClick = { openLink("https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/") }) { Text("Cloudflare instructions") }
-                                        GuideText("If you do not manage Cloudflare, ask the dashboard owner to complete this step. No Cloudflare account API token or service secret is needed on your phone for browser sign-in.")
+                                        GuideText("If you do not manage Cloudflare, ask the dashboard owner to complete this step. Advanced service-token fields are only for older deployments without browser sign-in.")
                                     }
                                     2 -> {
-                                        GuideText("Use the dashboard’s public HTTPS address below. A pasted page address is reduced to its origin. The dashboard must be reachable from this phone.")
+                                        GuideText("Use the dashboard’s public HTTPS address below, not the Cloudflare admin console. A pasted page address is reduced to its origin, and the dashboard must be reachable from this phone.")
                                         GuideText("Return to Connect your dashboard, then tap Sign in. Complete Cloudflare Access in the system browser and allow it to return to UniDash. Wait for the app to verify the connection.")
-                                        GuideText("If you cancel, you can try again. If sign-in is unavailable, check the address and ask the owner to enable Managed OAuth. Advanced service tokens are only for older deployments.")
+                                        GuideText("If you cancel, you can try again. If sign-in is unavailable, check the address and ask the owner to confirm the one-time Managed OAuth setup and exact /oauth/android/callback redirect. Do not paste a Cloudflare API token into this screen.")
                                         if (onUseAddress == null) GuideText("This phone is already configured. Use Sign in again in Settings if Cloudflare requests a new login.")
                                     }
                                     3 -> {

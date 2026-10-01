@@ -1,6 +1,7 @@
 import type { DiningRecommendationController } from '@/components/use-dining-recommendation';
 import { getRankedDiningOutlets } from '@/components/use-dining-recommendation';
 import { getOutletLocation } from '@/components/cards/food';
+import { RefreshCw } from 'lucide-react';
 import './ai-menu-summary.css';
 
 function displayDate(serviceDate: string): string {
@@ -31,6 +32,7 @@ export function AiMenuSummary({
       title={state.status === 'budget_limited' ? 'The shared AI allowance is fully reserved today.' : undefined}
       aria-label={isReranking ? 'Ranking dining picks' : 'Rank dining picks again'}
     >
+      <RefreshCw className={isReranking ? 'ai-menu-summary__rank-icon spinning' : 'ai-menu-summary__rank-icon'} aria-hidden="true" />
       <span>{isReranking ? 'Ranking…' : 'Rank again'}</span>
     </button>
   );

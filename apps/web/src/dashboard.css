@@ -41,7 +41,10 @@
 .top-refresh.has-status .top-refresh-status { max-width: 210px; opacity: 1; filter: none; transform: none; }
 .top-refresh-message { display: block; overflow: hidden; text-overflow: ellipsis; }
 .top-refresh.has-error .top-refresh-status { color: #ffbbb3; }
-.top-settings { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 5px; color: #cbd2da; font-size: 12px; font-weight: 560; transition: color 180ms ease; }
+.top-settings, .context-control, .section-control { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent; color: #cbd2da; font-size: 12px; font-weight: 560; transition: color 180ms ease, background 180ms ease; }
+.top-settings:hover, .context-control:hover, .section-control:hover { background: rgb(255 255 255 / 5%); color: #fff; }
+.top-settings:focus-visible, .context-control:focus-visible, .section-control:focus-visible { outline: 2px solid #70a8ff; outline-offset: 3px; }
+.top-settings:disabled, .context-control:disabled, .section-control:disabled { color: #858c96; opacity: 0.72; }
 .recommendation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
 .hero-rec, .more-recs, .rec-detail, .section-panel, .menu-outlet, .course-card, .settings-open, .state-panel { border: 1px solid var(--dash-line); border-radius: 16px; background: var(--dash-panel); }
 .hero-rec, .more-recs { min-height: 232px; }
@@ -190,15 +193,15 @@
 .undo-toast { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 16px 16px; padding: 10px 13px; border: 1px solid #686e77; border-radius: 8px; background: #393e45; color: #e5e9ed; font-size: 12px; }
 .undo-toast.is-closing { animation: detail-exit 180ms ease-in both; pointer-events: none; }
 .undo-toast button { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-.section-control { display: inline-flex; align-items: center; gap: 8px; min-height: 39px; padding: 0 13px; border: 1px solid #5c626b; border-radius: 9px; color: #e7eaee; font-size: 12px; transition: background 180ms ease; }
-.section-control:hover { background: #363a42; }
 .menu-status { margin: -4px 0 12px; color: #bac1ca; font-size: 13px; }
 #menu { scroll-margin-top: 32px; }
 .menu-controls { display: flex; align-items: center; gap: 14px; margin: 0 0 16px; }
 .menu-controls input { flex: none; width: min(270px, 32%); min-height: 37px; padding: 0 12px; border: 1px solid #626872; border-radius: 8px; background: #292c31; color: #f4f6f8; font-size: 12px; }
 .menu-outlet-select { display: flex; min-width: 0; flex: 1; gap: 6px; overflow-x: auto; padding: 2px 1px 6px; scrollbar-width: thin; }
-.menu-outlet-select button { flex: none; min-height: 33px; padding: 0 10px; border: 1px solid #535962; border-radius: 7px; color: #bcc4cd; font-size: 11px; }
-.menu-outlet-select button[aria-pressed="true"] { border-color: #9299a3; background: #3b4048; color: #fff; }
+.menu-outlet-select button { flex: none; min-height: 34px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent; color: #aeb7c2; font-size: 11px; }
+.menu-outlet-select button:hover { background: rgb(255 255 255 / 5%); color: #fff; }
+.menu-outlet-select button[aria-pressed="true"] { background: rgb(255 255 255 / 8%); color: #fff; box-shadow: inset 0 -2px 0 #d9dde2; }
+.menu-outlet-select button:focus-visible { outline: 2px solid #70a8ff; outline-offset: 3px; }
 .menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; align-items: start; }
 .menu-outlet { overflow: hidden; }
 .menu-outlet-head { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; padding: 18px 22px 16px; border-bottom: 1px solid #484c53; }
@@ -306,7 +309,7 @@
   .more-recs { padding: 20px 18px; }
   .rec-detail { padding: 22px 18px; }
   .close-detail, .menu-outlet-head button { min-width: 44px; min-height: 44px; }
-  .solid-action, .quiet-action, .section-control, .menu-controls input, .menu-outlet-select button, .term-work > summary, .dining-directory summary, .rec-evidence summary, .course-manage { min-height: 44px; }
+  .solid-action, .quiet-action, .section-control, .context-control, .menu-controls input, .menu-outlet-select button, .term-work > summary, .dining-directory summary, .rec-evidence summary, .course-manage { min-height: 44px; }
   .course-manage { margin-top: 4px; }
   .warning-strip { padding: 0 12px; }
   .warning-strip summary { min-height: 44px; padding: 12px 0; }

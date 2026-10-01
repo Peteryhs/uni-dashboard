@@ -29,6 +29,8 @@ import {
   validateRecommendations,
   type RecommendationResponse,
 } from './contract';
+import { checkRelayResponse, localRelayToken, readRelayJson, RelayError } from './relay-response.mjs';
+export { RelayError } from './relay-response.mjs';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
 const CALENDAR_CACHE_KEY = 'uni-dashboard:last-calendar:v1';
@@ -39,10 +41,11 @@ const RECOMMENDATIONS_CACHE_KEY = 'uni-dashboard:last-recommendations:v1';
 const BUILD_TOKEN = (import.meta.env.VITE_RELAY_TOKEN as string | undefined) ?? '';
 
 export function getToken(): string {
+  const origin = window.location.origin;
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? BUILD_TOKEN;
+    return localRelayToken(localStorage.getItem(TOKEN_KEY) ?? BUILD_TOKEN, origin);
   } catch {
-    return BUILD_TOKEN;
+    return localRelayToken(BUILD_TOKEN, origin);
   }
 }
 
@@ -60,36 +63,23 @@ function authHeaders(): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
-export class RelayError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'RelayError';
-  }
-}
-
-function signInError(): RelayError {
-  return new RelayError(getToken()
-    ? 'Connection token rejected. Check Connections in Settings.'
-    : 'Sign-in required. Open the dashboard again to sign in.', 401);
+async function fetchRelay(path: string, options: RequestInit = {}): Promise<Response> {
+  const res = await fetch(path, {
+    ...options,
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', ...authHeaders(), ...options.headers },
+  });
+  await checkRelayResponse(res, Boolean(getToken()));
+  return res;
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetchRelay(path, {
     signal,
     headers: { accept: 'application/json', ...authHeaders() },
     cache: 'no-store',
   });
-  if (res.status === 401) {
-    throw signInError();
-  }
-  if (res.redirected && res.headers.get('content-type')?.includes('text/html')) throw signInError();
-  if (!res.ok) {
-    throw new RelayError(`relay returned ${res.status}`, res.status);
-  }
-  return (await res.json()) as T;
+  return (await readRelayJson(res)) as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +161,7 @@ export function fetchCurrentWeather(signal?: AbortSignal): Promise<{ temp_c: num
 }
 
 export async function saveRecommendationAction(id: string, action: 'done' | 'undo' | 'snooze', until?: number): Promise<void> {
-  const res = await fetch('/v1/recommendations/actions', {
+  const res = await fetchRelay('/v1/recommendations/actions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ id, action, ...(until ? { until } : {}) }),
@@ -225,17 +215,11 @@ export interface PollResult {
 /** Ask the relay to poll now and report which sources completed. */
 export async function triggerPoll(sourceId?: string): Promise<PollResult> {
   const qs = sourceId ? `?source=${encodeURIComponent(sourceId)}` : '';
-  const res = await fetch(`/v1/poll${qs}`, {
+  const res = await fetchRelay(`/v1/poll${qs}`, {
     method: 'POST',
     headers: { accept: 'application/json', ...authHeaders() },
   });
-  if (res.status === 401) throw signInError();
-  if (res.redirected && res.headers.get('content-type')?.includes('text/html')) throw signInError();
-  if (!res.ok) {
-    const body = await res.json().catch(() => null) as { error?: string } | null;
-    throw new RelayError(body?.error || `Refresh returned ${res.status}.`, res.status);
-  }
-  return (await res.json()) as PollResult;
+  return (await readRelayJson(res)) as PollResult;
 }
 
 export interface CredentialFeedInfo {
@@ -243,6 +227,7 @@ export interface CredentialFeedInfo {
   env_var: string;
   name: string;
   role: string;
+  source?: string;
   feed_url_preview?: string;
 }
 
@@ -254,11 +239,26 @@ export interface CredentialsStatus {
     account_id: string;
     name: string;
     role: string;
+    mode?: 'binding' | 'api';
   };
 }
 
 export async function fetchCredentialsStatus(signal?: AbortSignal): Promise<CredentialsStatus> {
   return getJson<CredentialsStatus>('/v1/credentials', signal);
+}
+
+export interface SetupStatus {
+  data_empty: boolean;
+  first_run: boolean;
+  setup_needed: boolean;
+  schedule_configured: boolean;
+  learn_configured: boolean;
+  schedule_synced: boolean;
+  learn_synced: boolean;
+}
+
+export function fetchSetupStatus(signal?: AbortSignal): Promise<SetupStatus> {
+  return getJson<SetupStatus>('/v1/setup', signal);
 }
 
 export async function updateCredentials(
@@ -271,7 +271,7 @@ export async function updateCredentials(
   },
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; portal_configured: boolean; learn_configured: boolean; cloudflare_configured?: boolean }> {
-  const res = await fetch('/v1/credentials', {
+  const res = await fetchRelay('/v1/credentials', {
     method: 'POST',
     signal,
     headers: {
@@ -281,8 +281,7 @@ export async function updateCredentials(
     },
     body: JSON.stringify(creds),
   });
-  if (!res.ok) throw new RelayError(`failed to update credentials: ${res.status}`, res.status);
-  return res.json();
+  return readRelayJson(res);
 }
 
 export interface AiJob<Result> {
@@ -301,14 +300,14 @@ export async function fetchAiJob<Result>(kind: 'office_hours' | 'syllabus', scop
 }
 
 export async function clearAiJob(kind: 'office_hours' | 'syllabus', scope: string): Promise<void> {
-  const res = await fetch(`/v1/ai/jobs?kind=${encodeURIComponent(kind)}&scope=${encodeURIComponent(scope)}`, {
+  const res = await fetchRelay(`/v1/ai/jobs?kind=${encodeURIComponent(kind)}&scope=${encodeURIComponent(scope)}`, {
     method: 'DELETE', headers: authHeaders(),
   });
   if (!res.ok) throw new RelayError(`could not clear AI draft: ${res.status}`, res.status);
 }
 
 export async function requestFoodRanking(date: string): Promise<AiJob<FoodAiRecommendation>> {
-  const res = await fetch('/v1/ai/rank-food', {
+  const res = await fetchRelay('/v1/ai/rank-food', {
     method: 'POST',
     keepalive: true,
     headers: {
@@ -326,7 +325,7 @@ export async function requestFoodRanking(date: string): Promise<AiJob<FoodAiReco
 }
 
 export async function saveFoodTasteProfile(profile: unknown): Promise<void> {
-  const res = await fetch('/v1/food/profile', {
+  const res = await fetchRelay('/v1/food/profile', {
     method: 'PUT',
     headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify(profile),
@@ -335,7 +334,7 @@ export async function saveFoodTasteProfile(profile: unknown): Promise<void> {
 }
 
 export async function getFoodTasteProfile(): Promise<{ profile: (Record<string, unknown> & { dietaryFilter?: string }) | null }> {
-  const res = await fetch('/v1/food/profile', { headers: authHeaders() });
+  const res = await fetchRelay('/v1/food/profile', { headers: authHeaders() });
   if (!res.ok) throw new RelayError(`failed to load taste profile: ${res.status}`, res.status);
   return res.json();
 }
@@ -348,7 +347,7 @@ export async function fetchFoodRecommendation(date: string): Promise<{
   limit_reason?: string;
   error?: string;
 }> {
-  const res = await fetch(`/v1/food/recommendation?date=${encodeURIComponent(date)}`, { headers: authHeaders() });
+  const res = await fetchRelay(`/v1/food/recommendation?date=${encodeURIComponent(date)}`, { headers: authHeaders() });
   if (!res.ok) throw new RelayError(`failed to load AI ranking: ${res.status}`, res.status);
   return res.json();
 }
@@ -368,18 +367,18 @@ export function fetchAiUsage(signal?: AbortSignal): Promise<AiUsageStatus> {
 }
 
 export async function dismissAlert(key: string): Promise<void> {
-  const res = await fetch('/v1/alerts/dismiss', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ key }) });
+  const res = await fetchRelay('/v1/alerts/dismiss', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ key }) });
   if (!res.ok) throw new RelayError(`could not dismiss alert: ${res.status}`, res.status);
 }
 
 export async function previewCourseImport(text: string): Promise<CourseResource[]> {
-  const res = await fetch('/v1/courses/import', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text }) });
+  const res = await fetchRelay('/v1/courses/import', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text }) });
   if (!res.ok) throw new RelayError(`could not read course links: ${res.status}`, res.status);
   return (await res.json()).resources;
 }
 
 export async function saveCourseResources(course: string, resources: CourseResource[]): Promise<CourseResource[]> {
-  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/resources`, { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ resources }) });
+  const res = await fetchRelay(`/v1/courses/${encodeURIComponent(course)}/resources`, { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ resources }) });
   if (!res.ok) throw new RelayError(`could not save course links: ${res.status}`, res.status);
   return (await res.json()).resources;
 }
@@ -395,7 +394,7 @@ export async function previewCourseSyllabus(
   signal?: AbortSignal,
 ): Promise<CourseSyllabusPreview | AiJob<CourseSyllabusPreview>> {
   const body = JSON.stringify(input);
-  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/syllabus/preview`, {
+  const res = await fetchRelay(`/v1/courses/${encodeURIComponent(course)}/syllabus/preview`, {
     method: 'POST',
     signal: input.use_ai ? undefined : signal,
     keepalive: input.use_ai === true && body.length <= 60_000,
@@ -410,7 +409,7 @@ export async function previewCourseSyllabus(
 }
 
 export async function saveCourseSyllabus(course: string, syllabus: CourseSyllabus): Promise<CourseSyllabus> {
-  const res = await fetch(`/v1/courses/${encodeURIComponent(course)}/syllabus`, {
+  const res = await fetchRelay(`/v1/courses/${encodeURIComponent(course)}/syllabus`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders() },
     body: JSON.stringify(syllabus),
@@ -443,7 +442,7 @@ export async function parseOfficeHours(
   opts: { course?: string; model?: string; force?: boolean } = {},
 ): Promise<AiJob<ParseOfficeHoursResponse>> {
   const body = JSON.stringify({ text, ...opts });
-  const res = await fetch('/v1/ai/parse-office-hours', {
+  const res = await fetchRelay('/v1/ai/parse-office-hours', {
     method: 'POST',
     keepalive: body.length <= 60_000,
     headers: {
@@ -473,7 +472,7 @@ export async function putOfficeHours(
   config: OfficeHoursConfig,
   signal?: AbortSignal,
 ): Promise<{ config: OfficeHoursConfig; rows_written: number }> {
-  const res = await fetch('/v1/office-hours', {
+  const res = await fetchRelay('/v1/office-hours', {
     method: 'PUT',
     signal,
     headers: {

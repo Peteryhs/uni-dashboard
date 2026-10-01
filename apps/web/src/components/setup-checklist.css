@@ -1,0 +1,23 @@
+.setup-checklist { margin: 4px 0 24px; padding: 20px 22px; border: 1px solid #494d55; border-radius: 16px; background: #292c32; color: #f5f6f7; }
+.setup-checklist-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.setup-checklist h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.03em; }
+.setup-checklist p { margin: 6px 0 0; color: #aeb4bc; font-size: 13px; line-height: 1.5; }
+.setup-checklist button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 8px; border-radius: 8px; color: #f5f6f7; font-size: 12px; font-weight: 550; white-space: nowrap; }
+.setup-checklist button:hover { background: #363a42; }
+.setup-checklist .setup-checklist-later { margin-top: -10px; color: #aeb4bc; }
+.setup-checklist .setup-checklist-progress { margin: 18px 0 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.setup-checklist ul { padding: 0; margin: 4px 0 0; list-style: none; }
+.setup-checklist li { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid #494d55; }
+.setup-checklist-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid #777e88; border-radius: 50%; color: #d9dee4; font-size: 12px; }
+.setup-checklist-mark.is-complete { border-color: #aeb4bc; color: #f5f6f7; }
+.setup-checklist h3 { margin: 0; font-size: 14px; font-weight: 550; }
+.setup-checklist li p { margin-top: 3px; }
+.setup-checklist-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; padding-top: 12px; }
+.setup-checklist-footer p { max-width: 56ch; margin: 0; }
+@media (max-width: 600px) {
+  .setup-checklist { padding: 18px 16px; }
+  .setup-checklist li { grid-template-columns: 24px minmax(0, 1fr); gap: 8px 12px; }
+  .setup-checklist li button { grid-column: 2; justify-self: start; margin-left: -8px; }
+  .setup-checklist h2 { font-size: 18px; }
+  .setup-checklist-footer button { margin-left: -8px; }
+}

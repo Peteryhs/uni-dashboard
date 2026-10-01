@@ -23,6 +23,51 @@
   padding-right: 2.75rem;
 }
 
+.settings-heading-entry {
+  position: relative;
+}
+
+.settings-help-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; padding: 16px 0; border-block: 1px solid #494d55; background: transparent; text-align: left; cursor: pointer; }
+.settings-help-row > span:first-child { display: grid; gap: 4px; min-width: 0; }
+.settings-help-row strong { color: #f5f6f7; font-size: 14px; font-weight: 550; }
+.settings-help-row > span:first-child > span { color: #aeb4bc; font-size: 12px; line-height: 1.6; }
+.settings-help-action { flex: none; color: #cbd2da; font-size: 13px; }
+.settings-help-row:hover .settings-help-action { color: #f5f6f7; text-decoration: underline; text-underline-offset: 4px; }
+.settings-help-row:focus-visible { outline: 2px solid #78adff; outline-offset: 5px; border-radius: 8px; }
+
+.settings-label-with-help,
+.settings-section-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.settings-context-help {
+  flex: none;
+  min-height: 1.75rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: #9cbff6;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.settings-context-help:hover {
+  color: #c5ddff;
+}
+
+.settings-context-help:focus-visible {
+  outline: 2px solid #3478eb;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
 .settings-sheet svg { display: none !important; }
 .settings-sheet .settings-close svg { display: block !important; }
 
@@ -445,6 +490,10 @@
   .settings-sheet {
     padding: 1rem;
     width: 100vw;
+  }
+
+  .settings-context-help {
+    min-height: 44px;
   }
 
   .settings-tab {

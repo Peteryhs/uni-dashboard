@@ -127,6 +127,11 @@ fun SetupScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    "The dashboard owner enables Managed OAuth once in Cloudflare. You only need the public HTTPS dashboard address here; never enter a Cloudflare API token.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 TextButton(onClick = { guideOpen = true }) { Text("Setup guide") }
                 OutlinedTextField(
                     value = url,
@@ -135,7 +140,7 @@ fun SetupScreen(
                         serviceError = null
                     },
                     label = { Text("Dashboard address") },
-                    placeholder = { Text("dash.example.com") },
+                    placeholder = { Text("https://your-dashboard.workers.dev") },
                     leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
@@ -171,7 +176,7 @@ fun SetupScreen(
                 }
                 if (browser.error != null && !browser.busy) {
                     Text(
-                        "Check the address and try again. If your dashboard administrator has not enabled managed sign-in, use Advanced below.",
+                        "Check the address and try again. If browser sign-in is unavailable, ask the dashboard owner to complete the one-time Managed OAuth setup or use Advanced for an older service-token deployment.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

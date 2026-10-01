@@ -78,6 +78,25 @@ When a browser session needs renewal, the web dashboard shows **Sign in again** 
 information visible. The action reloads the dashboard through Access's normal browser login;
 Android's OAuth grant duration does not change the web cookie's configured session duration.
 
+### Web loads but cannot reach the backend
+
+The browser uses the same dashboard origin for `/v1/*`; no separate backend address or relay token
+is required on Cloudflare. The asset configuration must send `/v1/*`, `/healthz`, and
+`/oauth/android/callback` to the Worker first. With only the callback listed in `run_worker_first`,
+the SPA fallback returns HTML for API requests even after a successful Access login.
+Keep the corrected `wrangler.toml` when redeploying. Cloudflare explains this behavior in its
+[Worker and static asset routing documentation](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/).
+
+Feeds saved in Connections live in the bound D1 database; Worker secrets are also supported.
+Redeploying the same Worker with the same D1 binding does not require entering those feeds again.
+Saved URLs are intentionally hidden. A failed credential-status request is an unknown connection
+state, rather than proof that credentials are missing. Native Workers AI uses the `AI` binding and
+does not need an Account ID or API token entered in Connections.
+
+Build the web client, then run `node --test test/deployment-routing.test.mjs` to check the real local
+Cloudflare asset router. It verifies API authentication, health, the Android callback, and the SPA
+shell together. This catches routing failures that direct calls to the Worker fetch handler miss.
+
 ### Configure Managed OAuth for Android
 
 The Android redirect URI is derived from the dashboard address at configuration time. The command

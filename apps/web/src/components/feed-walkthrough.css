@@ -1,0 +1,14 @@
+.feed-walkthrough { margin-top: 22px; }
+.feed-walkthrough-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 10px; }
+.feed-walkthrough-header h3 { margin: 0; font-size: 14px; font-weight: 550; }
+.feed-walkthrough-header a { font-size: 12px; }
+.feed-walkthrough-stages { list-style: none; margin: 0; padding: 0; border-block: 1px solid #494d55; }
+.feed-walkthrough-stages li + li { border-top: 1px solid #494d55; }
+.feed-walkthrough-stages button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 12px 0; border: 0; background: transparent; color: #aeb4bc; font-size: 13px; line-height: 1.5; text-align: left; cursor: pointer; }
+.feed-walkthrough-stages button:hover, .feed-walkthrough-stages .is-active button { color: #f5f6f7; }
+.feed-stage-number { display: grid; place-items: center; flex: 0 0 24px; height: 24px; border: 1px solid #494d55; border-radius: 6px; color: #aeb4bc; font-size: 11px; font-variant-numeric: tabular-nums; transition: background 150ms, color 150ms; }
+.is-active .feed-stage-number { color: #f5f6f7; background: #3a3e46; border-color: #626770; }
+.feed-stage-content { padding: 0 0 16px 36px; animation: feed-instruction-reveal 180ms ease-out; }
+.feed-stage-content p { margin: 0; color: #aeb4bc; font-size: 13px; line-height: 1.65; max-width: 55ch; }
+@keyframes feed-instruction-reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .feed-stage-content { animation: none; } .feed-stage-number { transition: none; } }

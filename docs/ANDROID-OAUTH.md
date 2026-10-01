@@ -16,6 +16,30 @@ tokens.
 
 ## Deployment configuration
 
+### One-time owner setup in Cloudflare
+
+The dashboard owner completes this once for the Access application that protects the full
+dashboard hostname. The phone user does not need a Cloudflare account, API token, client ID, or
+client secret for browser sign-in.
+
+In the Cloudflare dashboard, open **Zero Trust → Access controls → Applications**. Find the
+application for the dashboard, open its three-dot menu, choose **Edit**, then open **Advanced
+settings**. Under **Managed OAuth**, enable the feature, add this exact allowed redirect URI, and
+save:
+
+```text
+https://dashboard.example.com/oauth/android/callback
+```
+
+Replace `dashboard.example.com` with the deployed dashboard origin. The URI must use HTTPS and
+must match the origin the phone user enters, including the `/oauth/android/callback` path. Set
+**Access token lifetime** to **15 minutes** and **Grant session duration** to **336 hours (2 weeks)**,
+then choose **Save**. Keep any existing allowed redirect URIs and Access policies when adding the
+Android callback.
+
+This is the only Cloudflare setup needed for the normal Android browser flow. If you do not own
+the Cloudflare application, send these instructions to its owner and wait for them to finish.
+
 Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in the shell running the deployment tool.
 The token needs Cloudflare Access Apps and Policies Read permission for preview and Write
 permission for `--apply`.
@@ -27,8 +51,8 @@ npm run access:oauth -- --dashboard https://dashboard.example.com --app-id <acce
 
 The first command performs a read and previews the effective changes. The second fetches the
 current Access application, preserves its full configuration, and sends a full update. It enables
-Managed OAuth and dynamic client registration, appends the exact callback URI to existing allowed
-URIs, and configures a 15-minute access token with a 336-hour grant session. Existing policies,
+Managed OAuth, appends the exact callback URI to existing allowed URIs, and configures a 15-minute
+access token with a 336-hour grant session. Existing policies,
 destinations, redirect URIs, and localhost/loopback settings stay in place. The tool refuses a
 dashboard whose origin, root, and callback are not already covered by the selected Access
 application.
@@ -37,26 +61,25 @@ The application ID can be omitted when `ACCESS_AUD` is present in `wrangler.toml
 the tool discovers exactly one matching Access application. The tool never stores or prints the
 API token and is preview-only unless `--apply` is supplied.
 
-### Choose the refresh session duration
+### Choose a different refresh session duration
 
-The web Settings setup guide prepares owner instructions for **1, 2, or 3 weeks**. A three-week
-grant is `504h`; the Android app still refreshes its 15-minute access tokens normally. Changing
-the selection in the guide does not modify Cloudflare or extend an existing grant. The owner
-must save the configuration in the Access application's Advanced settings or apply the tool:
+The normal dashboard setup uses a **336-hour (2-week)** grant. The repository tool can prepare a
+different owner choice when the deployment requires it; this does not change a phone's current
+sign-in until the owner saves it in Cloudflare and the user signs in again:
 
 ```text
 npm run access:oauth -- --dashboard https://dashboard.example.com --grant-weeks 3
 npm run access:oauth -- --dashboard https://dashboard.example.com --grant-weeks 3 --apply
 ```
 
-Without `--grant-weeks`, the tool retains its two-week default. Cloudflare recommends 1–2 weeks;
-three weeks requests a longer session and must be accepted by Cloudflare. The application cannot
-promise uninterrupted access: policies and revocation may require an earlier sign-in. Sign in
-again on the phone after changing the configuration to obtain a fresh grant.
+Without `--grant-weeks`, the tool retains the two-week default. The application cannot promise
+uninterrupted access: policies and revocation may require an earlier sign-in. Sign in again on the
+phone after changing the configuration to obtain a fresh grant.
 
 ### Interactive setup guides
 
-Web and Android show the guide on first use and provide a **Setup guide** button in Settings.
+Web shows a checklist for a new empty backend and offers **Setup guide** in Settings → Connections.
+Android offers **Setup guide** in Settings.
 Both remember only the current instruction, so private calendar URLs are never copied into
 guide progress. Web steps save feeds using the existing credentials endpoint and show reported
 source health separately from configured status. Steps can be skipped; finishing does not claim
@@ -67,6 +90,22 @@ dashboard origin. Reminder permission remains optional.
 Deploy the updated Worker (including its static-asset routing configuration) before testing with
 the updated Android app. Managed OAuth must be enabled on the Access application covering the
 same origin that the user enters. Other dashboard origins need their own exact callback entry.
+
+### Connect the phone
+
+After the owner setup is complete, the end user only needs the public HTTPS dashboard address.
+Open UniDash, enter that dashboard address, and tap **Sign in**. The system browser opens the
+Cloudflare Access login; finish authentication there and allow the browser to return to UniDash.
+The app verifies the connection and stores its refresh credential in Android Keystore-backed
+storage. It never asks the phone user for a Cloudflare API token.
+
+For the current deployed dashboard, enter `https://uni-dashboard.petershao288.workers.dev/`.
+Other deployments must use their own HTTPS origin and matching callback URI.
+
+If sign-in discovery fails, check that the address is the dashboard origin rather than the
+Cloudflare admin console, then ask the dashboard owner to confirm the one-time Managed OAuth setup
+and exact callback URI. **Advanced** service-token fields are a fallback for older deployments
+without browser sign-in; they are a separate owner-managed credential path.
 
 ## Authorization and refresh
 
