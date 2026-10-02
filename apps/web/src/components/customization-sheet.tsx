@@ -437,20 +437,11 @@ export function CustomizationSheet({
         </Button>
       </SheetTrigger>}
       <SheetContent ref={sheetRef} showCloseButton={false} className="settings-sheet w-full sm:max-w-[44rem] border-border/80 bg-card p-5 text-foreground overflow-y-auto max-h-screen shadow-2xl">
-        <BlurFade
-          as="div"
-          className="settings-heading-entry"
-          delay={0.02}
-          duration={0.4}
-          offset={8}
-          blur="6px"
-          direction="up"
-          inView
-        >
+        <div className="settings-heading-entry">
           <SheetHeader className="settings-heading p-0 text-left">
             <SheetTitle className="text-base font-semibold">{guideOpen ? 'Setup guide' : 'Settings'}</SheetTitle>
           </SheetHeader>
-        </BlurFade>
+        </div>
         <SheetClose className="settings-close close-detail" aria-label="Close settings">
           <X size={17} />
         </SheetClose>
@@ -522,7 +513,7 @@ export function CustomizationSheet({
             {/* Section 1: AI Taste Profile */}
             <section className="space-y-3">
               <div className="space-y-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">AI Taste Profile</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">AI taste profile</h3>
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   What you like: personal preferences used by Workers AI to score cafeteria dishes and rank dining halls.
                 </p>
@@ -599,7 +590,7 @@ export function CustomizationSheet({
             {/* Section 2: Menu Filter */}
             <section className="space-y-3">
               <div className="space-y-0.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Menu Filter</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Menu filters</h3>
                 <p className="text-xs text-zinc-400 leading-relaxed">Filter visible food items across campus dining halls.</p>
               </div>
               <div className="flex flex-wrap gap-1.5 pt-0.5">
@@ -706,12 +697,12 @@ export function CustomizationSheet({
               <div className="space-y-0.5">
                 <div className="settings-section-label-row">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Relay Data Sources
+                    Data sources
                   </h3>
                   <button type="button" className="settings-context-help" onClick={() => openGuideAt(4)} aria-label="What’s this? Relay data source connection">What’s this?</button>
                 </div>
                 <p className="text-xs text-zinc-400 leading-relaxed">
-                  Real-time feed scraper health, latency, and circuit status.
+                  Check when your connected sources last updated.
                 </p>
               </div>
               <SourceStatus />
@@ -723,7 +714,7 @@ export function CustomizationSheet({
             <div className="space-y-3">
               <div className="space-y-0.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                  Reset Preferences
+                  Reset preferences
                 </h3>
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   Reset local settings, saved courses, and dining taste profile.
@@ -764,7 +755,7 @@ export function CustomizationSheet({
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-0.5">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Hidden Schedule Items
+                    Hidden schedule items
                   </h3>
                   <p className="text-xs text-zinc-400 leading-relaxed">
                     Tasks and timeline events manually dismissed from Today.
@@ -954,7 +945,7 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
         <section className="space-y-3">
           <div className="space-y-0.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              Calendar & Timetable Feeds
+              Calendar feeds
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
               Connect your University of Waterloo timetable and deliverables.
@@ -1023,7 +1014,7 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
         {/* Section 2: Workers AI Connection */}
         <section className="space-y-3 pt-1">
           <div className="space-y-0.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Workers AI Connection</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Workers AI connection</h3>
             <p className="text-xs text-zinc-400 leading-relaxed">{usesAiBinding ? 'Workers AI is connected through your deployment. No Account ID or API token is needed here.' : 'Optional API credentials for a local backend. These are separate from dashboard sign-in.'}</p>
           </div>
 
@@ -1145,7 +1136,7 @@ function AboutTab() {
           <span className="settings-about-version">v0.1.0</span>
         </div>
         <p className="settings-about-tagline">
-          Because the best enggering school in Canada can't build a proper portal. A centralized unidashboard organzing all of your caleners, deadlines and nesseties for uni life.
+          Because the best engineering school in Canada can't build a proper portal. One dashboard for your calendars, deadlines, and university life.
         </p>
         <div className="settings-about-meta">
           <span>
@@ -1166,7 +1157,7 @@ function AboutTab() {
       {/* Instance Telemetry */}
       <div>
         <div className="settings-about-section-header">
-          <h3 className="settings-about-section-title">Instance Status</h3>
+          <h3 className="settings-about-section-title">Instance status</h3>
           <span className="settings-about-status-indicator">
             <span className={cn('settings-about-status-dot', !isConnected && 'is-offline')} />
             {isConnected ? 'Operational' : (healthz.isLoading ? 'Checking…' : 'Unreachable')}
@@ -1210,7 +1201,7 @@ function AboutTab() {
       {/* Compressed Acknowledgements & Sources */}
       <div>
         <div className="settings-about-section-header">
-          <h3 className="settings-about-section-title">Acknowledgements & Sources</h3>
+          <h3 className="settings-about-section-title">Acknowledgements & sources</h3>
         </div>
         <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
           Built on official University of Waterloo campus systems and open telemetry feeds:

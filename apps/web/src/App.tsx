@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, Star, WifiOff, X } from 'lucide-react';
+import { SearchField } from '@/components/ui/search-field';
 import { CustomizationSheet } from '@/components/customization-sheet';
 import { readGuideProgress } from '@/lib/setup-guide';
 import { SetupChecklist } from '@/components/setup-checklist';
@@ -509,7 +510,15 @@ function MenuSection() {
     {menu.data?.status === 'previous' && <p className="menu-status">Today’s menu has not been posted. Showing the last posted menu from {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.status === 'today' && <p className="menu-status">Posted for today, {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
-    {menu.data && <div className="menu-controls"><input type="search" aria-label="Search dishes or outlets" placeholder="Search dishes or outlets" value={preferences.dishSearchQuery} onChange={event => setDishSearchQuery(event.target.value)} /><div className="menu-outlet-select" aria-label="Dining outlets"><button className="context-control" aria-pressed={selectedOutlet === 'all'} onClick={() => setSelectedOutlet('all')}>All outlets</button>{outlets.map(outlet => <button className="context-control" key={outlet} aria-pressed={selectedOutlet === outlet} onClick={() => setSelectedOutlet(outlet)}>{getOutletLocation(outlet).name}</button>)}</div></div>}
+    {menu.data && <div className="menu-controls">
+      <SearchField className="menu-search" label="Search dishes or outlets" placeholder="Search dishes or outlets" clearLabel="Clear dining search" value={preferences.dishSearchQuery} onValueChange={setDishSearchQuery} />
+      <div className="menu-outlet-scroll">
+        <div className="menu-outlet-select" role="group" aria-label="Dining outlets" style={{ '--menu-outlet-count': outlets.length + 1, '--menu-outlet-offset': `${Math.max(0, ['all', ...outlets].indexOf(selectedOutlet)) * 100}%` } as CSSProperties}>
+          <button type="button" aria-pressed={selectedOutlet === 'all'} onClick={() => setSelectedOutlet('all')}>All outlets</button>
+          {outlets.map(outlet => <button type="button" key={outlet} aria-pressed={selectedOutlet === outlet} onClick={() => setSelectedOutlet(outlet)}>{getOutletLocation(outlet).name}</button>)}
+        </div>
+      </div>
+    </div>}
     {menu.isPending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading dining menu…</BlurFade>}
     {menu.isError && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Could not load the dining menu.</BlurFade>}
     {refreshError && <p className="action-error" role="alert">{refreshError}</p>}

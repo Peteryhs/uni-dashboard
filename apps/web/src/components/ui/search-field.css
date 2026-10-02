@@ -1,0 +1,13 @@
+.search-field { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 40px; padding-left: 12px; border: 1px solid #444952; border-radius: 8px; background: #24272c; color: #aeb4bc; transition: border-color 170ms ease, background 170ms ease; }
+.search-field:hover { border-color: #626770; }
+.search-field:focus-within { border-color: #78adff; background: #292c32; outline: 1px solid #78adff; outline-offset: 2px; }
+.search-field > svg { flex: none; }
+.search-field input { flex: 1; width: 0; min-width: 0; min-height: 38px; padding: 0; border: 0; border-radius: 0; background: transparent; color: #f5f6f7; font: inherit; font-size: 13px; line-height: 1.4; letter-spacing: -.01em; outline: none; appearance: none; box-shadow: none; }
+.search-field input::placeholder { color: #aeb4bc; opacity: 1; }
+.search-field input::-webkit-search-cancel-button { appearance: none; }
+.search-field-clear { display: grid; place-items: center; flex: 0 0 36px; align-self: stretch; min-height: 38px; border: 0; border-radius: 6px; background: transparent; color: #aeb4bc; cursor: pointer; transition: color 150ms ease; }
+.search-field-clear:hover { color: #f5f6f7; }
+.search-field-clear:disabled { visibility: hidden; }
+.search-field .search-field-clear:focus-visible { outline: 1px solid #f5f6f7; outline-offset: -5px; }
+@media (max-width: 560px) { .search-field { min-height: 44px; } .search-field input { min-height: 42px; font-size: 16px; } .search-field-clear { flex-basis: 44px; min-height: 42px; } }
+@media (prefers-reduced-motion: reduce) { .search-field, .search-field-clear { transition: none; } }

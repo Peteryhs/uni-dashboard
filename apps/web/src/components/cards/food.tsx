@@ -10,7 +10,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   UtensilsCrossed,
-  Search,
   Star,
   X,
   ChevronRight,
@@ -25,7 +24,7 @@ import {
 import { CardShell, EmptyState } from '@/components/card-shell';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Input } from '@/components/ui/input';
+import { SearchField } from '@/components/ui/search-field';
 import { mutedIfStale } from '@/components/freshness';
 import { migrateTasteProfile, usePreferences, type DietaryPreference, type TasteProfile } from '@/lib/preferences-store';
 import type { Card as CardT, FoodData, FoodDish, FoodOutletPinned, FoodAiRecommendation } from '@/lib/contract';
@@ -649,26 +648,7 @@ export function FoodCard({ card, now }: { card: CardT<FoodData>; now: number }) 
           {/* Controls Bar: Search (Detailed mode only) & Quick Diet Chips */}
           <div className="flex flex-col gap-2 pt-1">
             {!isCompact && (
-              <div className="relative flex items-center">
-                <Search className="pointer-events-none absolute left-2.5 size-3.5 text-zinc-400" />
-                <Input
-                  type="text"
-                  value={localSearch}
-                  onChange={(e) => setLocalSearch(e.target.value)}
-                  placeholder="Search dishes across dining halls (e.g. lasagna, chicken, tofu)..."
-                  className="h-8 pl-8 pr-8 text-xs bg-card border-border/80 text-foreground placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-                />
-                {localSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setLocalSearch('')}
-                    aria-label="Clear search input"
-                    className="absolute right-2.5 rounded-md p-0.5 text-zinc-400 hover:text-foreground focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-                  >
-                    <X className="size-3" />
-                  </button>
-                )}
-              </div>
+              <SearchField value={localSearch} onValueChange={setLocalSearch} label="Search dishes across dining halls" placeholder="Search dishes or dining halls" clearLabel="Clear search input" />
             )}
 
             {/* Outlet selector tabs, dietary filter pills, and guide button */}

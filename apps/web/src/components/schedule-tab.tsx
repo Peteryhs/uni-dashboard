@@ -524,7 +524,7 @@ export function ScheduleTab() {
       {/* SECTION 1: ADD NEW */}
       <div className="space-y-3">
         <div className="space-y-0.5">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Add Office Hours with AI</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#78adff]">Add office hours with AI</h3>
           <p className="text-xs text-zinc-400 leading-relaxed">
             Paste text from a course announcement, syllabus, or Piazza post. Workers AI extracts recurring slots into a reviewable draft.
           </p>
@@ -533,7 +533,7 @@ export function ScheduleTab() {
         <div className="space-y-3">
           <div>
             <Label htmlFor={pasteTextId} className="text-xs text-zinc-300 font-medium">
-              Announcement or Syllabus Text
+              Announcement or syllabus text
             </Label>
             <Textarea
               id={pasteTextId}
@@ -548,7 +548,7 @@ export function ScheduleTab() {
           <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3">
             <div>
               <Label htmlFor={courseInputId} className="text-xs text-zinc-300 font-medium">
-                Course Code (Optional)
+                Course code (optional)
               </Label>
               <Input
                 id={courseInputId}
@@ -757,7 +757,7 @@ export function ScheduleTab() {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              Active Office Hours
+              Active office hours
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
               Saved recurring timetable slots and custom tutorial schedules.

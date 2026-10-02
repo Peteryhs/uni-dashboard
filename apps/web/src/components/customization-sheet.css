@@ -9,6 +9,7 @@
   color: #f3f4f6;
   overflow-x: hidden;
   overscroll-behavior: contain;
+  box-shadow: none;
 }
 
 .settings-heading-entry,
@@ -81,18 +82,17 @@
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid #626770;
-  border-radius: 50%;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
   color: #d2d6dc;
-  transition: background 160ms ease, transform 160ms ease, color 160ms ease, border-color 160ms ease;
+  transition: background 160ms ease, color 160ms ease;
 }
 
 .settings-close:hover {
-  background: #40454d;
+  background: #343840;
   color: #fff;
   border-color: #787e88;
-  transform: rotate(90deg);
 }
 
 .settings-close:focus-visible {
@@ -176,6 +176,36 @@
   min-width: 0;
   max-width: 100%;
 }
+
+.settings-sheet h3.uppercase,
+.settings-sheet .settings-ai-heading h3,
+.settings-sheet .settings-course-heading h3,
+.settings-sheet .settings-course-list-heading h3,
+.settings-sheet .settings-about-section-title {
+  font-size: 14px;
+  font-weight: 550;
+  text-transform: none;
+  letter-spacing: -.01em;
+}
+
+.settings-sheet :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), textarea, select) {
+  border: 1px solid #494d55;
+  border-radius: 8px;
+  background: #292c32;
+  color: #f5f6f7;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: none;
+}
+.settings-sheet :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), select) { min-height: 40px; }
+.settings-sheet textarea { min-height: 96px; }
+.settings-sheet [data-slot='label'] { font-size: 12px; font-weight: 500; line-height: 1.5; }
+.settings-sheet :is(input, textarea)::placeholder { color: #aeb4bc; opacity: 1; }
+.settings-sheet :is(input, textarea, select):focus-visible { border-color: #78adff; outline: 1px solid #78adff; outline-offset: 2px; box-shadow: none; }
+.settings-sheet [data-slot='button'] { min-height: 36px; border-radius: 8px; box-shadow: none; }
+.settings-sheet [data-variant='outline'] { background: transparent; }
+.settings-sheet [data-variant='outline']:hover { background: #343840; }
 
 .settings-sheet pre {
   max-width: 100%;
@@ -495,6 +525,10 @@
   .settings-context-help {
     min-height: 44px;
   }
+  .settings-sheet :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), textarea, select) { font-size: 16px; }
+  .settings-sheet :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), select) { min-height: 44px; }
+  .settings-sheet [data-slot='button'], .settings-close { min-height: 44px; }
+  .settings-close { width: 44px; }
 
   .settings-tab {
     gap: 0.25rem;
@@ -577,7 +611,7 @@
   gap: 0.4rem 0.6rem;
   margin-top: 0.55rem;
   font-size: 0.74rem;
-  color: #6b7280;
+  color: #aeb4bc;
 }
 
 .settings-about-meta a {
