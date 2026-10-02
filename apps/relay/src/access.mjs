@@ -69,7 +69,12 @@ export async function verifyAccessJwt(token, { teamDomain, aud, fetchImpl = fetc
     return { ok: false, reason: 'malformed token' };
   }
   // Pinning the algorithm stops `alg: none` and any HMAC-with-the-public-key confusion.
-  if (header.alg !== 'RS256' || !header.kid) return { ok: false, reason: 'unexpected algorithm' };
+  if (!header || typeof header !== 'object' || Array.isArray(header) || !payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false, reason: 'malformed token' };
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid) return { ok: false, reason: 'unexpected algorithm' };
+
+  let signature;
+  try { signature = b64urlBytes(parts[2]); }
+  catch { return { ok: false, reason: 'malformed signature' }; }
 
   let keys = await signingKeys(teamDomain, fetchImpl, now);
   // An unknown kid usually means Access rotated its keys since the cache filled.
@@ -78,7 +83,7 @@ export async function verifyAccessJwt(token, { teamDomain, aud, fetchImpl = fetc
   if (!key) return { ok: false, reason: 'unknown signing key' };
 
   const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-  const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64urlBytes(parts[2]), signed);
+  const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signed);
   if (!valid) return { ok: false, reason: 'bad signature' };
 
   const nowS = Math.floor(now / 1000);

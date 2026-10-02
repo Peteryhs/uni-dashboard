@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, Settings2, Star, WifiOff, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Settings2, Star, WifiOff, X } from 'lucide-react';
 import { SearchField } from '@/components/ui/search-field';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { CustomizationSheet } from '@/components/customization-sheet';
 import { readGuideProgress } from '@/lib/setup-guide';
 import { SetupChecklist } from '@/components/setup-checklist';
@@ -476,6 +477,12 @@ function MenuSection() {
   const { preferences, isFavoriteDish, toggleFavoriteDish, isFavoriteOutlet, toggleFavoriteOutlet, setDishSearchQuery } = usePreferences();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+  const [refreshStatus, setRefreshStatus] = useState('');
+  useEffect(() => {
+    if (refreshStatus !== 'Updated') return;
+    const timer = window.setTimeout(() => setRefreshStatus(''), 2200);
+    return () => window.clearTimeout(timer);
+  }, [refreshStatus]);
   const [selectedOutlet, setSelectedOutlet] = useState('all');
   const menu = useQuery({ queryKey: ['posted-menu'], queryFn: ({ signal }) => fetchPostedMenu(signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
   const diningRecommendation = useDiningRecommendation(menu.data?.service_date ?? undefined);
@@ -500,13 +507,24 @@ function MenuSection() {
     return rankA - rankB || Number(isFavoriteOutlet(b)) - Number(isFavoriteOutlet(a)) || a.localeCompare(b);
   });
   const refresh = async () => {
-    setRefreshing(true); setRefreshError('');
-    try { await triggerPoll('uw-food-daily-menu'); await queryClient.invalidateQueries({ queryKey: ['posted-menu'] }); }
-    catch (error) { setRefreshError(error instanceof Error ? error.message : 'Could not refresh the menu.'); }
+    setRefreshing(true); setRefreshError(''); setRefreshStatus('Checking menu…');
+    try {
+      const result = await triggerPoll('uw-food-daily-menu');
+      await queryClient.invalidateQueries({ queryKey: ['posted-menu'] });
+      const issue = result.receipts.find(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty');
+      if (issue) throw new Error(refreshIssue(issue.source_id, issue.error, issue.outcome));
+      const viewError = queryClient.getQueryState(['posted-menu'])?.error;
+      if (viewError) throw viewError;
+      setRefreshStatus('Updated');
+    }
+    catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not refresh the menu.';
+      setRefreshError(message); setRefreshStatus(refreshRequestIssue(message));
+    }
     finally { setRefreshing(false); }
   };
   return <BlurFade as="section" className="content-section" id="menu" inView duration={0.45} offset={10} blur="6px" direction="up">
-    <div className="section-head"><h2>Dining menu</h2><button className="section-control" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={15} className={refreshing ? 'spinning' : ''} /> Refresh menu</button></div>
+    <div className="section-head"><h2>Dining menu</h2><RefreshButton label="Refresh menu" refreshing={refreshing} onRefresh={() => void refresh()} status={refreshStatus} error={refreshError} /></div>
     {menu.data?.status === 'previous' && <p className="menu-status">Today’s menu has not been posted. Showing the last posted menu from {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.status === 'today' && <p className="menu-status">Posted for today, {dateLabel(menu.data.service_date!)}.</p>}
     {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
@@ -701,7 +719,7 @@ export default function App() {
         {alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}
         {(offline || recs.isError || isOld) && <span className="saved-context"><WifiOff size={13} /> Saved information</span>}
         <div className="day-context-actions">
-          <button className={'top-refresh' + (syncStatus ? ' has-status' : '') + (syncError ? ' has-error' : '')} onClick={() => void refreshAll()} disabled={syncing} aria-label="Refresh all sources" title={syncError || 'Refresh all sources'}><RefreshCw size={16} className={syncing ? 'spinning' : ''} /><span className="top-refresh-status" aria-hidden="true">{visibleSyncStatus && <BlurFade as="span" className="top-refresh-message" key={visibleSyncStatus} duration={0.24} offset={3} blur="3px" direction="up">{visibleSyncStatus}</BlurFade>}</span></button>
+          <RefreshButton label="Refresh all sources" refreshing={syncing} onRefresh={() => void refreshAll()} status={syncStatus} visibleStatus={visibleSyncStatus ?? ''} error={syncError} />
           <span className="sr-only" role="status">{syncError || syncStatus}</span>
           <button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button>
         </div>

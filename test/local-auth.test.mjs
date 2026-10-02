@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, basename } from 'node:path';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
@@ -111,4 +111,36 @@ test('bearer authentication remains required and does not bypass the browser wri
   assert.equal((await fetch(`${root}/v1/poll`, {
     method: 'POST', headers: { authorization: 'Bearer synthetic-token', origin: 'https://foreign.example' },
   })).status, 403);
+});
+
+test('local credentials reject non-object bodies and cleared values stay removed on disk', async (t) => {
+  const { root, store } = await listener(t);
+  const originalCwd = process.cwd();
+  const names = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'];
+  const originals = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  process.chdir(scratch);
+  t.after(() => {
+    process.chdir(originalCwd);
+    for (const name of names) {
+      if (originals[name] === undefined) delete process.env[name];
+      else process.env[name] = originals[name];
+    }
+  });
+  const post = payload => fetch(`${root}/v1/credentials`, { method: 'POST', body: JSON.stringify(payload) });
+  for (const value of [null, [], 'oops']) assert.equal((await post(value)).status, 400);
+  for (const name of names) process.env[name] = name.endsWith('_ICS_URL') ? 'https://synthetic.test/old.ics' : 'old-token';
+  writeFileSync(join(scratch, '.env'), '# keep this\r\nUNRELATED=value\r\n' + names.map(name => `${name}=${process.env[name]}`).join('\r\n') + '\r\nLEARN_ICS_URL=https://synthetic.test/duplicate.ics\r\n');
+  assert.equal((await post(Object.fromEntries(names.map(name => [name, ''])))).status, 200);
+  const cleared = readFileSync(join(scratch, '.env'), 'utf8');
+  assert.match(cleared, /# keep this/);
+  assert.match(cleared, /UNRELATED=value/);
+  for (const name of names) {
+    assert.equal(process.env[name], undefined);
+    assert.equal(cleared.includes(`${name}=`), false, name);
+  }
+  const future = Date.now() + 6 * 3600_000;
+  store.scheduleJob('uw-portal-ics', future);
+  store.scheduleJob('uw-learn-ics', future);
+  assert.equal((await post({ GOOGLE_CALENDAR_ICS_URL: 'https://synthetic.test/new.ics', LEARN_ICS_URL: 'https://synthetic.test/new-learn.ics' })).status, 200);
+  for (const job of store.jobs()) assert.ok(job.next_due_at <= Date.now(), 'changed feeds become due immediately');
 });

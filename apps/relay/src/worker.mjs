@@ -494,11 +494,25 @@ async function handleFetch(request, env, ctx) {
         return json({ error: 'invalid json' }, 400);
       }
 
-      const stored = [];
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Body must be a JSON object' }, 400);
+      // Validate the whole request before changing any saved value. A later invalid field must
+      // not leave earlier fields saved even though the client received a rejection.
+      const updates = [];
       for (const [name, value] of Object.entries(body)) {
         if (!SETTING_KEYS.includes(name)) continue;
         if (typeof value !== 'string') return json({ error: `${name} must be a string` }, 400);
         const trimmed = value.trim();
+        if (trimmed && !WRITABLE_SETTINGS[name](trimmed)) {
+          return json({ error: name === 'OFFICE_HOURS_JSON' ? 'OFFICE_HOURS_JSON must be a valid office hours configuration'
+            : name.endsWith('_ICS_URL') ? `${name} must be an https URL with no whitespace`
+              : `${name} must contain only letters, numbers, underscores and hyphens` }, 400);
+        }
+        updates.push([name, trimmed]);
+      }
+
+      const stored = [];
+      const feedsToSchedule = new Set();
+      for (const [name, trimmed] of updates) {
         const previous = await store.getSetting(name);
         const wasConfigured = name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL'
           ? (process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || previous || '')
@@ -515,16 +529,12 @@ async function handleFetch(request, env, ctx) {
           stored.push({ name, cleared: true });
           continue;
         }
-        if (!WRITABLE_SETTINGS[name](trimmed)) {
-          return json(
-            { error: name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' || name === 'LEARN_ICS_URL' ? `${name} must be an https URL with no whitespace` : `${name} must contain only letters, numbers, underscores and hyphens` },
-            400,
-          );
-        }
         await store.setSetting(name, trimmed, changedAt);
         if (valueChanged) {
           const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
           if (marker) await store.setSetting(marker, String(changedAt), changedAt);
+          if (name === 'LEARN_ICS_URL') feedsToSchedule.add('uw-learn-ics');
+          if (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL') feedsToSchedule.add('uw-portal-ics');
         }
         if (name !== 'OFFICE_HOURS_JSON') {
           process.env[name] = trimmed;
@@ -533,6 +543,9 @@ async function handleFetch(request, env, ctx) {
       }
 
       // A new feed URL should show up now, not on the next cron tick.
+      // Blocked feeds are parked for six hours. Bring changed feeds forward before the capped
+      // poll, leaving any second feed due for the next tick rather than waiting out that delay.
+      for (const sourceId of feedsToSchedule) await store.scheduleJob(sourceId, Date.now());
       const changed = stored.some((s) => !s.cleared);
       let polled = [];
       if (changed) {

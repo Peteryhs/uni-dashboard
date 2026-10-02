@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { D1Store } from '../apps/relay/src/d1-store.mjs';
@@ -8,6 +8,13 @@ import { saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-
 import { clearAiCache } from '../apps/relay/src/ai.mjs';
 import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
 import { clearAccessCache } from '../apps/relay/src/access.mjs';
+
+// Credential tests use synthetic feeds. Never let newly scheduled polls reach the network.
+const networkFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = async () => new Response('Synthetic upstream unavailable', { status: 503 });
+});
+afterEach(() => { globalThis.fetch = networkFetch; });
 
 /**
  * The D1 binding, mocked over node:sqlite, counting prepared statements so a test can assert the
@@ -275,6 +282,10 @@ test('a request signed by Access reaches /v1; forged, expired or foreign ones do
     ['other team', await fx.sign({ ...fx.good, iss: 'https://evil.cloudflareaccess.com' })],
     ['alg none', (await fx.sign(fx.good, { alg: 'none' })).replace(/\.[^.]+$/, '.')],
     ['unknown key', await fx.sign(fx.good, { kid: 'k2' })],
+    ['null claims', await fx.sign(null)],
+    ['array claims', await fx.sign([])],
+    ['null header', `${Buffer.from('null').toString('base64url')}.${Buffer.from('{}').toString('base64url')}.AA`],
+    ['bad signature encoding', (await fx.sign(fx.good)).replace(/\.[^.]+$/, '.%%%')],
   ];
   const tampered = (await fx.sign(fx.good)).split('.');
   tampered[1] = Buffer.from(JSON.stringify({ ...fx.good, aud: [AUD], email: 'attacker@x' })).toString('base64url');
@@ -481,6 +492,58 @@ test('a saved credential is validated before it becomes an environment variable'
   );
   assert.equal(injection.status, 400, 'whitespace would smuggle a second variable');
   assert.equal(process.env.RELAY_TOKEN, undefined);
+});
+
+test('credential validation rejects the whole payload without partially saving or clearing settings', async (t) => {
+  t.after(clearEnvSettings);
+  const { api, db } = createMockD1();
+  t.after(() => db.close());
+  const store = new D1Store(api);
+  await store.init();
+  const original = 'https://learn.test/original.ics';
+  await store.setSetting('LEARN_ICS_URL', original, 123);
+  const env = { ACCESS_DISABLED: '1', DB: api };
+  for (const payload of [
+    null, [], 'not an object', 42,
+    { LEARN_ICS_URL: '', CLOUDFLARE_API_TOKEN: 'bad token' },
+    { LEARN_ICS_URL: 'https://learn.test/replacement.ics', PORTAL_ICS_URL: 'http://invalid.test/feed' },
+    { LEARN_ICS_URL: 'https://learn.test/replacement.ics', CLOUDFLARE_API_TOKEN: null },
+  ]) {
+    const response = await worker.fetch(new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify(payload) }), env, {});
+    assert.equal(response.status, 400, JSON.stringify(payload));
+    assert.equal(await store.getSetting('LEARN_ICS_URL'), original);
+    assert.equal(await store.getSetting('SETUP_LEARN_CHANGED_AT'), null);
+    assert.equal((await store.jobs()).length, 0);
+  }
+});
+
+test('saving changed feeds makes parked jobs due, polls one and leaves the other queued within the Worker budget', async (t) => {
+  t.after(clearEnvSettings);
+  const { api, db, counter } = createMockD1();
+  t.after(() => db.close());
+  const store = new D1Store(api);
+  await store.init();
+  const future = Date.now() + 6 * 3600_000;
+  for (const id of ['uw-portal-ics', 'uw-learn-ics']) await store.scheduleJob(id, future);
+  const fetched = [];
+  globalThis.fetch = async (url) => {
+    fetched.push(String(url));
+    return new Response('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n', { headers: { 'content-type': 'text/calendar' } });
+  };
+  const env = { ACCESS_DISABLED: '1', DB: api };
+  const feeds = { GOOGLE_CALENDAR_ICS_URL: 'https://calendar.test/new.ics', LEARN_ICS_URL: 'https://learn.test/new.ics' };
+  const before = counter.prepares;
+  const response = await worker.fetch(new Request('https://dash.test/v1/credentials', { method: 'POST', body: JSON.stringify(feeds) }), env, {});
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).polled.length, 1);
+  assert.ok(counter.prepares - before <= 50, `saving two feeds used ${counter.prepares - before} D1 queries`);
+  assert.equal(fetched.length, 1);
+  const polledId = fetched[0] === feeds.GOOGLE_CALENDAR_ICS_URL ? 'uw-portal-ics' : 'uw-learn-ics';
+  const jobs = await store.jobs();
+  assert.ok(jobs.find(job => job.source_id === polledId).next_due_at > Date.now());
+  assert.ok(jobs.find(job => job.source_id !== polledId && ['uw-portal-ics', 'uw-learn-ics'].includes(job.source_id)).next_due_at <= Date.now());
+  assert.equal((await pollDue(store)).receipts[0].source_id, polledId === 'uw-portal-ics' ? 'uw-learn-ics' : 'uw-portal-ics');
+  assert.equal(fetched.length, 2);
 });
 
 test('an empty value clears a saved credential', async (t) => {

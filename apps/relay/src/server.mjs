@@ -453,6 +453,7 @@ export function createServer({
           } catch {
             return send(400, { error: 'invalid json' });
           }
+          if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400, { error: 'Body must be a JSON object' });
           const { PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN } = body;
           for (const [name, value] of Object.entries({ PORTAL_ICS_URL, GOOGLE_CALENDAR_ICS_URL, LEARN_ICS_URL })) {
             if (value === undefined || value === '') continue;
@@ -498,6 +499,8 @@ export function createServer({
           const changedAt = Date.now();
           if (scheduleChanged) store.setSetting(SETUP_SCHEDULE_CHANGED_AT, String(changedAt), changedAt);
           if (learnChanged) store.setSetting(SETUP_LEARN_CHANGED_AT, String(changedAt), changedAt);
+          if (scheduleChanged && scheduleInput.trim()) store.scheduleJob('uw-portal-ics', changedAt);
+          if (learnChanged && LEARN_ICS_URL.trim()) store.scheduleJob('uw-learn-ics', changedAt);
           if (typeof CLOUDFLARE_ACCOUNT_ID === 'string') {
             const trimmed = CLOUDFLARE_ACCOUNT_ID.trim();
             if (trimmed) {
@@ -525,38 +528,17 @@ export function createServer({
             const { resolve } = await import('node:path');
             const envPath = resolve(process.cwd(), '.env');
             let content = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
-            if (process.env.PORTAL_ICS_URL) {
-              if (/^PORTAL_ICS_URL=/m.test(content)) {
-                content = content.replace(/^PORTAL_ICS_URL=.*$/m, `PORTAL_ICS_URL=${process.env.PORTAL_ICS_URL}`);
-              } else {
-                content += `\nPORTAL_ICS_URL=${process.env.PORTAL_ICS_URL}`;
-              }
-              if (/^GOOGLE_CALENDAR_ICS_URL=/m.test(content)) {
-                content = content.replace(/^GOOGLE_CALENDAR_ICS_URL=.*$/m, `GOOGLE_CALENDAR_ICS_URL=${process.env.PORTAL_ICS_URL}`);
-              } else {
-                content += `\nGOOGLE_CALENDAR_ICS_URL=${process.env.PORTAL_ICS_URL}`;
-              }
-            }
-            if (process.env.LEARN_ICS_URL) {
-              if (/^LEARN_ICS_URL=/m.test(content)) {
-                content = content.replace(/^LEARN_ICS_URL=.*$/m, `LEARN_ICS_URL=${process.env.LEARN_ICS_URL}`);
-              } else {
-                content += `\nLEARN_ICS_URL=${process.env.LEARN_ICS_URL}`;
-              }
-            }
-            if (process.env.CLOUDFLARE_ACCOUNT_ID) {
-              if (/^CLOUDFLARE_ACCOUNT_ID=/m.test(content)) {
-                content = content.replace(/^CLOUDFLARE_ACCOUNT_ID=.*$/m, `CLOUDFLARE_ACCOUNT_ID=${process.env.CLOUDFLARE_ACCOUNT_ID}`);
-              } else {
-                content += `\nCLOUDFLARE_ACCOUNT_ID=${process.env.CLOUDFLARE_ACCOUNT_ID}`;
-              }
-            }
-            if (process.env.CLOUDFLARE_API_TOKEN) {
-              if (/^CLOUDFLARE_API_TOKEN=/m.test(content)) {
-                content = content.replace(/^CLOUDFLARE_API_TOKEN=.*$/m, `CLOUDFLARE_API_TOKEN=${process.env.CLOUDFLARE_API_TOKEN}`);
-              } else {
-                content += `\nCLOUDFLARE_API_TOKEN=${process.env.CLOUDFLARE_API_TOKEN}`;
-              }
+            const names = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'];
+            for (const name of names) {
+              const isSchedule = name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL';
+              const supplied = isSchedule ? scheduleInput !== undefined : body[name] !== undefined;
+              if (!supplied) continue;
+              // Remove every old occurrence, including cleared values. Otherwise a removed
+              // credential silently returns the next time the relay loads .env on startup.
+              const line = new RegExp(`^(?:export\\s+)?${name}\\s*=.*(?:\\r?\\n|$)`, 'gm');
+              content = content.replace(line, '');
+              const value = process.env[name];
+              if (value) content = content.trimEnd() + `\n${name}=${value}\n`;
             }
             writeFileSync(envPath, content.trim() + '\n', 'utf8');
           } catch (e) {
