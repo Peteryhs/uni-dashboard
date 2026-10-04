@@ -264,7 +264,10 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   }
   const sourceNames = { 'uw-portal-ics': 'Class schedule', 'uw-learn-ics': 'LEARN calendar', 'user-office-hours': 'Office hours' };
   for (const source of calendar.sources || []) if (source.status !== 'ok') warnings.push(`${sourceNames[source.id] || source.id}: ${source.status === 'failed' ? 'the latest sync failed; cached events may be out of date.' : source.status === 'unconfigured' ? 'not configured.' : 'waiting for its first sync.'}`);
-  if (events.some(event => ['stale', 'dead'].includes(event.state))) warnings.push('Some calendar details are old. Confirm changed times and deadlines in the source course.');
+  const staleCalendarSources = new Set(events.filter(event => ['stale', 'dead'].includes(event.state))
+    .map(event => sourceNames[event.source_id] || event.source_label || event.source_id)
+    .filter(Boolean));
+  for (const sourceName of staleCalendarSources) warnings.push(`${sourceName} data is old; this reflects sync age, not a confirmed event change. Check current times and deadlines at the source.`);
   if (calendar.truncated) warnings.push('The calendar response was truncated; some events may be missing.');
   const ranked = rankRecommendationItems(candidates.filter(isVisible));
   const items = ranked.slice(0, 16);

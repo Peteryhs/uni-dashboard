@@ -755,7 +755,7 @@ export default function App() {
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
-      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} source updates need attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
+      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} ${recs.data.warnings.length === 1 ? 'source warning needs' : 'source warnings need'} attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}
     </section>
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />

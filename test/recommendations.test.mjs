@@ -142,15 +142,34 @@ test('completion survives time passing, snooze expires, undo works, and changed 
 test('overdue is unconfirmed, stale sources are visible, and yesterday’s menu is never a lunch suggestion', () => {
   const data = syntheticDay();
   data.calendar.sources[0].status = 'failed';
-  data.calendar.days[0].events.forEach(event => { event.state = 'dead'; });
+  data.calendar.days[0].events.forEach(event => {
+    event.state = 'dead';
+    event.source_id = event.source_label === 'LEARN' ? 'uw-learn-ics' : event.category === 'office_hours' ? 'user-office-hours' : 'uw-portal-ics';
+  });
   const feed = recommendationsFromData({ ...data, now: at('2026-09-24', '11:45') });
   const quiz = feed.tasks.small.find(task => task.title.includes('Quiz 2'));
   assert.match(quiz.title, /Confirm submission/);
   assert.match(quiz.body, /submission status is unknown/);
   assert.equal(quiz.state, 'dead');
   assert.ok(feed.warnings.some(warning => warning.includes('latest sync failed')));
-  assert.ok(feed.warnings.some(warning => warning.includes('details are old')));
+  const freshnessWarnings = feed.warnings.filter(warning => warning.includes('data is old'));
+  assert.deepEqual(freshnessWarnings.map(warning => warning.split(' data is old')[0]), ['Class schedule', 'LEARN calendar', 'Office hours']);
+  assert.ok(freshnessWarnings.every(warning => warning.includes('reflects sync age') && warning.includes('not a confirmed event change')));
   assert.ok(!feed.items.some(item => item.kind === 'food'));
+});
+
+test('calendar freshness warning identifies only stale sources and deduplicates their events', () => {
+  const data = syntheticDay();
+  const [schedule, secondSchedule, learn] = data.calendar.days[0].events;
+  schedule.source_id = secondSchedule.source_id = 'uw-portal-ics';
+  schedule.state = secondSchedule.state = 'stale';
+  learn.source_id = 'uw-learn-ics';
+  learn.state = 'live';
+  const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
+  const freshnessWarnings = feed.warnings.filter(warning => warning.includes('data is old'));
+  assert.equal(freshnessWarnings.length, 1);
+  assert.match(freshnessWarnings[0], /^Class schedule data is old/);
+  assert.match(freshnessWarnings[0], /reflects sync age, not a confirmed event change/);
 });
 
 test('schedule conflicts are surfaced, focus windows avoid commitments, and weekend remains useful', () => {

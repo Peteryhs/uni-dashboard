@@ -1082,8 +1082,14 @@ function SourceStatus() {
     setRefreshing(true);
     setError('');
     try {
-      await triggerPoll();
-      await queryClient.invalidateQueries({ queryKey: ['health'] });
+      const result = await triggerPoll();
+      await Promise.all(['health', 'dashboard', 'full-calendar', 'calendar', 'recommendations', 'setup-status'].map(key =>
+        queryClient.invalidateQueries({ queryKey: [key] }),
+      ));
+      const issues = result.receipts.filter(receipt => !['ok', 'empty'].includes(receipt.outcome));
+      if (issues.length > 0) {
+        setError(issues.map(receipt => `${receipt.source_id}: ${receipt.error || receipt.outcome}`).join(' · '));
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not refresh sources.');
     } finally {
