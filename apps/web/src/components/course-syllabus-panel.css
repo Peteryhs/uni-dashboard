@@ -35,7 +35,6 @@
   gap: 0.5rem;
 }
 
-.syllabus-toggle-main > svg { color: #aeb4bc; flex: 0 0 auto; }
 .syllabus-toggle-main strong { font-size: 0.78rem; font-weight: 600; }
 .syllabus-toggle-course { overflow: hidden; color: #aeb4bc; font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
 .syllabus-toggle-status { flex: 0 0 auto; color: #aeb4bc; font-size: 0.68rem; }
@@ -86,7 +85,7 @@
   line-height: 1.4;
 }
 
-.syllabus-warnings > svg { flex: 0 0 auto; margin-top: 0.05rem; }
+.syllabus-warnings strong { flex: 0 0 auto; }
 .syllabus-warnings ul { margin: 0; padding-left: 1rem; }
 .syllabus-warnings li + li { margin-top: 0.2rem; }
 
@@ -108,9 +107,7 @@
 .syllabus-entry-kind { padding: 0.1rem 0.35rem; border: 1px solid rgb(255 255 255 / 12%); border-radius: 4px; color: #d9dce1; text-transform: uppercase; letter-spacing: 0.045em; }
 .syllabus-entry-kind--assessment { border-color: rgb(245 158 11 / 28%); background: rgb(245 158 11 / 7%); color: #fcd58b; }
 .syllabus-entry-kind--reading { border-color: rgb(52 120 235 / 25%); background: rgb(52 120 235 / 8%); color: #9dc0ff; }
-.syllabus-entry strong { color: #f5f6f7; font-size: 0.72rem; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
-.syllabus-entry p { margin: 0; color: #aeb4bc; font-size: 0.66rem; line-height: 1.4; overflow-wrap: anywhere; }
-.syllabus-entry p > span { color: #d2d6dc; font-weight: 600; }
+.syllabus-entry > strong { color: #f5f6f7; font-size: 13px; font-weight: 550; line-height: 1.55; overflow-wrap: anywhere; }
 .syllabus-entry > a { display: inline-flex; width: fit-content; align-items: center; gap: 0.25rem; color: #78adff; font-size: 0.66rem; text-decoration: none; }
 .syllabus-entry > a:hover { text-decoration: underline; }
 
@@ -136,66 +133,16 @@
 .syllabus-ai-note { margin: 0; color: #8d949e; font-size: 0.63rem; line-height: 1.4; }
 .syllabus-preview-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 
-.syllabus-action {
-  display: inline-flex;
-  min-height: 2rem;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid rgb(255 255 255 / 13%);
-  border-radius: 6px;
-  background: rgb(255 255 255 / 3%);
-  color: #e6e8ec;
-  font: inherit;
-  font-size: 0.67rem;
-  font-weight: 550;
-  cursor: pointer;
-}
-
-.syllabus-action:hover:not(:disabled) { border-color: rgb(255 255 255 / 24%); background: rgb(255 255 255 / 6%); }
-.syllabus-action:focus-visible { outline: 2px solid #3478eb; outline-offset: 2px; }
-.syllabus-action:disabled { opacity: 0.5; cursor: not-allowed; }
-.syllabus-action--primary { border-color: rgb(255 255 255 / 19%); background: rgb(255 255 255 / 5%); color: #e6e8ec; }
-.syllabus-action--ai {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.65rem;
-  border: 1px solid rgb(52 120 235 / 30%);
-  border-radius: 6px;
-  background: rgb(52 120 235 / 10%);
-  color: #78adff;
-  font: inherit;
-  font-size: 0.67rem;
-  font-weight: 550;
-  cursor: pointer;
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
-}
-.syllabus-action--ai::before { display: none; }
-.syllabus-action--ai:hover:not(:disabled) {
-  border-color: rgb(52 120 235 / 50%);
-  background: rgb(52 120 235 / 20%);
-  color: #c5ddff;
-  text-decoration: none;
-}
-.syllabus-action--save { width: fit-content; border-color: rgb(255 255 255 / 19%); background: #e6e8ec; color: #1d1f23; }
 .syllabus-ai-note { color: #9cbff6; }
 
 .syllabus-error,
 .syllabus-success { margin: 0; padding: 0.5rem 0.6rem; border-radius: 6px; font-size: 0.67rem; line-height: 1.4; overflow-wrap: anywhere; }
 .syllabus-error { border: 1px solid rgb(244 63 94 / 25%); background: rgb(244 63 94 / 7%); color: #fda4af; }
-.syllabus-error button { margin-left: 0.25rem; border: 0; background: transparent; color: #fda4af; font: inherit; text-decoration: underline; cursor: pointer; }
+.syllabus-load-error { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.syllabus-load-error > span { min-width: 0; flex: 1 1 auto; }
 .syllabus-success { border: 1px solid rgb(16 185 129 / 23%); background: rgb(16 185 129 / 6%); color: #86efac; }
-.syllabus-spin { animation: syllabus-spin 1s linear infinite; }
-@keyframes syllabus-spin { to { transform: rotate(360deg); } }
-
 @media (max-width: 420px) {
   .syllabus-toggle-course { display: none; }
   .syllabus-context-fields { grid-template-columns: 1fr; }
-  .syllabus-preview-actions > .syllabus-action { flex: 1 1 100%; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .syllabus-spin { animation: none; transition: none; }
+  .syllabus-preview-actions > [data-slot='button'] { flex: 1 1 100%; }
 }

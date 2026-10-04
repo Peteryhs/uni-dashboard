@@ -5,6 +5,17 @@ import { previewSyllabus, saveCourseSyllabus, getCourseSyllabus, listCourseSylla
 
 const now = Date.parse('2026-09-23T12:00:00Z');
 
+test('CFE syllabus loads, previews and saves under the same normalized course key', async (t) => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  assert.equal(await getCourseSyllabus(store, 'CFE'), null);
+  const preview = await previewSyllabus(store, { course: 'cfe', year: 2026, text: 'Oct 8: CFE Check-in Survey' }, { now });
+  assert.equal(preview.syllabus.course, 'CFE');
+  assert.equal(preview.syllabus.entries.length, 1);
+  await saveCourseSyllabus(store, 'CFE', preview.syllabus, { now });
+  assert.deepEqual(await getCourseSyllabus(store, ' cfe '), preview.syllabus);
+});
+
 test('syllabus maps dates and anchored weeks while preserving distinct topics, reading and assessments', async () => {
   const store = new SqliteStore(':memory:');
   const preview = await previewSyllabus(store, { course: 'ece 150', term_start: '2026-09-08', text: `ECE 150 Fall 2026

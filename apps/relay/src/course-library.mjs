@@ -1,6 +1,7 @@
 /** User-selected course links; LEARN itself remains behind the student's sign-in. */
 const KEY = 'COURSE_LIBRARY_JSON';
-export const COURSE_RE = /^[A-Z]{2,8}\s?\d{2,4}[A-Z]?(?:\s*\/\s*[A-Z]{2,8}\s?\d{2,4}[A-Z]?)*$/;
+// CFE is a named LEARN course already recognized by the calendar, without a catalog number.
+export const COURSE_RE = /^(?:CFE|[A-Z]{2,8}\s?\d{2,4}[A-Z]?(?:\s*\/\s*[A-Z]{2,8}\s?\d{2,4}[A-Z]?)*)$/;
 
 export function normalizeCourse(value) {
   const course = String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();

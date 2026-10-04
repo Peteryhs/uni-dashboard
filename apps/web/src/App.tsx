@@ -7,7 +7,7 @@ import { CustomizationSheet } from '@/components/customization-sheet';
 import { readGuideProgress } from '@/lib/setup-guide';
 import { SetupChecklist } from '@/components/setup-checklist';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
-import { CalendarMarkdown } from '@/components/calendar-markdown';
+import { CourseDetailContent } from '@/components/course-detail-content';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/components/cards/food';
@@ -230,11 +230,9 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       </div>
       <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
     </div>
-    <p>{recommendationBody(item)}</p>
-    {(item.topics.length > 0 || item.readings.length > 0) && <div className="rec-detail-list">
-      {item.topics.length > 0 && <p><strong>Topics</strong> {item.topics.join(', ')}</p>}
-      {item.readings.length > 0 && <p><strong>Readings</strong> {item.readings.join(', ')}</p>}
-    </div>}
+    {isAiFood(item) ? <p>{recommendationBody(item)}</p> : <CourseDetailContent
+      description={recommendationBody(item)} topics={item.topics} readings={item.readings}
+    />}
     <div className="rec-detail-actions">
       {item.kind === 'food'
         ? <a className="solid-action" href="#menu">View menu</a>
@@ -378,10 +376,8 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         {event.location && !data?.alerts?.some(alert => alert.event_id === event.id && ['room', 'unusual_room'].includes(alert.kind)) && <p>{event.attendance === 'replaced' ? 'Original room · ' : ''}{event.location}</p>}
         {data?.alerts?.filter(alert => alert.event_id === event.id).map(alert => <p className="calendar-change-text" key={alert.id}>{alert.body}{['stale', 'dead'].includes(alert.state) ? ' · Cached; check source.' : ''}</p>)}
         {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
-        {event.description && <CalendarMarkdown description={event.description} />}
-        {event.topics && event.topics.length > 0 && <p><strong>{event.syllabus_scope === 'period' ? 'Topics for this period' : 'Topics'}</strong> · {event.topics.join(', ')}</p>}
-        {event.readings && event.readings.length > 0 && <p><strong>Readings</strong> · {event.readings.join(', ')}</p>}
-        {event.syllabus_evidence && event.syllabus_evidence.length > 0 && <BlurFadeDisclosure className="calendar-evidence" summary="Syllabus source text">{event.syllabus_evidence.map((line, index) => <p key={index}>{line}</p>)}</BlurFadeDisclosure>}
+        <CourseDetailContent description={event.description} topics={event.topics} readings={event.readings}
+          syllabusScope={event.syllabus_scope} syllabusEvidence={event.syllabus_evidence} />
         <div className="calendar-event-footer">
         <small>{event.source_label}{event.state !== 'live' ? ' · ' + event.state : ''}</small>
         <div className="calendar-event-actions">

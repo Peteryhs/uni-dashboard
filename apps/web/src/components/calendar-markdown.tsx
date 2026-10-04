@@ -52,16 +52,27 @@ export function calendarMarkdownPreview(source: string): string {
     .replace(/\*\*|__|[`*_]/g, '')).join(' · ');
 }
 
-export function CalendarMarkdown({ description }: { description: string }) {
+export function CalendarMarkdown({ description, showLabel = true }: { description: string; showLabel?: boolean }) {
   const blocks = parseCalendarMarkdown(description);
   if (!blocks.length) return null;
   return <div className="calendar-markdown" aria-label="Event description">
-    <span className="calendar-markdown__label">Description</span>
+    {showLabel && <h4 className="calendar-markdown__label">Description</h4>}
     <div className="calendar-markdown__blocks">{blocks.map((block, index) => {
+      if (block.kind === 'list') {
+        const ordered = block.marker !== '•';
+        const previous = blocks[index - 1];
+        if (previous?.kind === 'list' && (previous.marker !== '•') === ordered) return null;
+        let end = index + 1;
+        while (end < blocks.length && blocks[end].kind === 'list' && (blocks[end].marker !== '•') === ordered) end += 1;
+        const items = blocks.slice(index, end);
+        const list = ordered
+          ? <ol start={Number(block.marker)}>{items.map((item, itemIndex) => <li key={itemIndex}>{inline(item.text)}</li>)}</ol>
+          : <ul>{items.map((item, itemIndex) => <li key={itemIndex}>{inline(item.text)}</li>)}</ul>;
+        return <div className="calendar-markdown__list" key={index}>{list}</div>;
+      }
       const content = inline(block.text);
-      if (block.kind === 'heading') return <h4 key={index}>{content}</h4>;
+      if (block.kind === 'heading') return <h4 className="calendar-markdown__heading" key={index}>{content}</h4>;
       if (block.kind === 'quote') return <blockquote key={index}>{content}</blockquote>;
-      if (block.kind === 'list') return <div className="calendar-markdown__item" key={index}><span className="calendar-markdown__bubble" aria-hidden="true">{block.marker}</span><span>{content}</span></div>;
       return <p key={index}>{content}</p>;
     })}</div>
   </div>;

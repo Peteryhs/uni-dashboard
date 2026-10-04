@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getAiJob, queueAiJob, restartStalledAiJob } from '../apps/relay/src/ai-jobs.mjs';
 
+test('CFE syllabus AI job can be queued and read through its course scope', async () => {
+  const settings = new Map();
+  const store = {
+    async getSetting(key) { return settings.get(key) ?? null; },
+    async setSetting(key, value) { settings.set(key, value); },
+  };
+  const { job } = await queueAiJob(store, { kind: 'syllabus', scope: 'cfe', input: { text: 'Oct 8: Check-in survey' }, now: 1_000 });
+  assert.equal((await getAiJob(store, 'syllabus', 'CFE')).id, job.id);
+});
+
 test('AI jobs are deduplicated while active and can be reclaimed after a stalled Worker', async () => {
   const settings = new Map();
   const store = {

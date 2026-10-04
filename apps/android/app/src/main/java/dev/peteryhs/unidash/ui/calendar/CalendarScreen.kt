@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -199,21 +200,21 @@ private fun EventDetails(ev: CalendarEvent, now: Long) {
         if (ev.location.isNotBlank()) DetailLine("Location", ev.location)
         if (scope.isNotBlank()) DetailLine("For", scope)
         if (subtitle != null) DetailLine("Details", subtitle)
-        if (description.isNotEmpty()) Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = MaterialTheme.shapes.large,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                Text("Description", style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                CalendarMarkdown(description)
-            }
+        if (description.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Text("Description", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            CalendarMarkdown(description)
         }
-        if (ev.topics.isNotEmpty()) DetailLine(if (ev.syllabusScope == "period") "Topics this period" else "Topics", ev.topics.joinToString(", "))
-        if (ev.readings.isNotEmpty()) DetailLine("Readings", ev.readings.joinToString(", "))
+        if (ev.topics.isNotEmpty()) SyllabusTopics(
+            if (ev.syllabusScope == "period") "Topics for this period" else "Topics",
+            ev.topics,
+        )
+        if (ev.readings.isNotEmpty()) SyllabusReadings(ev.readings)
         if (ev.syllabusEvidence.isNotEmpty()) {
-            TextButton(onClick = { showEvidence = !showEvidence }) {
+            TextButton(
+                onClick = { showEvidence = !showEvidence },
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = Spacing.xs),
+            ) {
                 Text(if (showEvidence) "Hide syllabus source" else "Show syllabus source")
             }
             AnimatedVisibility(
@@ -224,7 +225,7 @@ private fun EventDetails(ev: CalendarEvent, now: Long) {
                     fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                    ev.syllabusEvidence.forEach { evidence -> Text(evidence, style = MaterialTheme.typography.bodySmall) }
+                    ev.syllabusEvidence.forEach { evidence -> Text(evidence, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
         }
@@ -241,6 +242,42 @@ private fun EventDetails(ev: CalendarEvent, now: Long) {
                         leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyllabusTopics(title: String, topics: List<String>) {
+    val cleanTopics = topics.map(String::trim).filter(String::isNotEmpty).distinct()
+    if (cleanTopics.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            cleanTopics.forEach { topic ->
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(topic, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = Spacing.s, vertical = Spacing.xs))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyllabusReadings(readings: List<String>) {
+    val cleanReadings = readings.map(String::trim).filter(String::isNotEmpty).distinct()
+    if (cleanReadings.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        Text("Readings", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        cleanReadings.forEach { reading ->
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                Text("•", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(reading, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             }
         }
     }

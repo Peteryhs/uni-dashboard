@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { CardShell } from '@/components/card-shell';
+import { CourseDetailContent } from '@/components/course-detail-content';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { Card as CardT, DueSoonData, DueSoonItem, DueSoonLink } from '@/lib/contract';
@@ -219,14 +220,11 @@ export function DueSoonDetail({
         {/* Bottom: what the feed says. In all views, if there is no desc, dont display; limit to 20 words, expand on click. */}
         {hasDesc && (
           <div className="rounded-lg border border-border/70 bg-card/60 p-3">
-            <h4 className="mb-1.5 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase">
-              Description
-            </h4>
             {isLonger ? (
               <div className="text-[13px] leading-relaxed text-zinc-200">
                 {isTextExpanded ? (
                   <div>
-                    <p className="whitespace-pre-line break-words">{trimmedDesc}</p>
+                    <CourseDetailContent description={trimmedDesc} />
                     <button
                       type="button"
                       onClick={() => setIsTextExpanded(false)}
@@ -237,21 +235,19 @@ export function DueSoonDetail({
                   </div>
                 ) : (
                   <p
-                    onClick={() => setIsTextExpanded(true)}
-                    className="cursor-pointer group/desc break-words"
-                    title="Click to expand full description"
+                    className="group/desc break-words"
                   >
                     <span>{truncatedDesc}… </span>
-                    <span className="text-xs font-semibold text-live group-hover/desc:underline transition-colors">
-                      Show more
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsTextExpanded(true)}
+                      className="text-xs font-semibold text-live group-hover/desc:underline transition-colors"
+                    >Show more</button>
                   </p>
                 )}
               </div>
             ) : (
-              <p className="text-[13px] leading-relaxed whitespace-pre-line break-words text-zinc-200">
-                {trimmedDesc}
-              </p>
+              <CourseDetailContent description={trimmedDesc} />
             )}
           </div>
         )}

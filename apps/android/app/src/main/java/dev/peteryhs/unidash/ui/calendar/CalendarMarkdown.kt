@@ -27,7 +27,12 @@ import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.ui.theme.Spacing
 
 internal enum class MarkdownKind { Paragraph, Heading, ListItem, Quote }
-internal data class MarkdownBlock(val kind: MarkdownKind, val text: String, val marker: String = "")
+internal data class MarkdownBlock(
+    val kind: MarkdownKind,
+    val text: String,
+    val marker: String = "",
+    val headingLevel: Int = 1,
+)
 
 /** Calendar feeds commonly contain Markdown headings, lists, emphasis, and links. */
 internal fun parseCalendarMarkdown(source: String): List<MarkdownBlock> {
@@ -42,11 +47,14 @@ internal fun parseCalendarMarkdown(source: String): List<MarkdownBlock> {
     for (raw in source.replace("\r\n", "\n").split('\n')) {
         val line = raw.trim()
         if (line.isEmpty()) { flush(); continue }
-        val heading = Regex("^#{1,3}\\s+(.+)$").matchEntire(line)
+        val heading = Regex("^(#{1,3})\\s+(.+)$").matchEntire(line)
         val bullet = Regex("^[-*+]\\s+(.+)$").matchEntire(line)
         val numbered = Regex("^(\\d+)[.)]\\s+(.+)$").matchEntire(line)
         when {
-            heading != null -> { flush(); blocks += MarkdownBlock(MarkdownKind.Heading, heading.groupValues[1]) }
+            heading != null -> {
+                flush()
+                blocks += MarkdownBlock(MarkdownKind.Heading, heading.groupValues[2], headingLevel = heading.groupValues[1].length)
+            }
             bullet != null -> { flush(); blocks += MarkdownBlock(MarkdownKind.ListItem, bullet.groupValues[1], "•") }
             numbered != null -> { flush(); blocks += MarkdownBlock(MarkdownKind.ListItem, numbered.groupValues[2], numbered.groupValues[1]) }
             line.startsWith(">") -> { flush(); blocks += MarkdownBlock(MarkdownKind.Quote, line.removePrefix(">").trim()) }
@@ -88,14 +96,24 @@ internal fun CalendarMarkdown(description: String) {
             val text = calendarMarkdownInline(block.text,
                 if (block.kind == MarkdownKind.Quote) scheme.onTertiaryContainer else scheme.primary)
             when (block.kind) {
-                MarkdownKind.Heading -> Text(text, style = MaterialTheme.typography.titleMediumEmphasized)
+                MarkdownKind.Heading -> Text(
+                    text,
+                    style = when (block.headingLevel) {
+                        1 -> MaterialTheme.typography.titleMediumEmphasized
+                        2 -> MaterialTheme.typography.titleSmallEmphasized
+                        else -> MaterialTheme.typography.labelLarge,
+                    },
+                )
                 MarkdownKind.Paragraph -> Text(text, style = MaterialTheme.typography.bodyMedium)
                 MarkdownKind.Quote -> Surface(color = scheme.tertiaryContainer, contentColor = scheme.onTertiaryContainer,
                     shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
                     Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Spacing.m))
                 }
                 MarkdownKind.ListItem -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                    Surface(color = scheme.secondaryContainer, contentColor = scheme.onSecondaryContainer,
+                    if (block.marker == "•") {
+                        Text("•", style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant, modifier = Modifier.widthIn(min = 12.dp))
+                    } else Surface(color = scheme.secondaryContainer, contentColor = scheme.onSecondaryContainer,
                         shape = CircleShape, modifier = Modifier.widthIn(min = 28.dp)) {
                         Text(block.marker, style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.padding(horizontal = Spacing.s, vertical = Spacing.xs))

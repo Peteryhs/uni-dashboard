@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Bot, CalendarDays, ExternalLink, LoaderCircle, Save } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { CourseDetailContent } from '@/components/course-detail-content';
 import {
   fetchCourseSyllabus,
   clearAiJob,
@@ -42,8 +43,7 @@ function updatedLabel(timestamp: number): string {
 function SyllabusWarnings({ warnings }: { warnings: string[] }) {
   if (!warnings.length) return null;
   return <div className="syllabus-warnings" role="note">
-    <AlertTriangle aria-hidden="true" size={14} />
-    <ul>{warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}</ul>
+    <div><strong>Review note</strong><ul>{warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}</ul></div>
   </div>;
 }
 
@@ -56,10 +56,8 @@ function EntryList({ entries }: { entries: CourseSyllabus['entries'] }) {
         <time dateTime={entry.due_at == null ? entry.start_date : new Date(entry.due_at).toISOString()}>{entryDateLabel(entry)}</time>
       </div>
       <strong>{entry.title}</strong>
-      {entry.topics.length > 0 && <p><span>Topics</span> {entry.topics.join(', ')}</p>}
-      {entry.readings.length > 0 && <p><span>Readings</span> {entry.readings.join(', ')}</p>}
-      {entry.url && <a href={entry.url} target="_blank" rel="noopener noreferrer">Open source link <ExternalLink aria-hidden="true" size={12} /></a>}
-      <details className="syllabus-evidence"><summary>Source text</summary><p>{entry.evidence}</p></details>
+      <CourseDetailContent topics={entry.topics} readings={entry.readings} syllabusEvidence={entry.evidence ? [entry.evidence] : []} />
+      {entry.url && <a href={entry.url} target="_blank" rel="noopener noreferrer">Open source link</a>}
     </li>)}
   </ol>;
 }
@@ -72,8 +70,8 @@ export function CourseSyllabusPanel({
   onSaved?: (syllabus: CourseSyllabus) => void;
 }) {
   const panelId = useId();
-  const [open, setOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [importOpen, setImportOpen] = useState(true);
   const [saved, setSaved] = useState<CourseSyllabus | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -163,7 +161,6 @@ export function CourseSyllabusPanel({
       setSaved(result);
       setPreview(null);
       setText('');
-      setImportOpen(false);
       try { await clearAiJob('syllabus', course); await aiJob.refetch(); } catch { /* The saved syllabus remains authoritative. */ }
       setSavedMessage(`Saved ${result.entries.length} entries for ${course}.`);
       onSaved?.(result);
@@ -176,7 +173,7 @@ export function CourseSyllabusPanel({
 
   return <section className="course-syllabus-panel">
     <button type="button" className="syllabus-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>
-      <span className="syllabus-toggle-main"><BookOpen aria-hidden="true" size={15} /><strong>Syllabus</strong>
+      <span className="syllabus-toggle-main"><strong>Syllabus</strong>
         <span className="syllabus-toggle-course">{course}</span>
       </span>
       <span className="syllabus-toggle-status">{loading ? 'Loading' : saved ? `${saved.entries.length} entries` : 'Not added'}
@@ -195,7 +192,7 @@ export function CourseSyllabusPanel({
       direction="up"
       inView
     >
-      {loadError && <p className="syllabus-error" role="alert">{loadError} <button type="button" onClick={() => setReload((value) => value + 1)}>Retry</button></p>}
+      {loadError && <div className="syllabus-error syllabus-load-error" role="alert"><span>{loadError}</span><Button type="button" variant="outline" size="xs" onClick={() => setReload((value) => value + 1)}>Retry</Button></div>}
       {loading && <p className="syllabus-state" aria-live="polite">Loading saved syllabus…</p>}
       {!loading && !loadError && saved && <div className="syllabus-saved">
         <div className="syllabus-saved-heading"><div><h4>{saved.title}</h4><span>{saved.entries.length} scheduled entries · Saved {updatedLabel(saved.updated_at)}</span></div></div>
@@ -215,14 +212,12 @@ export function CourseSyllabusPanel({
           </div>
           <p className="syllabus-help">Rules preview runs without AI. Week numbers need the Week 1 start date; dates without a year need a year or an unambiguous year in the pasted text.</p>
           <div className="syllabus-preview-actions">
-            <button type="button" className="syllabus-action syllabus-action--primary" onClick={() => void handlePreview(false)} disabled={!text.trim() || previewing !== null || saving}>
-              {previewing === 'rules' ? <LoaderCircle aria-hidden="true" size={14} className="syllabus-spin" /> : <CalendarDays aria-hidden="true" size={14} />}
+            <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => void handlePreview(false)} disabled={!text.trim() || previewing !== null || saving}>
               {previewing === 'rules' ? 'Reading schedule…' : 'Preview with rules'}
-            </button>
-            <button type="button" className="syllabus-action syllabus-action--ai" onClick={() => void handlePreview(true)} disabled={!text.trim() || previewing !== null || saving}>
-              {previewing === 'ai' ? <LoaderCircle aria-hidden="true" size={14} className="syllabus-spin" /> : <Bot aria-hidden="true" size={14} />}
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="settings-ai-action h-8 text-xs font-medium" onClick={() => void handlePreview(true)} disabled={!text.trim() || previewing !== null || saving}>
               {previewing === 'ai' ? 'Reviewing…' : 'Review with AI'}
-            </button>
+            </Button>
           </div>
           <p className="syllabus-ai-note">AI review is optional and uses the shared AI allowance. Both previews keep dates and evidence grounded in the pasted text.</p>
 
@@ -232,10 +227,9 @@ export function CourseSyllabusPanel({
             <div className={'syllabus-preview-heading' + (preview.method === 'ai' ? ' syllabus-preview-heading--ai' : '')}><div><h4>Review before saving</h4><span>{preview.syllabus.entries.length} entries · {preview.method === 'ai' ? 'AI reviewed' : 'Rules parsed'}</span></div></div>
             <SyllabusWarnings warnings={preview.warnings} />
             <EntryList entries={preview.syllabus.entries} />
-            <button type="button" className="syllabus-action syllabus-action--save" onClick={() => void handleSave()} disabled={!preview.syllabus.entries.length || saving || previewing !== null}>
-              {saving ? <LoaderCircle aria-hidden="true" size={14} className="syllabus-spin" /> : <Save aria-hidden="true" size={14} />}
+            <Button type="button" variant="default" size="sm" className="h-8 text-xs" onClick={() => void handleSave()} disabled={!preview.syllabus.entries.length || saving || previewing !== null}>
               {saving ? 'Saving…' : 'Save reviewed schedule'}
-            </button>
+            </Button>
           </div>}
         </div>
       </details>

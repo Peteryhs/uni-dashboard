@@ -30,6 +30,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { CardShell, EmptyState } from '@/components/card-shell';
+import { CourseDetailContent } from '@/components/course-detail-content';
 import { Badge } from '@/components/ui/badge';
 import { mutedIfStale } from '@/components/freshness';
 import { usePreferences } from '@/lib/preferences-store';
@@ -691,9 +692,7 @@ function InlineDescription({
 
   if (!isLonger) {
     return (
-      <p className="leading-relaxed whitespace-pre-wrap break-words text-zinc-300 text-xs font-normal">
-        {trimmed}
-      </p>
+      <CourseDetailContent description={trimmed} />
     );
   }
 
@@ -703,7 +702,7 @@ function InlineDescription({
     <div className="leading-relaxed text-zinc-300 text-xs font-normal">
       {isTextExpanded ? (
         <div>
-          <p className="whitespace-pre-wrap break-words">{trimmed}</p>
+          <CourseDetailContent description={trimmed} />
           <button
             type="button"
             onClick={onToggleText}
@@ -713,15 +712,13 @@ function InlineDescription({
           </button>
         </div>
       ) : (
-        <p
-          onClick={onToggleText}
-          className="break-words cursor-pointer group/desc"
-          title="Click to expand full description"
-        >
+        <p className="break-words">
           <span>{truncatedText}… </span>
-          <span className="inline-block text-xs font-semibold text-live group-hover/desc:underline transition-colors">
-            Show more
-          </span>
+          <button
+            type="button"
+            onClick={onToggleText}
+            className="inline-block text-xs font-semibold text-live group-hover/desc:underline transition-colors"
+          >Show more</button>
         </p>
       )}
     </div>

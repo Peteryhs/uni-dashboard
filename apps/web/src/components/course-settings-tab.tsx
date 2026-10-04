@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CourseSyllabusPanel } from './course-syllabus-panel';
+import { Button } from '@/components/ui/button';
 import { usePreferences } from '@/lib/preferences-store';
 import { previewCourseImport, saveCourseResources } from '@/lib/api';
 import type { CalendarData, CourseResource } from '@/lib/contract';
@@ -24,6 +25,7 @@ export function CourseSettingsTab({ data, pending, error, focusCourse, onRetry, 
       setExpandedCourse((current) => current === focusCourse ? current : focusCourse);
     }
   }, [focusCourse, courseNames]);
+
 
   return <div className="settings-course-tab">
     <section className="settings-course-global">
@@ -71,7 +73,7 @@ export function CourseSettingsTab({ data, pending, error, focusCourse, onRetry, 
       {pending && !data && <p className="settings-course-state" role="status">Loading courses…</p>}
       {error && !data && <div className="settings-course-state settings-course-state--error" role="alert">
         <span>Courses could not be loaded.</span>
-        <button type="button" onClick={onRetry}>Try again</button>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>Try again</Button>
       </div>}
       {data && courses.length === 0 && <p className="settings-course-state">No courses appear in the loaded calendar feed. Connect a schedule feed to add course materials here.</p>}
       {courses.length > 0 && <div className="settings-course-rows">
@@ -90,8 +92,8 @@ export function CourseSettingsTab({ data, pending, error, focusCourse, onRetry, 
           </summary>
           {expandedCourse === course.course && <div className="settings-course-row-content">
             {course.learn_url && <a className="settings-course-learn" href={course.learn_url} target="_blank" rel="noopener noreferrer">Open course in LEARN</a>}
-            <CourseLinkEditor course={course} onSaved={onSaved} />
             <CourseSyllabusPanel course={course.course} onSaved={onSaved} />
+            <CourseLinkEditor course={course} onSaved={onSaved} />
           </div>}
         </details>)}
       </div>}
@@ -144,29 +146,7 @@ function CourseLinkEditor({ course, onSaved }: { course: CalendarData['courses']
   };
 
   return <div className="settings-course-editor">
-    <div className="settings-course-editor-heading"><h4>Saved links</h4><span>{course.resources.length}</span></div>
-    {course.resources.length > 0 ? <ul className="settings-course-resource-list">
-      {course.resources.map((link) => <li key={link.url}>
-        <a href={link.url} target="_blank" rel="noopener noreferrer">{link.title}</a>
-        <span>{link.kind}</span>
-        <button type="button" disabled={busy} onClick={() => void save(course.resources.filter((item) => item.url !== link.url))} aria-label={'Remove ' + link.title}>Remove</button>
-      </li>)}
-    </ul> : null}
-
-    <form className="settings-course-add" onSubmit={(event) => {
-      event.preventDefault();
-      void save([...course.resources, { title: title.trim(), url: url.trim(), kind }]);
-    }}>
-      <h4>Add a link</h4>
-      <label className="settings-course-add-title"><span>Title</span><input placeholder="Course notes" value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
-      <label className="settings-course-add-kind"><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as CourseResource['kind'])}>
-        <option value="resource">Resource</option><option value="textbook">Textbook</option><option value="learn">LEARN</option>
-      </select></label>
-      <label className="settings-course-add-url"><span>URL</span><input placeholder="https://…" type="url" value={url} onChange={(event) => setUrl(event.target.value)} required /></label>
-      <button type="submit" disabled={busy || !title.trim() || !url.trim()}>{busy ? 'Saving…' : 'Add link'}</button>
-    </form>
-
-    <details className="settings-course-import">
+    <details className="settings-course-import" open>
       <summary>Import links from a LEARN page</summary>
       <div className="settings-course-import-body">
         <textarea
@@ -193,16 +173,43 @@ function CourseLinkEditor({ course, onSaved }: { course: CalendarData['courses']
               setPreview([]);
             }
           }} />
-          <button type="button" disabled={busy || !importText.trim()} onClick={() => void previewImport()}>{busy ? 'Reading…' : 'Preview'}</button>
+          <Button type="button" variant="outline" disabled={busy || !importText.trim()} onClick={() => void previewImport()}>{busy ? 'Reading…' : 'Preview links'}</Button>
         </div>
         {preview.length > 0 && <div className="settings-course-import-preview">
           {preview.map((link) => <label key={link.url}>
             <input type="checkbox" checked={selected.includes(link.url)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, link.url] : current.filter((value) => value !== link.url))} />
             <span>{link.title}</span>
           </label>)}
-          <button type="button" disabled={busy || selected.length === 0} onClick={() => void save([...course.resources, ...preview.filter((link) => selected.includes(link.url))])}>Save {selected.length} links</button>
+          <Button type="button" disabled={busy || selected.length === 0} onClick={() => void save([...course.resources, ...preview.filter((link) => selected.includes(link.url))])}>{busy ? 'Saving…' : `Save ${selected.length} ${selected.length === 1 ? 'link' : 'links'}`}</Button>
         </div>}
         {importPreviewed && preview.length === 0 && <p className="settings-course-empty">No links were found in that page.</p>}
+      </div>
+    </details>
+    <details className="settings-course-custom-links">
+      <summary>Custom links{course.resources.length > 0 ? ` · ${course.resources.length} saved` : ''}</summary>
+      <div className="settings-course-custom-links-body">
+        {course.resources.length > 0 && <>
+          <div className="settings-course-editor-heading"><h4>Saved links</h4><span>{course.resources.length}</span></div>
+          <ul className="settings-course-resource-list">
+            {course.resources.map((link) => <li key={link.url}>
+              <a href={link.url} target="_blank" rel="noopener noreferrer">{link.title}</a>
+              <span>{link.kind}</span>
+              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void save(course.resources.filter((item) => item.url !== link.url))} aria-label={'Remove ' + link.title}>Remove</Button>
+            </li>)}
+          </ul>
+        </>}
+        <form className="settings-course-add" onSubmit={(event) => {
+          event.preventDefault();
+          void save([...course.resources, { title: title.trim(), url: url.trim(), kind }]);
+        }}>
+          <h4>Add a link</h4>
+          <label className="settings-course-add-title"><span>Title</span><input placeholder="Course notes" value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
+          <label className="settings-course-add-kind"><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as CourseResource['kind'])}>
+            <option value="resource">Resource</option><option value="textbook">Textbook</option><option value="learn">LEARN</option>
+          </select></label>
+          <label className="settings-course-add-url"><span>URL</span><input placeholder="https://…" type="url" value={url} onChange={(event) => setUrl(event.target.value)} required /></label>
+          <Button type="submit" disabled={busy || !title.trim() || !url.trim()}>{busy ? 'Saving…' : 'Add link'}</Button>
+        </form>
       </div>
     </details>
     {error && <p className="settings-course-error" role="alert">{error}</p>}

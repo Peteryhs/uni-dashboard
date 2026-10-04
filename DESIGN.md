@@ -49,6 +49,10 @@ The page is a centered column capped at 1040px. Two equal recommendation cards l
 
 Use solid surfaces and thin borders. No glows, gradients, glass, decorative shadows, or animated status decoration.
 
+## Course details
+
+Descriptions, topics, readings, and syllabus evidence share one detail layout across calendar events, recommendations, and syllabus review. Web content uses Inter at 13px with a 1.5–1.55 line height; section labels use 12px semibold muted text. Keep labels on their own line and align every section to the same left edge. Topics wrap as subtle tags, readings use bullet lists, and source evidence stays in a disclosure. Markdown paragraphs, emphasis, and lists retain this body scale; headings add weight rather than becoming display text. Android uses the equivalent Material body and label styles with the same grouping and alignment.
+
 ## Shapes
 
 Cards use a 16px radius; controls use a smaller radius. Shapes signal grouping and affordance, not personality.

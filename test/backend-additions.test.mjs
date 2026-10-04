@@ -5,7 +5,7 @@ import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { parse as parseStatus } from '../sources/status/source.mjs';
 import { alertCard } from '../apps/relay/src/cards.mjs';
 import { claimFoodAiRun, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
-import { previewCourseImport, saveCourseResources } from '../apps/relay/src/course-library.mjs';
+import { normalizeCourse, previewCourseImport, saveCourseResources } from '../apps/relay/src/course-library.mjs';
 import { buildCalendar } from '../apps/relay/src/calendar.mjs';
 import { dismissAlert, syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
 
@@ -113,4 +113,20 @@ test('course shortcut stays available during a week with classes but no LEARN de
   const calendar = await buildCalendar(store, { start: '2026-09-23', days: 7, now: starts });
   assert.equal(calendar.courses[0].learn_url, 'https://learn.uwaterloo.ca/d2l/home/456');
   store.close();
+});
+
+test('CFE accepts saved course resources and attaches them to its calendar group', async (t) => {
+  assert.equal(normalizeCourse(' cfe '), 'CFE');
+  for (const invalid of ['Other', 'CFE!', 'bad course', 'CFE/Unknown']) {
+    assert.throws(() => normalizeCourse(invalid), /invalid course code/);
+  }
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  const resources = previewCourseImport('[CFE - LEARN](https://learn.uwaterloo.ca/d2l/home/1301395)');
+  await saveCourseResources(store, 'cfe', resources);
+  const starts = Date.parse('2026-09-23T14:00:00Z');
+  store.upsertRows('timeline_event', [{ source_id: 'uw-learn-ics', external_id: 'cfe-task', observed_at: starts, valid_until: starts + 900_000, kind: 'deadline', title: 'CFE Check-in Survey', location: 'CFE', starts_at: starts, ends_at: starts }]);
+  const calendar = await buildCalendar(store, { start: '2026-09-23', days: 1, now: starts });
+  assert.equal(calendar.courses[0].course, 'CFE');
+  assert.deepEqual(calendar.courses[0].resources, resources);
 });

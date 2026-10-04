@@ -91,9 +91,8 @@
 .rec-detail-course { margin: 6px 0 0 !important; color: #ccd1d8; font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
 .close-detail { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border: 0; border-radius: 8px; color: #d2d6dc; transition: background 160ms ease, color 160ms ease; }
 .close-detail:hover { background: #343840; color: #fff; }
-.rec-detail p { margin: 10px 0 0; color: #d3d8df; font-size: 14px; line-height: 1.55; }
-.rec-detail-list { margin-top: 12px; padding-top: 3px; border-top: 1px solid var(--dash-line); }
-.rec-detail-list strong { margin-right: 9px; color: #fff; }
+.rec-detail > p { margin: 10px 0 0; color: #d3d8df; font-size: 14px; line-height: 1.55; }
+.rec-detail > .course-detail-content { margin-top: 14px; }
 .rec-detail-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
 .solid-action, .quiet-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid #646a72; border-radius: 8px; color: #fff; font-size: 12px; font-weight: 620; transition: background 160ms ease; }
 .solid-action { border-color: #e6e9ed; background: #e6e9ed; color: #202328; }
@@ -162,11 +161,9 @@
 .calendar-event-title strong { color: #f1f3f5; font-size: 14px; font-weight: 560; }
 .course-tag { color: #bfc7d2; font-size: 11px; }
 .calendar-event-detail { margin: 0 16px 6px 86px; padding: 3px 0 6px; }
-.calendar-event-detail p { margin: 0 0 7px; color: #cbd1d9; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.calendar-event-detail > p { margin: 0 0 7px; color: #cbd1d9; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
 .calendar-event-detail small { color: #9fa8b3; font-size: 11px; }
-.calendar-event-detail p strong { color: #e3e8ed; font-weight: 600; }
-.calendar-evidence { margin: 7px 0; color: #aeb8c3; font-size: 11px; }
-.calendar-evidence summary { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.calendar-event-detail > p strong { color: #e3e8ed; font-weight: 600; }
 .calendar-event-footer { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
 .calendar-event-actions { display: flex; align-items: baseline; flex-wrap: wrap; gap: 11px; }
 .calendar-event-actions a, .calendar-event-actions button { display: inline-flex; align-items: center; gap: 4px; color: #e1e6ed; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }

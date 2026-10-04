@@ -6,7 +6,8 @@ import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, formatTime } from '@/lib/time';
 import type { CalendarData, CalendarEvent, CalendarChangeAlert, CourseResource } from '@/lib/contract';
 import { cn } from '@/lib/utils';
-import { CalendarMarkdown, calendarMarkdownPreview } from '@/components/calendar-markdown';
+import { calendarMarkdownPreview } from '@/components/calendar-markdown';
+import { CourseDetailContent } from '@/components/course-detail-content';
 
 function shiftDate(date: string, days: number) {
   const [year, month, day] = date.split('-').map(Number);
@@ -61,9 +62,10 @@ function CalendarItem({ event, alerts = [], onSelectCourse }: { event: CalendarE
             {event.location && <><MapPin className="mr-1 inline size-3" />{event.location}</>}
           </p>
         )}
-        {event.description && <details className="calendar-markdown-preview">
-          <summary>Description <span>{calendarMarkdownPreview(event.description)}</span></summary>
-          <CalendarMarkdown description={event.description} />
+        {(event.description || event.topics?.length || event.readings?.length || event.syllabus_evidence?.length) && <details className="calendar-markdown-preview">
+          <summary>Details <span>{calendarMarkdownPreview(event.description)}</span></summary>
+          <CourseDetailContent description={event.description} topics={event.topics} readings={event.readings}
+            syllabusScope={event.syllabus_scope} syllabusEvidence={event.syllabus_evidence} />
         </details>}
         {event.url && (
           <a href={event.url} target="_blank" rel="noopener noreferrer"
