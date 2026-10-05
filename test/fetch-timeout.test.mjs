@@ -36,7 +36,8 @@ test('every source fetch carries a timeout signal', async () => {
     else process.env.PORTAL_ICS_URL = realPortalUrl;
   }
 
-  assert.equal(calls.length, 4, `expected 4 fetches, saw ${calls.length}`);
+  // 2 fetches for food (today + tomorrow), 1 for portal, 1 for status, 1 for weather = 5
+  assert.equal(calls.length, 5, `expected 5 fetches, saw ${calls.length}`);
   for (const call of calls) {
     assert.ok(call.init.signal instanceof AbortSignal, `${call.url} was fetched without a timeout`);
   }

@@ -233,3 +233,69 @@ test('a cached render of another day is skipped and cannot tombstone the day it 
   assert.equal(store.rows('menu_item', { where: 'service_date = ?', params: ['2026-09-26'] }).length, 3);
 });
 
+test('2-day rolling poll fetches and stores both today and tomorrow', async () => {
+  const store = new SqliteStore(':memory:');
+  const t0 = Date.UTC(2026, 9, 5, 14, 0); // Oct 5 2026
+  const source = {
+    ...foodSource,
+    async fetchRaw(ctx) {
+      const todayPage = '<input type="date" name="date" value="2026-10-05" class="form-date" /><div class="food_header_title">Mudies</div><div class="food_title"><a class="food_link" href="/food-services/daily-menu/curry">Curry</a></div>';
+      const tomorrowPage = '<input type="date" name="date" value="2026-10-06" class="form-date" /><div class="food_header_title">REV</div><div class="food_title"><a class="food_link" href="/food-services/daily-menu/noodles">Noodles</a></div>';
+      return {
+        status: 200,
+        contentType: 'text/html',
+        body: todayPage,
+        bytes: todayPage.length + tomorrowPage.length,
+        requestedDate: '2026-10-05',
+        renderedDate: '2026-10-05',
+        pages: [
+          { status: 200, contentType: 'text/html', body: todayPage, bytes: todayPage.length, requestedDate: '2026-10-05', renderedDate: '2026-10-05' },
+          { status: 200, contentType: 'text/html', body: tomorrowPage, bytes: tomorrowPage.length, requestedDate: '2026-10-06', renderedDate: '2026-10-06' },
+        ],
+      };
+    },
+  };
+
+  const receipt = await runSource(source, store, { now: t0 });
+  assert.equal(receipt.outcome, 'ok');
+  assert.equal(receipt.rows_written, 2);
+  const todayDishes = store.rows('menu_item', { where: 'service_date = ?', params: ['2026-10-05'] });
+  const tomorrowDishes = store.rows('menu_item', { where: 'service_date = ?', params: ['2026-10-06'] });
+  assert.equal(todayDishes.length, 1);
+  assert.equal(todayDishes[0].dish, 'Curry');
+  assert.equal(tomorrowDishes.length, 1);
+  assert.equal(tomorrowDishes[0].dish, 'Noodles');
+});
+
+test('2-day rolling poll with weekend/empty tomorrow preserves today dishes', async () => {
+  const store = new SqliteStore(':memory:');
+  const t0 = Date.UTC(2026, 9, 9, 14, 0); // Friday Oct 9
+  const source = {
+    ...foodSource,
+    async fetchRaw(ctx) {
+      const fridayPage = '<input type="date" name="date" value="2026-10-09" class="form-date" /><div class="food_header_title">Mudies</div><div class="food_title"><a class="food_link" href="/food-services/daily-menu/fish">Fish</a></div>';
+      const saturdayEmpty = '<html><body><a href="/food-services/daily-menu">Daily menu</a><p>No daily menu found for the requested date.</p></body></html>';
+      return {
+        status: 200,
+        contentType: 'text/html',
+        body: fridayPage,
+        bytes: fridayPage.length + saturdayEmpty.length,
+        requestedDate: '2026-10-09',
+        renderedDate: '2026-10-09',
+        pages: [
+          { status: 200, contentType: 'text/html', body: fridayPage, bytes: fridayPage.length, requestedDate: '2026-10-09', renderedDate: '2026-10-09' },
+          { status: 200, contentType: 'text/html', body: saturdayEmpty, bytes: saturdayEmpty.length, requestedDate: '2026-10-10', renderedDate: '' },
+        ],
+      };
+    },
+  };
+
+  const receipt = await runSource(source, store, { now: t0 });
+  assert.equal(receipt.outcome, 'ok');
+  assert.equal(receipt.rows_written, 1);
+  const fridayDishes = store.rows('menu_item', { where: 'service_date = ?', params: ['2026-10-09'] });
+  assert.equal(fridayDishes.length, 1);
+  assert.equal(fridayDishes[0].dish, 'Fish');
+});
+
+

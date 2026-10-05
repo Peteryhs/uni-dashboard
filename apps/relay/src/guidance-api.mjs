@@ -38,14 +38,21 @@ export async function readGuidanceJson(stream) {
 export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, startAiJob = null, now = Date.now() }) {
   try {
     if (url.pathname === '/v1/menu' && method === 'GET') {
-      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
-      const today = await store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: 500 });
-      const rows = today.length ? today : await store.rows('menu_item', {
-        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [date], limit: 500,
+      const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+      const paramDate = url.searchParams.get('date');
+      const targetDate = paramDate && /^\d{4}-\d{2}-\d{2}$/.test(paramDate) ? paramDate : todayDate;
+      const matched = await store.rows('menu_item', { where: 'service_date = ?', params: [targetDate], limit: 500 });
+      const rows = matched.length ? matched : await store.rows('menu_item', {
+        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: 500,
       });
       const serviceDate = rows[0]?.service_date ?? null;
+      const status = !serviceDate
+        ? 'unavailable'
+        : serviceDate === targetDate
+          ? (targetDate === todayDate ? 'today' : targetDate > todayDate ? 'upcoming' : 'previous')
+          : 'previous';
       return { status: 200, body: {
-        requested_date: date, service_date: serviceDate, status: !serviceDate ? 'unavailable' : serviceDate === date ? 'today' : 'previous',
+        requested_date: targetDate, service_date: serviceDate, status,
         items: rows.map(row => ({ outlet: row.outlet, station: row.station || '', dish: row.dish, diet: row.diet || [], allergens: row.allergens || [], url: row.url || '' })),
       } };
     }

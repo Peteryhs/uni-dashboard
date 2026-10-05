@@ -481,9 +481,12 @@ export class D1Store {
         Math.min(rateLimitMaxMs, Math.max(cadenceMs, rateLimitMinMs) * 2 ** Math.max(0, failures - 1)),
       )
       : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
+    const nextInterval = (outcome === 'empty' || outcome === 'skipped')
+      ? Math.min(cadenceMs, 30 * 60_000)
+      : cadenceMs;
     const next = circuit === 'open' || failures > 0
       ? now + backoff + Math.floor(Math.random() * 1000)
-      : now + cadenceMs;
+      : now + nextInterval;
     if (claimToken) {
       const result = await this.db.prepare(`
         UPDATE job SET next_due_at=?, last_started_at=?, last_finished_at=?, last_outcome=?,

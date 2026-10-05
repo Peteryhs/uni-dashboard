@@ -24,11 +24,11 @@ import { zonedToEpoch, DEFAULT_TZ } from '../ics/parse.mjs';
 
 export const id = 'uw-food-daily-menu';
 export const shape = 'menu_item';
-/** posts around 07:15 and updates around 14:30; 12 h keeps us inside both windows */
-export const cadenceMs = 12 * 60 * 60 * 1000;
+/** posts around 07:15 and updates around 14:30; 4 h provides rolling multi-day coverage */
+export const cadenceMs = 4 * 60 * 60 * 1000;
 export const url = 'https://uwaterloo.ca/food-services/daily-menu';
 export const needsSecret = false;
-/** A poll covers one service date, so tombstones must stay inside that date (see store). */
+/** A poll covers specific service dates, so tombstones must stay inside those dates (see store). */
 export const scopeColumn = 'service_date';
 
 const UA =
@@ -40,7 +40,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 /** The page's own words for "this date has no menu" (verified live 2026-09-21 on a future date). */
 const NO_MENU_TEXT = 'No daily menu found for the requested date';
 
-export function todayInToronto(now) {
+export function dateInToronto(now) {
   const p = Object.fromEntries(
     new Intl.DateTimeFormat('en-CA', {
       timeZone: DEFAULT_TZ,
@@ -54,17 +54,16 @@ export function todayInToronto(now) {
   return `${p.year}-${p.month}-${p.day}`;
 }
 
+export function todayInToronto(now) {
+  return dateInToronto(now);
+}
+
 function endOfServiceDay(serviceDate, tz = DEFAULT_TZ) {
   const [y, mo, d] = serviceDate.split('-').map(Number);
   return zonedToEpoch(y, mo, d + 1, 3, 0, 0, tz); // 03:00 the next day, covers late dinners
 }
 
-export async function fetchRaw(ctx) {
-  const now = ctx?.now ?? Date.now();
-  const serviceDate = ctx?.date ?? todayInToronto(now);
-  const baseUrl = ctx?.url ?? url;
-  // The unique parameter is not decoration: it forces a fresh origin render instead of whatever
-  // day the CDN and Drupal page caches are holding (see the note at the top of this file).
+async function fetchOneDate(baseUrl, serviceDate, now) {
   const target = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}date=${serviceDate}&_=${now}`;
   const res = await fetch(target, {
     headers: { 'user-agent': UA, accept: 'text/html,application/xhtml+xml' },
@@ -79,6 +78,29 @@ export async function fetchRaw(ctx) {
     bytes: body.length,
     requestedDate: serviceDate,
     renderedDate: renderedDate(body),
+  };
+}
+
+export async function fetchRaw(ctx) {
+  const now = ctx?.now ?? Date.now();
+  const baseUrl = ctx?.url ?? url;
+  if (ctx?.date) {
+    return fetchOneDate(baseUrl, ctx.date, now);
+  }
+  const today = todayInToronto(now);
+  const tomorrow = dateInToronto(now + 86_400_000);
+  const [pageToday, pageTomorrow] = await Promise.all([
+    fetchOneDate(baseUrl, today, now),
+    fetchOneDate(baseUrl, tomorrow, now),
+  ]);
+  return {
+    status: pageToday.status === 200 || pageTomorrow.status === 200 ? 200 : pageToday.status,
+    contentType: pageToday.contentType || pageTomorrow.contentType,
+    body: pageToday.body,
+    bytes: pageToday.bytes + pageTomorrow.bytes,
+    requestedDate: today,
+    renderedDate: pageToday.renderedDate,
+    pages: [pageToday, pageTomorrow],
   };
 }
 
@@ -106,6 +128,18 @@ export function renderedDate(html) {
  * tombstone yesterday's rows.
  */
 export function plausible(raw) {
+  if (raw.pages && Array.isArray(raw.pages)) {
+    const verdicts = raw.pages.map((p) => ({ page: p, ...plausibleSingle(p) }));
+    if (verdicts.some((v) => v.ok)) return { ok: true, reason: '' };
+    if (verdicts.every((v) => v.empty)) return { ok: false, reason: 'no menu published for this date', empty: true };
+    if (verdicts.every((v) => v.skipped)) return { ok: false, reason: 'stale render for requested dates', skipped: true };
+    const firstFail = verdicts.find((v) => !v.ok);
+    return { ok: false, reason: firstFail?.reason ?? 'menu pages implausible' };
+  }
+  return plausibleSingle(raw);
+}
+
+export function plausibleSingle(raw) {
   if (raw.status !== 200) return { ok: false, reason: `http ${raw.status}` };
   if (!/text\/html/i.test(raw.contentType)) return { ok: false, reason: `content-type ${raw.contentType}` };
   if (raw.body.indexOf('daily-menu') === -1) return { ok: false, reason: 'no daily-menu markers: not the menu page' };
@@ -133,12 +167,45 @@ export function plausible(raw) {
 }
 
 export function parse(raw, ctx) {
+  const now = ctx?.now ?? Date.now();
+  if (raw.pages && Array.isArray(raw.pages)) {
+    const allRows = [];
+    const validDates = [];
+    let totalOutlets = 0;
+    for (const page of raw.pages) {
+      if (plausibleSingle(page).ok) {
+        const parsed = parseFoodPage(page.body);
+        totalOutlets = Math.max(totalOutlets, parsed.outlets.length);
+        const serviceDate = page.requestedDate;
+        const pageRows = toMenuItems(parsed, {
+          sourceId: id,
+          serviceDate,
+          observedAt: now,
+          validUntil: endOfServiceDay(serviceDate),
+          baseUrl: url,
+        });
+        allRows.push(...pageRows);
+        validDates.push(serviceDate);
+      }
+    }
+    return {
+      rows: allRows,
+      meta: {
+        outlets: totalOutlets,
+        dishes: allRows.length,
+        service_date: validDates[0] ?? todayInToronto(now),
+        service_dates: validDates,
+        page_date: raw.renderedDate ?? '',
+      },
+    };
+  }
+
   const parsed = parseFoodPage(raw.body);
-  const serviceDate = ctx?.date ?? todayInToronto(ctx?.now ?? Date.now());
+  const serviceDate = ctx?.date ?? todayInToronto(now);
   const rows = toMenuItems(parsed, {
     sourceId: id,
     serviceDate,
-    observedAt: ctx?.now ?? Date.now(),
+    observedAt: now,
     validUntil: endOfServiceDay(serviceDate),
     baseUrl: url,
   });

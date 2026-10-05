@@ -148,12 +148,13 @@ export async function fetchRecommendations(section: number | null = null, group:
 export interface PostedMenu {
   requested_date: string;
   service_date: string | null;
-  status: 'today' | 'previous' | 'unavailable';
+  status: 'today' | 'upcoming' | 'previous' | 'unavailable';
   items: { outlet: string; station: string; dish: string; diet: string[]; allergens: string[]; url: string }[];
 }
 
-export function fetchPostedMenu(signal?: AbortSignal): Promise<PostedMenu> {
-  return getJson<PostedMenu>('/v1/menu', signal);
+export function fetchPostedMenu(date?: string, signal?: AbortSignal): Promise<PostedMenu> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  return getJson<PostedMenu>(`/v1/menu${query}`, signal);
 }
 
 export function fetchCurrentWeather(signal?: AbortSignal): Promise<{ temp_c: number | null; observed_at: number | null; state: string }> {

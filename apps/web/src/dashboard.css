@@ -192,16 +192,16 @@
 .undo-toast button { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .menu-status { margin: -4px 0 12px; color: #bac1ca; font-size: 13px; }
 #menu { scroll-margin-top: 32px; }
-.menu-controls { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; }
+.menu-controls { display: flex; align-items: center; gap: 16px; margin: 0 0 18px; }
 .menu-search { flex: 0 1 300px; }
-.menu-outlet-scroll { flex: 0 1 420px; min-width: 0; overflow-x: auto; padding: 3px 0; scrollbar-width: thin; }
-.menu-outlet-select { position: relative; display: grid; grid-template-columns: repeat(var(--menu-outlet-count), minmax(0, 1fr)); min-width: calc(var(--menu-outlet-count) * 82px); border-bottom: 1px solid #535861; }
-.menu-outlet-select::after { position: absolute; bottom: -1px; left: 0; width: calc(100% / var(--menu-outlet-count)); height: 2px; background: #f4f6f8; content: ''; pointer-events: none; transform: translateX(var(--menu-outlet-offset, 0%)); transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1); }
-.menu-outlet-select button { position: relative; min-height: 38px; padding: 0 8px; border: 0; background: transparent; color: #aeb6c0; font-size: 12px; font-weight: 550; white-space: nowrap; transition: color 170ms ease; }
-.menu-outlet-select button:hover, .menu-outlet-select button[aria-pressed="true"] { color: #f4f6f8; }
-.menu-outlet-select button:focus-visible { outline: 2px solid #70a8ff; outline-offset: 3px; }
-.menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; align-items: start; }
-.menu-outlet { overflow: hidden; }
+.menu-day-select { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 180px; flex: none; border-bottom: 1px solid #535861; }
+.menu-day-select::after { position: absolute; bottom: -1px; left: 0; width: 50%; height: 2px; background: #f4f6f8; content: ''; pointer-events: none; transform: translateX(var(--menu-day-offset, 0%)); transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1); }
+.menu-day-select button { position: relative; min-height: 38px; padding: 0 12px; border: 0; background: transparent; color: #aeb6c0; font-size: 13px; font-weight: 550; white-space: nowrap; cursor: pointer; text-align: center; transition: color 170ms ease, transform 140ms ease; }
+.menu-day-select button:hover, .menu-day-select button[aria-pressed="true"] { color: #f4f6f8; }
+.menu-day-select button:active { transform: scale(0.95); }
+.menu-day-select button:focus-visible { outline: 2px solid #70a8ff; outline-offset: 3px; }
+.menu-grid { columns: 2; column-gap: 18px; }
+.menu-outlet { display: inline-block; width: 100%; break-inside: avoid; margin-bottom: 18px; overflow: hidden; }
 .menu-outlet-head { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; padding: 18px 22px 16px; border-bottom: 1px solid #484c53; }
 .menu-outlet h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.025em; }
 .menu-outlet--best .menu-outlet-head::before { position: absolute; top: 0; left: 20px; width: 72px; height: 2px; border-radius: 999px; background: #3478eb; content: ''; }
@@ -275,7 +275,8 @@
 @keyframes dashboard-spin { to { transform: rotate(360deg); } }
 @keyframes detail-exit { from { opacity: 1; filter: none; transform: none; } to { opacity: 0; filter: blur(5px); transform: translateY(-8px); } }
 @media (max-width: 760px) {
-  .recommendation-grid, .menu-grid, .courses-grid { grid-template-columns: 1fr; }
+  .recommendation-grid, .courses-grid { grid-template-columns: 1fr; }
+  .menu-grid { columns: 1; }
   .dining-directory-list { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .today-content { padding-top: 36px; }
   .calendar-day { grid-template-columns: 130px 1fr; }
@@ -307,7 +308,7 @@
   .more-recs { padding: 20px 18px; }
   .rec-detail { padding: 22px 18px; }
   .close-detail, .menu-outlet-head button { min-width: 44px; min-height: 44px; }
-  .solid-action, .quiet-action, .section-control, .context-control, .menu-controls input, .menu-outlet-select button, .term-work > summary, .dining-directory summary, .rec-evidence summary, .course-manage { min-height: 44px; }
+  .solid-action, .quiet-action, .section-control, .context-control, .menu-controls input, .menu-day-select button, .term-work > summary, .dining-directory summary, .rec-evidence summary, .course-manage { min-height: 44px; }
   .course-manage { margin-top: 4px; }
   .warning-strip { padding: 0 12px; }
   .warning-strip summary { min-height: 44px; padding: 12px 0; }
@@ -339,8 +340,8 @@
   .menu-outlet-head > div:last-child { gap: 5px; }
   .menu-controls { align-items: stretch; flex-direction: column; gap: 8px; }
   .menu-search { flex-basis: auto; }
-  .menu-outlet-scroll { flex-basis: auto; }
-  .menu-outlet-select button { font-size: 11px; padding-inline: 4px; }
+  .menu-day-select { width: 100%; }
+  .menu-day-select button { font-size: 12px; padding-inline: 8px; }
   .dining-directory-list { grid-template-columns: 1fr; }
   .menu-outlet ul { padding-inline: 18px; }
   .menu-outlet li { gap: 7px; padding-block: 10px; }
@@ -360,7 +361,7 @@
   .settings-tabs button { padding-inline: 2px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .menu-outlet-select::after, .menu-outlet-select button { transition: none; }
+  .menu-day-select::after, .menu-day-select button { transition: none; }
   .dashboard-app *, .dashboard-app *::before, .dashboard-app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 .calendar-change-tag { font-size: 11px; color: #f1c77a; }

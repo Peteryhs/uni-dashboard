@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, ExternalLink, Settings2, Star, WifiOff, X } from 'lucide-react';
 import { SearchField } from '@/components/ui/search-field';
@@ -110,6 +110,13 @@ function refreshRequestIssue(message: string): string {
 function shiftDate(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+function isWeekendDay(dateStr?: string): boolean {
+  if (!dateStr) return false;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const day = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+  return day === 0 || day === 6;
 }
 function calendarTime(event: CalendarEvent): string {
   if (event.all_day) return event.category === 'deadline' || event.category === 'exam' ? 'Date only' : 'All day';
@@ -479,8 +486,18 @@ function MenuSection() {
     const timer = window.setTimeout(() => setRefreshStatus(''), 2200);
     return () => window.clearTimeout(timer);
   }, [refreshStatus]);
-  const [selectedOutlet, setSelectedOutlet] = useState('all');
-  const menu = useQuery({ queryKey: ['posted-menu'], queryFn: ({ signal }) => fetchPostedMenu(signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
+  const [selectedDay, setSelectedDay] = useState<'today' | 'tomorrow'>('today');
+  const todayDate = useMemo(() => {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  }, []);
+  const tomorrowDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  }, []);
+  const activeDate = selectedDay === 'tomorrow' ? tomorrowDate : undefined;
+
+  const menu = useQuery({ queryKey: ['posted-menu', selectedDay], queryFn: ({ signal }) => fetchPostedMenu(activeDate, signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
   const diningRecommendation = useDiningRecommendation(menu.data?.service_date ?? undefined);
   const groups = new Map<string, NonNullable<typeof menu.data>['items']>();
   const search = preferences.dishSearchQuery.trim().toLowerCase();
@@ -488,12 +505,10 @@ function MenuSection() {
     if (preferences.dietaryFilter !== 'all' && !dish.diet.some(tag => tag.toLowerCase() === preferences.dietaryFilter)) continue;
     if (preferences.onlyFavorites && !isFavoriteDish(dish.dish)) continue;
     if (search && ![dish.dish, dish.outlet, dish.station, ...dish.allergens].some(value => value.toLowerCase().includes(search))) continue;
-    if (selectedOutlet !== 'all' && selectedOutlet !== dish.outlet) continue;
     if (!groups.has(dish.outlet)) groups.set(dish.outlet, []);
     groups.get(dish.outlet)!.push(dish);
   }
-  const outlets = [...new Set([...(menu.data?.items.map(item => item.outlet) ?? []), ...preferences.favoriteOutlets])].sort((a, b) => Number(isFavoriteOutlet(b)) - Number(isFavoriteOutlet(a)) || a.localeCompare(b));
-  if (menu.data) for (const outlet of preferences.favoriteOutlets) if ((!search || outlet.toLowerCase().includes(search)) && (selectedOutlet === 'all' || selectedOutlet === outlet) && !groups.has(outlet) && preferences.dietaryFilter === 'all' && !preferences.onlyFavorites) groups.set(outlet, []);
+  if (menu.data) for (const outlet of preferences.favoriteOutlets) if ((!search || outlet.toLowerCase().includes(search)) && !groups.has(outlet) && preferences.dietaryFilter === 'all' && !preferences.onlyFavorites) groups.set(outlet, []);
   const rankedRecommendation = diningRecommendation.state.status === 'ready'
     ? diningRecommendation.state.recommendation
     : undefined;
@@ -507,11 +522,17 @@ function MenuSection() {
     try {
       const result = await triggerPoll('uw-food-daily-menu');
       await queryClient.invalidateQueries({ queryKey: ['posted-menu'] });
-      const issue = result.receipts.find(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty');
+      const issue = result.receipts.find(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty' && receipt.outcome !== 'skipped');
       if (issue) throw new Error(refreshIssue(issue.source_id, issue.error, issue.outcome));
-      const viewError = queryClient.getQueryState(['posted-menu'])?.error;
+      const viewError = queryClient.getQueryState(['posted-menu', selectedDay])?.error;
       if (viewError) throw viewError;
-      setRefreshStatus('Updated');
+      const foodReceipt = result.receipts.find(receipt => receipt.source_id === 'uw-food-daily-menu');
+      if (foodReceipt?.outcome === 'empty' || foodReceipt?.outcome === 'skipped') {
+        const targetDay = selectedDay === 'tomorrow' ? tomorrowDate : todayDate;
+        setRefreshStatus(isWeekendDay(targetDay) ? 'No weekend menu posted' : 'No menu posted yet');
+      } else {
+        setRefreshStatus('Updated');
+      }
     }
     catch (error) {
       const message = error instanceof Error ? error.message : 'Could not refresh the menu.';
@@ -520,40 +541,68 @@ function MenuSection() {
     finally { setRefreshing(false); }
   };
   return <BlurFade as="section" className="content-section" id="menu" inView duration={0.45} offset={10} blur="6px" direction="up">
-    <div className="section-head"><h2>Dining menu</h2><RefreshButton label="Refresh menu" refreshing={refreshing} onRefresh={() => void refresh()} status={refreshStatus} error={refreshError} /></div>
-    {menu.data?.status === 'previous' && <p className="menu-status">Today’s menu has not been posted. Showing the last posted menu from {dateLabel(menu.data.service_date!)}.</p>}
-    {menu.data?.status === 'today' && <p className="menu-status">Posted for today, {dateLabel(menu.data.service_date!)}.</p>}
-    {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
-    {menu.data && <div className="menu-controls">
+    <div className="section-head">
+      <h2>Dining menu</h2>
+      <RefreshButton label="Refresh menu" refreshing={refreshing} onRefresh={() => void refresh()} status={refreshStatus} error={refreshError} />
+    </div>
+    <div className="menu-controls">
       <SearchField className="menu-search" label="Search dishes or outlets" placeholder="Search dishes or outlets" clearLabel="Clear dining search" value={preferences.dishSearchQuery} onValueChange={setDishSearchQuery} />
-      <div className="menu-outlet-scroll">
-        <div className="menu-outlet-select" role="group" aria-label="Dining outlets" style={{ '--menu-outlet-count': outlets.length + 1, '--menu-outlet-offset': `${Math.max(0, ['all', ...outlets].indexOf(selectedOutlet)) * 100}%` } as CSSProperties}>
-          <button type="button" aria-pressed={selectedOutlet === 'all'} onClick={() => setSelectedOutlet('all')}>All outlets</button>
-          {outlets.map(outlet => <button type="button" key={outlet} aria-pressed={selectedOutlet === outlet} onClick={() => setSelectedOutlet(outlet)}>{getOutletLocation(outlet).name}</button>)}
-        </div>
+      <div className="menu-day-select" role="group" aria-label="Menu date" style={{ '--menu-day-offset': selectedDay === 'tomorrow' ? '100%' : '0%' } as CSSProperties}>
+        <button type="button" aria-pressed={selectedDay === 'today'} onClick={() => setSelectedDay('today')}>Today</button>
+        <button type="button" aria-pressed={selectedDay === 'tomorrow'} onClick={() => setSelectedDay('tomorrow')}>Tomorrow</button>
       </div>
-    </div>}
-    {menu.isPending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading dining menu…</BlurFade>}
-    {menu.isError && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Could not load the dining menu.</BlurFade>}
-    {refreshError && <p className="action-error" role="alert">{refreshError}</p>}
-    {menu.data?.status === 'unavailable' && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No menu has been published in the feed yet.</BlurFade>}
-    {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your dining filters.</BlurFade>}
-    {groups.size > 0 && <div className="menu-grid">{sortedGroups.map(([outlet, dishes], outletIndex) => {
-      const aiOutlet = diningRecommendation.state.status === 'ready'
-        ? matchDiningOutlet(diningRecommendation.state.recommendation, outlet)
-        : undefined;
-      return <BlurFade as="article" className={'menu-outlet' + (aiOutlet?.rank === 1 ? ' menu-outlet--best' : '')} key={outlet} inView delay={Math.min(outletIndex, 5) * 0.06} duration={0.5} offset={12} blur="6px">
-        <div className="menu-outlet-head"><div><h3>{getOutletLocation(outlet).name}</h3><small>{getOutletLocation(outlet).building} · {getOutletLocation(outlet).campusZone}</small>{aiOutlet?.verdict.trim() && <p className="menu-outlet-ai-verdict">{aiOutlet.verdict.trim()}</p>}</div><div><span>{dishes.length} {dishes.length === 1 ? 'dish' : 'dishes'}</span><button onClick={() => toggleFavoriteOutlet(outlet)} aria-label={(isFavoriteOutlet(outlet) ? 'Unpin ' : 'Pin ') + getOutletLocation(outlet).name} aria-pressed={isFavoriteOutlet(outlet)}><Star size={15} fill={isFavoriteOutlet(outlet) ? 'currentColor' : 'none'} /></button></div></div>
-        {dishes.length ? <ul>{dishes.map((dish, index) => {
-          const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
-          const meta = [dish.station, ...dish.diet, ...dish.allergens.map(allergen => 'Contains ' + allergen)].filter(Boolean).join(' · ');
-          return <li className={aiHighlight ? 'menu-dish--ai-picked' : undefined} key={dish.dish + index}>
-            <div className="menu-dish-copy"><strong>{dish.dish}</strong>{aiHighlight?.why.trim() && <small className="menu-dish-ai-why">{aiHighlight.why.trim()}</small>}{meta && <small className="menu-dish-meta">{meta}</small>}</div>
-            <div className="menu-dish-actions"><button onClick={() => toggleFavoriteDish(dish.dish)} aria-label={(isFavoriteDish(dish.dish) ? 'Remove ' : 'Favorite ') + dish.dish} aria-pressed={isFavoriteDish(dish.dish)}><Star size={14} fill={isFavoriteDish(dish.dish) ? 'currentColor' : 'none'} /></button>{dish.url && <a href={dish.url} target="_blank" rel="noopener noreferrer" aria-label={'View ' + dish.dish}><ExternalLink size={14} /></a>}</div>
-          </li>;
-        })}</ul> : <p className="menu-outlet-empty">No dishes posted here today.</p>}
-      </BlurFade>;
-    })}</div>}
+    </div>
+    <BlurFade key={selectedDay} duration={0.35} offset={8} blur="6px" direction="up">
+      {menu.data?.status === 'previous' && (
+        <p className="menu-status">
+          {isWeekendDay(menu.data.requested_date)
+            ? `Food Services usually does not publish daily menus on weekends. Showing the last posted menu from ${dateLabel(menu.data.service_date!)}.`
+            : `Today’s menu has not been posted yet. Showing the last posted menu from ${dateLabel(menu.data.service_date!)}.`}
+        </p>
+      )}
+      {menu.data?.status === 'today' && (
+        <p className="menu-status">
+          {isWeekendDay(menu.data.service_date!)
+            ? `Weekend menu for today, ${dateLabel(menu.data.service_date!)} (some locations may not publish on weekends).`
+            : `Posted for today, ${dateLabel(menu.data.service_date!)}.`}
+        </p>
+      )}
+      {menu.data?.status === 'upcoming' && (
+        <p className="menu-status">
+          {isWeekendDay(menu.data.service_date!)
+            ? `Weekend menu for ${dateLabel(menu.data.service_date!)} (some locations may not publish on weekends).`
+            : `Posted in advance for ${dateLabel(menu.data.service_date!)}.`}
+        </p>
+      )}
+      {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
+      {menu.isPending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading dining menu…</BlurFade>}
+      {menu.isError && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Could not load the dining menu.</BlurFade>}
+      {refreshError && <p className="action-error" role="alert">{refreshError}</p>}
+      {menu.data?.status === 'unavailable' && (
+        <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">
+          {isWeekendDay(menu.data?.requested_date)
+            ? 'Food Services usually does not publish daily menus on weekends. No menu is currently published for this date.'
+            : 'No menu has been published in the feed yet.'}
+        </BlurFade>
+      )}
+      {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your dining filters.</BlurFade>}
+      {groups.size > 0 && <div className="menu-grid">{sortedGroups.map(([outlet, dishes], outletIndex) => {
+        const aiOutlet = diningRecommendation.state.status === 'ready'
+          ? matchDiningOutlet(diningRecommendation.state.recommendation, outlet)
+          : undefined;
+        return <BlurFade as="article" className={'menu-outlet' + (aiOutlet?.rank === 1 ? ' menu-outlet--best' : '')} key={outlet} inView delay={Math.min(outletIndex, 5) * 0.06} duration={0.5} offset={12} blur="6px">
+          <div className="menu-outlet-head"><div><h3>{getOutletLocation(outlet).name}</h3><small>{getOutletLocation(outlet).building} · {getOutletLocation(outlet).campusZone}</small>{aiOutlet?.verdict.trim() && <p className="menu-outlet-ai-verdict">{aiOutlet.verdict.trim()}</p>}</div><div><span>{dishes.length} {dishes.length === 1 ? 'dish' : 'dishes'}</span><button onClick={() => toggleFavoriteOutlet(outlet)} aria-label={(isFavoriteOutlet(outlet) ? 'Unpin ' : 'Pin ') + getOutletLocation(outlet).name} aria-pressed={isFavoriteOutlet(outlet)}><Star size={15} fill={isFavoriteOutlet(outlet) ? 'currentColor' : 'none'} /></button></div></div>
+          {dishes.length ? <ul>{dishes.map((dish, index) => {
+            const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
+            const meta = [dish.station, ...dish.diet, ...dish.allergens.map(allergen => 'Contains ' + allergen)].filter(Boolean).join(' · ');
+            return <li className={aiHighlight ? 'menu-dish--ai-picked' : undefined} key={dish.dish + index}>
+              <div className="menu-dish-copy"><strong>{dish.dish}</strong>{aiHighlight?.why.trim() && <small className="menu-dish-ai-why">{aiHighlight.why.trim()}</small>}{meta && <small className="menu-dish-meta">{meta}</small>}</div>
+              <div className="menu-dish-actions"><button onClick={() => toggleFavoriteDish(dish.dish)} aria-label={(isFavoriteDish(dish.dish) ? 'Remove ' : 'Favorite ') + dish.dish} aria-pressed={isFavoriteDish(dish.dish)}><Star size={14} fill={isFavoriteDish(dish.dish) ? 'currentColor' : 'none'} /></button>{dish.url && <a href={dish.url} target="_blank" rel="noopener noreferrer" aria-label={'View ' + dish.dish}><ExternalLink size={14} /></a>}</div>
+            </li>;
+          })}</ul> : <p className="menu-outlet-empty">{selectedDay === 'tomorrow' ? 'No dishes posted here for tomorrow.' : 'No dishes posted here today.'}</p>}
+        </BlurFade>;
+      })}</div>}
+    </BlurFade>
     <BlurFadeDisclosure className="dining-directory" contentClassName="dining-directory-list" summary="Campus dining locations">{CAMPUS_DINING_LOCATIONS.map(location => <p key={location.name}><strong>{location.name}</strong><span>{location.building} · {location.campusZone}</span></p>)}</BlurFadeDisclosure>
   </BlurFade>;
 }
