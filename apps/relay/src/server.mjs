@@ -419,13 +419,18 @@ export function createServer({
 
       if (url.pathname === '/v1/credentials') {
         if (req.method === 'GET') {
-          const scheduleUrl = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
           return send(200, {
             portal: {
-              configured: Boolean(scheduleUrl),
-              env_var: process.env.GOOGLE_CALENDAR_ICS_URL ? 'GOOGLE_CALENDAR_ICS_URL' : 'PORTAL_ICS_URL',
-              name: 'Schedule Feed (Google Calendar or UW Portal)',
-              role: 'Class timetable, personal events, exams & walk countdowns',
+              configured: Boolean(process.env.PORTAL_ICS_URL),
+              env_var: 'PORTAL_ICS_URL',
+              name: 'Waterloo Portal Feed',
+              role: 'Official class timetable, room locations and exams',
+            },
+            google_calendar: {
+              configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
+              env_var: 'GOOGLE_CALENDAR_ICS_URL',
+              name: 'Google Calendar Feed',
+              role: 'Google Calendar events, personal timetable or exported classes',
             },
             learn: {
               configured: Boolean(process.env.LEARN_ICS_URL),
@@ -468,18 +473,26 @@ export function createServer({
             }
           }
           let changed = false;
-          const scheduleInput = GOOGLE_CALENDAR_ICS_URL !== undefined ? GOOGLE_CALENDAR_ICS_URL : PORTAL_ICS_URL;
-          const scheduleBefore = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
-          let scheduleChanged = false;
-          if (typeof scheduleInput === 'string') {
-            const trimmed = scheduleInput.trim();
-            scheduleChanged = scheduleBefore !== trimmed;
+          let portalChanged = false;
+          if (typeof PORTAL_ICS_URL === 'string') {
+            const trimmed = PORTAL_ICS_URL.trim();
+            portalChanged = (process.env.PORTAL_ICS_URL || '') !== trimmed;
             if (trimmed) {
               process.env.PORTAL_ICS_URL = trimmed;
+              changed = true;
+            } else if (PORTAL_ICS_URL === '') {
+              delete process.env.PORTAL_ICS_URL;
+              changed = true;
+            }
+          }
+          let googleChanged = false;
+          if (typeof GOOGLE_CALENDAR_ICS_URL === 'string') {
+            const trimmed = GOOGLE_CALENDAR_ICS_URL.trim();
+            googleChanged = (process.env.GOOGLE_CALENDAR_ICS_URL || '') !== trimmed;
+            if (trimmed) {
               process.env.GOOGLE_CALENDAR_ICS_URL = trimmed;
               changed = true;
-            } else if (scheduleInput === '') {
-              delete process.env.PORTAL_ICS_URL;
+            } else if (GOOGLE_CALENDAR_ICS_URL === '') {
               delete process.env.GOOGLE_CALENDAR_ICS_URL;
               changed = true;
             }
@@ -497,10 +510,11 @@ export function createServer({
             }
           }
           const changedAt = Date.now();
-          if (scheduleChanged) store.setSetting(SETUP_SCHEDULE_CHANGED_AT, String(changedAt), changedAt);
+          if (portalChanged || googleChanged) store.setSetting(SETUP_SCHEDULE_CHANGED_AT, String(changedAt), changedAt);
           if (learnChanged) store.setSetting(SETUP_LEARN_CHANGED_AT, String(changedAt), changedAt);
-          if (scheduleChanged && scheduleInput.trim()) store.scheduleJob('uw-portal-ics', changedAt);
-          if (learnChanged && LEARN_ICS_URL.trim()) store.scheduleJob('uw-learn-ics', changedAt);
+          if (portalChanged && process.env.PORTAL_ICS_URL) store.scheduleJob('uw-portal-ics', changedAt);
+          if (googleChanged && process.env.GOOGLE_CALENDAR_ICS_URL) store.scheduleJob('google-calendar-ics', changedAt);
+          if (learnChanged && process.env.LEARN_ICS_URL) store.scheduleJob('uw-learn-ics', changedAt);
           if (typeof CLOUDFLARE_ACCOUNT_ID === 'string') {
             const trimmed = CLOUDFLARE_ACCOUNT_ID.trim();
             if (trimmed) {
@@ -530,9 +544,7 @@ export function createServer({
             let content = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
             const names = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'];
             for (const name of names) {
-              const isSchedule = name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL';
-              const supplied = isSchedule ? scheduleInput !== undefined : body[name] !== undefined;
-              if (!supplied) continue;
+              if (body[name] === undefined) continue;
               // Remove every old occurrence, including cleared values. Otherwise a removed
               // credential silently returns the next time the relay loads .env on startup.
               const line = new RegExp(`^(?:export\\s+)?${name}\\s*=.*(?:\\r?\\n|$)`, 'gm');
@@ -554,7 +566,8 @@ export function createServer({
 
           return send(200, {
             ok: true,
-            portal_configured: Boolean(process.env.PORTAL_ICS_URL || process.env.GOOGLE_CALENDAR_ICS_URL),
+            portal_configured: Boolean(process.env.PORTAL_ICS_URL),
+            google_calendar_configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
             learn_configured: Boolean(process.env.LEARN_ICS_URL),
             cloudflare_configured: Boolean(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN),
           });

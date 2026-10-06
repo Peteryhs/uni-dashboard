@@ -85,8 +85,8 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
    */
   let schedule = (
     await store.rows('timeline_event', {
-      where: 'source_id = ? AND starts_at >= ?',
-      params: [SCHEDULE_SOURCE, now - 5 * MIN],
+      where: 'source_id IN (?,?) AND starts_at >= ?',
+      params: ['uw-portal-ics', 'google-calendar-ics', now - 5 * MIN],
       limit: 200,
       orderBy: 'starts_at',
     })
@@ -111,7 +111,26 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
   const next = schedule[0] ?? deadlines[0];
 
   if (!next) {
-    const health = await sourceHealth(store, SCHEDULE_SOURCE, 6 * HOUR, now);
+    const runs = (await store?.lastRunPerSource?.()) || [];
+    const hasPortal = runs.some((r) => r.source_id === 'uw-portal-ics');
+    const hasGoogle = runs.some((r) => r.source_id === 'google-calendar-ics');
+
+    let health;
+    if (hasPortal && !hasGoogle) {
+      health = await sourceHealth(store, 'uw-portal-ics', 6 * HOUR, now);
+    } else if (hasGoogle && !hasPortal) {
+      health = await sourceHealth(store, 'google-calendar-ics', 6 * HOUR, now);
+    } else if (hasPortal && hasGoogle) {
+      const [portalHealth, googleHealth] = await Promise.all([
+        sourceHealth(store, 'uw-portal-ics', 6 * HOUR, now),
+        sourceHealth(store, 'google-calendar-ics', 6 * HOUR, now),
+      ]);
+      const eitherOk = portalHealth.ok || googleHealth.ok;
+      health = eitherOk ? { ok: true, state: 'empty' } : (portalHealth.state === 'failed' ? portalHealth : googleHealth);
+    } else {
+      health = await sourceHealth(store, 'uw-portal-ics', 6 * HOUR, now);
+    }
+
     if (!health.ok) {
       return {
         id: 'next_commitment',

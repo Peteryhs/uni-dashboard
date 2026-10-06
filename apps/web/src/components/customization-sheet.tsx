@@ -817,6 +817,7 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
   const [statusError, setStatusError] = useState('');
   const [saving, setSaving] = useState(false);
   const [portalUrl, setPortalUrl] = useState('');
+  const [googleUrl, setGoogleUrl] = useState('');
   const [learnUrl, setLearnUrl] = useState('');
   const [cfAccountId, setCfAccountId] = useState('');
   const [cfApiToken, setCfApiToken] = useState('');
@@ -870,6 +871,11 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
       cleanPortal = 'https://' + cleanPortal.slice('webcal://'.length);
     }
 
+    let cleanGoogle = googleUrl.trim();
+    if (cleanGoogle.startsWith('webcal://')) {
+      cleanGoogle = 'https://' + cleanGoogle.slice('webcal://'.length);
+    }
+
     let cleanLearn = learnUrl.trim();
     if (cleanLearn.startsWith('webcal://')) {
       cleanLearn = 'https://' + cleanLearn.slice('webcal://'.length);
@@ -883,7 +889,8 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
         CLOUDFLARE_ACCOUNT_ID?: string;
         CLOUDFLARE_API_TOKEN?: string;
       } = {};
-      if (cleanPortal) { payload.PORTAL_ICS_URL = cleanPortal; payload.GOOGLE_CALENDAR_ICS_URL = cleanPortal; }
+      if (cleanPortal) payload.PORTAL_ICS_URL = cleanPortal;
+      if (cleanGoogle) payload.GOOGLE_CALENDAR_ICS_URL = cleanGoogle;
       if (cleanLearn) payload.LEARN_ICS_URL = cleanLearn;
       if (cfAccountId.trim()) payload.CLOUDFLARE_ACCOUNT_ID = cfAccountId.trim();
       if (cfApiToken.trim()) payload.CLOUDFLARE_API_TOKEN = cfApiToken.trim();
@@ -896,6 +903,7 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
 
       await updateCredentials(payload);
       setPortalUrl('');
+      setGoogleUrl('');
       setLearnUrl('');
       setCfAccountId('');
       setCfApiToken('');
@@ -948,23 +956,51 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
               Calendar feeds
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Connect your University of Waterloo timetable and deliverables.
+              Connect your University of Waterloo timetable and deliverables. Google Calendar, Portal, and LEARN can be mixed freely; none are mandatory.
             </p>
           </div>
 
           <div className="space-y-3 pt-1">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                  <div className="settings-label-with-help">
-                    <Label htmlFor="portal-url" className="text-xs text-zinc-300 font-medium">
-                      Google Calendar or Portal URL
-                    </Label>
-                    <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Google Calendar or Portal URL">What’s this?</button>
-                  </div>
-                {status?.portal.configured ? (
+                <div className="settings-label-with-help">
+                  <Label htmlFor="google-url" className="text-xs text-zinc-300 font-medium">
+                    Google Calendar Feed URL
+                  </Label>
+                  <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Google Calendar Feed URL">What’s this?</button>
+                </div>
+                {status?.google_calendar?.configured ? (
                   <span className="font-mono text-[10px] text-emerald-400">Configured</span>
                 ) : (
-                  <span className="font-mono text-[10px] text-amber">Missing</span>
+                  <span className="font-mono text-[10px] text-zinc-400">Optional</span>
+                )}
+              </div>
+              <Input
+                id="google-url"
+                type="text"
+                value={googleUrl}
+                onChange={(e) => setGoogleUrl(e.target.value)}
+                placeholder={
+                  status?.google_calendar?.configured
+                    ? 'Configured (paste new URL to update)...'
+                    : 'https://calendar.google.com/calendar/ical/.../basic.ics'
+                }
+                className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="settings-label-with-help">
+                  <Label htmlFor="portal-url" className="text-xs text-zinc-300 font-medium">
+                    Waterloo Portal Feed URL
+                  </Label>
+                  <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Waterloo Portal Feed URL">What’s this?</button>
+                </div>
+                {status?.portal?.configured ? (
+                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
+                ) : (
+                  <span className="font-mono text-[10px] text-zinc-400">Optional</span>
                 )}
               </div>
               <Input
@@ -973,9 +1009,9 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
                 value={portalUrl}
                 onChange={(e) => setPortalUrl(e.target.value)}
                 placeholder={
-                  status?.portal.configured
+                  status?.portal?.configured
                     ? 'Configured (paste new URL to update)...'
-                    : 'https://calendar.google.com/calendar/ical/.../basic.ics'
+                    : 'https://portal.uwaterloo.ca/.../calendar.ics'
                 }
                 className="h-8 text-xs bg-white/[0.04] border border-white/10 rounded-md text-foreground font-mono focus-visible:ring-1 focus-visible:ring-live focus-visible:outline-none"
               />

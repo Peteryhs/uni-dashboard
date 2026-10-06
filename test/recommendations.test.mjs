@@ -136,6 +136,10 @@ test('completion survives time passing, snooze expires, undo works, and changed 
   feed = recommendationsFromData({ ...data, actions, now });
   assert.ok(feed.tasks.small.some(task => task.title.includes('Quiz 2')), 'changed due date reappears');
   await assert.rejects(saveRecommendationAction(store, { id: quiz.id, action: 'snooze', until: now + 8 * 86400_000 }, { now }), /seven days/);
+  await saveRecommendationAction(store, { id: quiz.id, action: 'dismiss' }, { now });
+  actions = JSON.parse(store.getSetting('RECOMMENDATION_ACTIONS_JSON'));
+  assert.ok(!recommendationsFromData({ ...data, actions, now }).items.some(task => task.id === quiz.id));
+  assert.ok(!recommendationsFromData({ ...data, actions, now: now + 86400_000 }).items.some(task => task.id === quiz.id));
   store.close();
 });
 

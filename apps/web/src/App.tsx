@@ -170,10 +170,12 @@ function AnimatedUndoToast({
   lastHidden,
   onUndo,
   onDismiss,
+  actionLabel = 'Hidden',
 }: {
   lastHidden: { id: string; title: string } | null;
   onUndo: (id: string) => void;
   onDismiss: () => void;
+  actionLabel?: string;
 }) {
   const [closing, setClosing] = useState(false);
   const [activeItem, setActiveItem] = useState(lastHidden);
@@ -220,13 +222,13 @@ function AnimatedUndoToast({
 
   return (
     <BlurFade as="div" className={'undo-toast' + (closing ? ' is-closing' : '')} role="status" duration={0.3} offset={8} blur="5px">
-      <span>Hidden: {activeItem.title}</span>
+      <span>{actionLabel}: {activeItem.title}</span>
       <button onClick={handleUndo}>Undo</button>
     </BlurFade>
   );
 }
 
-function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: RecommendationItem; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze') => void }) {
+function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: RecommendationItem; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze' | 'dismiss') => void }) {
   const course = item.course;
   return <BlurFade as="section" className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} duration={0.3} offset={8} blur="5px" aria-label={'Details for ' + cleanTitle(item.title)}>
     <div className="rec-detail-head">
@@ -244,8 +246,14 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       {item.kind === 'food'
         ? <a className="solid-action" href="#menu">View menu</a>
         : item.action && <a className="solid-action" href={item.action.url} target="_blank" rel="noopener noreferrer">{item.action.label}<ExternalLink size={15} /></a>}
-      {item.can_complete && <button className="quiet-action" onClick={() => onAction('done')}><Check size={15} /> Mark done</button>}
-      <button className="quiet-action" onClick={() => onAction('snooze')}>Remind me in an hour</button>
+      {item.can_complete ? (
+        <>
+          <button className="quiet-action" onClick={() => onAction('done')}><Check size={15} /> Mark done</button>
+          <button className="quiet-action" onClick={() => onAction('snooze')}>Remind me in an hour</button>
+        </>
+      ) : (
+        <button className="quiet-action" onClick={() => onAction('dismiss')}>Dismiss</button>
+      )}
     </div>
     <BlurFadeDisclosure className="rec-evidence" summary="Source details"><p>{item.source_label}. {item.evidence || 'No additional source details.'}</p></BlurFadeDisclosure>
   </BlurFade>;
@@ -654,6 +662,7 @@ export default function App() {
   }, []);
   const [settingsCourse, setSettingsCourse] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [lastHiddenRec, setLastHiddenRec] = useState<{ id: string; title: string; action: 'done' | 'snooze' | 'dismiss' } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertError, setAlertError] = useState('');
@@ -707,10 +716,16 @@ export default function App() {
     .filter(item => !items.slice(0, 3).some(visible => visible.id === item.id) && (item.due_at ?? item.starts_at ?? Infinity) >= now)
     .sort((a, b) => (a.due_at ?? a.starts_at ?? Infinity) - (b.due_at ?? b.starts_at ?? Infinity))[0];
   const largestTask = (recs.data?.tasks.large ?? []).find(item => item.id !== nextTask?.id && !items.slice(0, 3).some(visible => visible.id === item.id));
-  const act = async (item: RecommendationItem, action: 'done' | 'snooze') => {
+  const act = async (item: RecommendationItem, action: 'done' | 'snooze' | 'dismiss') => {
     setActionError(null);
     setSelectedId(null);
-    try { await saveRecommendationAction(item.id, action); await recs.refetch(); }
+    try {
+      await saveRecommendationAction(item.id, action);
+      if (action === 'dismiss' || action === 'done') {
+        setLastHiddenRec({ id: item.id, title: cleanTitle(item.title), action });
+      }
+      await recs.refetch();
+    }
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not update recommendation.'); }
   };
   useEffect(() => () => {
@@ -799,6 +814,20 @@ export default function App() {
         </BlurFade>
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
+      <AnimatedUndoToast
+        lastHidden={lastHiddenRec}
+        actionLabel={lastHiddenRec?.action === 'done' ? 'Completed' : 'Dismissed'}
+        onUndo={async (id) => {
+          try {
+            await saveRecommendationAction(id, 'undo');
+            await recs.refetch();
+          } catch (error) {
+            setActionError(error instanceof Error ? error.message : 'Could not undo action.');
+          }
+          setLastHiddenRec(null);
+        }}
+        onDismiss={() => setLastHiddenRec(null)}
+      />
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
       {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} ${recs.data.warnings.length === 1 ? 'source warning needs' : 'source warnings need'} attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}

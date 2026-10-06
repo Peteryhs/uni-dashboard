@@ -161,7 +161,7 @@ export function fetchCurrentWeather(signal?: AbortSignal): Promise<{ temp_c: num
   return getJson('/v1/weather/current', signal);
 }
 
-export async function saveRecommendationAction(id: string, action: 'done' | 'undo' | 'snooze', until?: number): Promise<void> {
+export async function saveRecommendationAction(id: string, action: 'done' | 'undo' | 'snooze' | 'dismiss', until?: number): Promise<void> {
   const res = await fetchRelay('/v1/recommendations/actions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authHeaders() },
@@ -234,6 +234,7 @@ export interface CredentialFeedInfo {
 
 export interface CredentialsStatus {
   portal: CredentialFeedInfo;
+  google_calendar?: CredentialFeedInfo;
   learn: CredentialFeedInfo;
   cloudflare?: {
     configured: boolean;
@@ -271,7 +272,7 @@ export async function updateCredentials(
     CLOUDFLARE_API_TOKEN?: string;
   },
   signal?: AbortSignal,
-): Promise<{ ok: boolean; portal_configured: boolean; learn_configured: boolean; cloudflare_configured?: boolean }> {
+): Promise<{ ok: boolean; portal_configured: boolean; google_calendar_configured?: boolean; learn_configured: boolean; cloudflare_configured?: boolean }> {
   const res = await fetchRelay('/v1/credentials', {
     method: 'POST',
     signal,

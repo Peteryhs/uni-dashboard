@@ -139,7 +139,7 @@ test('local credentials reject non-object bodies and cleared values stay removed
     assert.equal(cleared.includes(`${name}=`), false, name);
   }
   const future = Date.now() + 6 * 3600_000;
-  store.scheduleJob('uw-portal-ics', future);
+  store.scheduleJob('google-calendar-ics', future);
   store.scheduleJob('uw-learn-ics', future);
   assert.equal((await post({ GOOGLE_CALENDAR_ICS_URL: 'https://synthetic.test/new.ics', LEARN_ICS_URL: 'https://synthetic.test/new-learn.ics' })).status, 200);
   for (const job of store.jobs()) assert.ok(job.next_due_at <= Date.now(), 'changed feeds become due immediately');

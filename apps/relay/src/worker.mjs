@@ -456,11 +456,18 @@ async function handleFetch(request, env, ctx) {
     if (request.method === 'GET') {
       return json({
         portal: {
-          configured: Boolean(scheduleUrl),
-          env_var: process.env.GOOGLE_CALENDAR_ICS_URL ? 'GOOGLE_CALENDAR_ICS_URL' : 'PORTAL_ICS_URL',
-          source: saved.includes('GOOGLE_CALENDAR_ICS_URL') || saved.includes('PORTAL_ICS_URL') ? 'saved in the app' : scheduleUrl ? 'Worker secret' : 'not set',
-          name: 'Schedule Feed (Google Calendar or UW Portal)',
-          role: 'Class timetable, personal events and exams',
+          configured: Boolean(process.env.PORTAL_ICS_URL),
+          env_var: 'PORTAL_ICS_URL',
+          source: saved.includes('PORTAL_ICS_URL') ? 'saved in the app' : process.env.PORTAL_ICS_URL ? 'Worker secret' : 'not set',
+          name: 'Waterloo Portal Feed',
+          role: 'Official class timetable, room locations and exams',
+        },
+        google_calendar: {
+          configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
+          env_var: 'GOOGLE_CALENDAR_ICS_URL',
+          source: saved.includes('GOOGLE_CALENDAR_ICS_URL') ? 'saved in the app' : process.env.GOOGLE_CALENDAR_ICS_URL ? 'Worker secret' : 'not set',
+          name: 'Google Calendar Feed',
+          role: 'Google Calendar events, personal timetable or exported classes',
         },
         learn: {
           configured: Boolean(process.env.LEARN_ICS_URL),
@@ -514,9 +521,7 @@ async function handleFetch(request, env, ctx) {
       const feedsToSchedule = new Set();
       for (const [name, trimmed] of updates) {
         const previous = await store.getSetting(name);
-        const wasConfigured = name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL'
-          ? (process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || previous || '')
-          : (process.env[name] || previous || '');
+        const wasConfigured = process.env[name] || previous || '';
         const valueChanged = wasConfigured !== trimmed;
         const changedAt = Date.now();
         if (!trimmed) {
@@ -534,7 +539,8 @@ async function handleFetch(request, env, ctx) {
           const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
           if (marker) await store.setSetting(marker, String(changedAt), changedAt);
           if (name === 'LEARN_ICS_URL') feedsToSchedule.add('uw-learn-ics');
-          if (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL') feedsToSchedule.add('uw-portal-ics');
+          if (name === 'PORTAL_ICS_URL') feedsToSchedule.add('uw-portal-ics');
+          if (name === 'GOOGLE_CALENDAR_ICS_URL') feedsToSchedule.add('google-calendar-ics');
         }
         if (name !== 'OFFICE_HOURS_JSON') {
           process.env[name] = trimmed;
@@ -557,7 +563,8 @@ async function handleFetch(request, env, ctx) {
         ok: true,
         stored,
         polled,
-        portal_configured: Boolean(process.env.PORTAL_ICS_URL || process.env.GOOGLE_CALENDAR_ICS_URL),
+        portal_configured: Boolean(process.env.PORTAL_ICS_URL),
+        google_calendar_configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
         learn_configured: Boolean(process.env.LEARN_ICS_URL),
       });
     }

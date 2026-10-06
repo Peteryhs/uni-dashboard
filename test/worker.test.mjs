@@ -421,7 +421,7 @@ test('Worker setup state persists in D1 and requires a new sync after replacing 
   assert.equal((await readSetup()).first_run, false, 'the marker survives a separate request');
   const schedule = 'https://calendar.test/private.ics?token=schedule-secret';
   const learn = 'https://learn.test/private.ics?token=learn-secret';
-  await saveFeeds({ PORTAL_ICS_URL: schedule, GOOGLE_CALENDAR_ICS_URL: schedule, LEARN_ICS_URL: learn });
+  await saveFeeds({ PORTAL_ICS_URL: schedule, LEARN_ICS_URL: learn });
   const saved = await readSetup();
   assert.equal(saved.schedule_configured, true);
   assert.equal(saved.learn_configured, true);
@@ -437,7 +437,7 @@ test('Worker setup state persists in D1 and requires a new sync after replacing 
   assert.equal((await readSetup()).setup_needed, false, 'valid empty feeds complete setup');
 
   const replacement = 'https://calendar.test/replacement.ics';
-  await saveFeeds({ PORTAL_ICS_URL: replacement, GOOGLE_CALENDAR_ICS_URL: replacement });
+  await saveFeeds({ PORTAL_ICS_URL: replacement });
   // Make the old receipt unambiguously older than the persisted change marker, even if both
   // requests happen within one clock tick.
   db.prepare('UPDATE source_run SET started_at = 1 WHERE source_id = ?').run('uw-portal-ics');
@@ -718,6 +718,9 @@ test('Worker previews and saves a syllabus, serves guidance within query budget,
   const undo = await worker.fetch(new Request(actionUrl, { method: 'POST', body: JSON.stringify({ id: task.id, action: 'undo' }) }), env, {});
   assert.equal(undo.status, 200);
   assert.equal((await (await worker.fetch(new Request('https://dash.test/v1/recommendations'), env, {})).json()).tasks.small.some((item) => item.id === task.id), true);
+  const dismiss = await worker.fetch(new Request(actionUrl, { method: 'POST', body: JSON.stringify({ id: task.id, action: 'dismiss' }) }), env, {});
+  assert.equal(dismiss.status, 200);
+  assert.equal((await (await worker.fetch(new Request('https://dash.test/v1/recommendations'), env, {})).json()).tasks.small.some((item) => item.id === task.id), false);
 });
 
 test('syllabus import bounds request size before parsing or calling AI', async (t) => {

@@ -138,3 +138,22 @@ test('calendar request options reject invalid dates and unbounded ranges', () =>
     assert.throws(() => calendarOptions(new URLSearchParams(query), now), RangeError);
   }
 });
+test('calendar mixes portal and google calendar sources and deduplicates identical class meetings while retaining personal events', async () => {
+  const store = new SqliteStore(':memory:');
+  const classStart = Date.parse('2026-03-08T13:00:00Z');
+  const classEnd = Date.parse('2026-03-08T14:00:00Z');
+  store.upsertRows('timeline_event', [
+    { ...base, source_id: 'uw-portal-ics', external_id: 'portal-class', kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: classStart, ends_at: classEnd },
+    { ...base, source_id: 'google-calendar-ics', external_id: 'google-class', kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: classStart, ends_at: classEnd },
+    { ...base, source_id: 'google-calendar-ics', external_id: 'google-personal', kind: 'event', title: 'Dentist Appointment', location: 'Clinic', starts_at: Date.parse('2026-03-08T16:00:00Z'), ends_at: Date.parse('2026-03-08T17:00:00Z') },
+  ]);
+  const calendar = await buildCalendar(store, { start: '2026-03-08', days: 1, now });
+  assert.equal(calendar.days[0].events.length, 2, 'duplicate class is deduplicated, personal event retained');
+  const classEvent = calendar.days[0].events.find((e) => e.title === 'ECE 150 LEC 001');
+  assert.equal(classEvent.source_id, 'uw-portal-ics', 'prefers official portal for deduplicated class');
+  assert.equal(classEvent.source_label, 'Portal');
+  const personalEvent = calendar.days[0].events.find((e) => e.title === 'Dentist Appointment');
+  assert.equal(personalEvent.source_id, 'google-calendar-ics');
+  assert.equal(personalEvent.source_label, 'Google');
+  store.close();
+});

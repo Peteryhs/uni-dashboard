@@ -15,7 +15,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 31;
 const MAX_EVENTS = 2000;
 const PORTAL_ASSESSMENT_TITLE_RE = /\b(?:due|deadline|submit|submission|assignment|quiz|midterm|exam|test|lab report)\b/i;
-const CADENCE = { 'uw-portal-ics': 6 * 60 * 60_000, 'uw-learn-ics': 15 * 60_000, 'user-office-hours': 6 * 60 * 60_000 };
+const CADENCE = { 'uw-portal-ics': 6 * 60 * 60_000, 'google-calendar-ics': 6 * 60 * 60_000, 'uw-learn-ics': 15 * 60_000, 'user-office-hours': 6 * 60 * 60_000 };
 const dateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
 });
@@ -68,7 +68,7 @@ function matchesScope(scope, section, group) {
 
 function rowUid(row) {
   if (row.uid) return row.uid;
-  if (row.source_id !== 'uw-portal-ics' && row.source_id !== 'uw-learn-ics') return null;
+  if (row.source_id !== 'uw-portal-ics' && row.source_id !== 'google-calendar-ics' && row.source_id !== 'uw-learn-ics') return null;
   return /^(.*)#\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.exec(row.external_id)?.[1] ?? null;
 }
 
@@ -79,7 +79,7 @@ function toEvent(row, now) {
   const course = officeHours ? courseOf(row.title) : (context?.course || courseOf(row.title, row.location));
   const scope = learn ? groupScope(row.title) : { section: null, groups: null };
   const link = context?.url || row.url || '';
-  const portalAdministrativeDate = row.source_id === 'uw-portal-ics' && row.all_day && course === 'Other' && !PORTAL_ASSESSMENT_TITLE_RE.test(row.title);
+  const portalAdministrativeDate = (row.source_id === 'uw-portal-ics' || row.source_id === 'google-calendar-ics') && row.all_day && course === 'Other' && !PORTAL_ASSESSMENT_TITLE_RE.test(row.title);
   const category = learn ? learnEventCategory(row.title, row.kind) : officeHours ? 'office_hours' : portalAdministrativeDate ? 'event' :
     row.kind === 'exam' ? 'exam' : row.kind === 'deadline' ? 'deadline' :
       row.kind === 'class' && course !== 'Other' ? 'class' : 'event';
@@ -88,7 +88,7 @@ function toEvent(row, now) {
     occurrence_id: row.external_id,
     uid: rowUid(row),
     source_id: row.source_id,
-    source_label: learn ? 'LEARN' : officeHours ? 'Custom' : row.source_id === 'uw-portal-ics' ? 'Schedule' : row.source_id,
+    source_label: learn ? 'LEARN' : officeHours ? 'Custom' : row.source_id === 'uw-portal-ics' ? 'Portal' : row.source_id === 'google-calendar-ics' ? 'Google' : 'Schedule',
     kind: learn || portalAdministrativeDate ? category : row.kind || 'event',
     category,
     phase: learn && category === 'opens' ? 'opens' : learn && ['deadline', 'exam'].includes(category) ? 'due' : null,
@@ -181,7 +181,7 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
     const uid = rowUid(row);
     const key = uid ? `${uid}#${row.starts_at}` : `${row.source_id}:${row.external_id}`;
     const previous = occurrences.get(key);
-    if (!previous || (row.source_id === 'uw-learn-ics' && previous.source_id !== 'uw-learn-ics')) occurrences.set(key, row);
+    if (!previous || (row.source_id === 'uw-learn-ics' && previous.source_id !== 'uw-learn-ics') || (row.source_id === 'uw-portal-ics' && previous.source_id === 'google-calendar-ics')) occurrences.set(key, row);
   }
   const candidates = [];
   for (const row of occurrences.values()) {
@@ -192,6 +192,20 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
       if (entries.length) event = attachLearning(event, entries);
     }
     candidates.push(event);
+  }
+  const portalClasses = new Set(
+    candidates
+      .filter((e) => e.source_id === 'uw-portal-ics' && e.course && e.category === 'class')
+      .map((e) => `${e.course.replace(/\s/g, '').toUpperCase()}:${e.starts_at}:${e.ends_at}`)
+  );
+  if (portalClasses.size > 0) {
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const e = candidates[i];
+      if (e.source_id === 'google-calendar-ics' && e.course && e.category === 'class') {
+        const key = `${e.course.replace(/\s/g, '').toUpperCase()}:${e.starts_at}:${e.ends_at}`;
+        if (portalClasses.has(key)) candidates.splice(i, 1);
+      }
+    }
   }
   const inferredDeadlines = [];
   for (const event of candidates) {
@@ -306,8 +320,8 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
   }).sort((a, b) => a.course.localeCompare(b.course));
   const [changes, scheduleRows] = await Promise.all([
     store.calendarChanges ? store.calendarChanges(now - CHANGE_RETENTION_MS) : [],
-    store.rows('timeline_event', { where: 'source_id = ? AND starts_at < ? AND COALESCE(ends_at, starts_at) >= ?',
-      params: ['uw-portal-ics', now + 60 * 86400000, now - 14 * 86400000], limit: MAX_EVENTS }),
+    store.rows('timeline_event', { where: 'source_id IN (?,?) AND starts_at < ? AND COALESCE(ends_at, starts_at) >= ?',
+      params: ['uw-portal-ics', 'google-calendar-ics', now + 60 * 86400000, now - 14 * 86400000], limit: MAX_EVENTS }),
   ]);
   const alertEventMap = new Map([...rows, ...scheduleRows, ...learnRows].map(row => [ `${row.source_id}:${row.external_id}`, toEvent(row, now) ]));
   for (const event of inferredDeadlines) alertEventMap.set(event.id, event);

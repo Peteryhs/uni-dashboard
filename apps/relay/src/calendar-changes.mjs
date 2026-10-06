@@ -5,7 +5,7 @@ import { ageState } from '#contract/cards.mjs';
 
 const DAY = 86400000;
 export const CHANGE_RETENTION_MS = 14 * DAY;
-const SOURCES = new Set(['uw-portal-ics', 'uw-learn-ics']);
+const SOURCES = new Set(['uw-portal-ics', 'google-calendar-ics', 'uw-learn-ics']);
 const clean = value => unescapeIcsText(value || '').trim().replace(/\s+/g, ' ');
 function fingerprint(text) { let n = 2166136261; for (const char of text) { n = Math.imul(n ^ char.charCodeAt(0), 16777619); } return (n >>> 0).toString(36); }
 // Formatting-only changes (including the common "Room" prefix) are not room changes.

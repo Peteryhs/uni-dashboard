@@ -130,3 +130,33 @@ test('local GET /v1/setup exposes only the setup contract', async () => {
     store.close();
   }
 });
+test('google calendar alone or portal alone configures and syncs schedule without either being mandatory', async () => {
+  const store = new SqliteStore(':memory:');
+  try {
+    const googleOnly = [
+      { id: 'uw-portal-ics', url: () => null },
+      { id: 'google-calendar-ics', url: () => 'https://calendar.google.com/feed.ics' },
+      { id: 'uw-learn-ics', url: () => 'https://learn.test/feed' },
+    ];
+    let status = await getSetupStatus(store, { sources: googleOnly, now: 1 });
+    assert.equal(status.schedule_configured, true, 'google alone configures schedule');
+    assert.equal(status.schedule_synced, false);
+    store.insertRun(run('google-calendar-ics', 'ok', 5));
+    store.insertRun(run('uw-learn-ics', 'ok', 3));
+    status = await getSetupStatus(store, { sources: googleOnly, now: 2 });
+    assert.equal(status.schedule_synced, true, 'google alone syncs schedule without portal being mandatory');
+    assert.equal(status.setup_needed, false);
+
+    const portalOnly = [
+      { id: 'uw-portal-ics', url: () => 'https://portal.uwaterloo.ca/feed.ics' },
+      { id: 'google-calendar-ics', url: () => null },
+      { id: 'uw-learn-ics', url: () => 'https://learn.test/feed' },
+    ];
+    status = await getSetupStatus(store, { sources: portalOnly, now: 3 });
+    assert.equal(status.schedule_configured, true, 'portal alone configures schedule');
+    store.insertRun(run('uw-portal-ics', 'ok', 5));
+    status = await getSetupStatus(store, { sources: portalOnly, now: 4 });
+    assert.equal(status.schedule_synced, true, 'portal alone syncs schedule without google being mandatory');
+    assert.equal(status.setup_needed, false);
+  } finally { store.close(); }
+});

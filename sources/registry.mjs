@@ -3,12 +3,12 @@
  * Nothing downstream changes: the API and both clients stay untouched.
  */
 import food from './food/source.mjs';
-import { portalIcs, learnIcs } from './ics/source.mjs';
+import { portalIcs, googleCalendarIcs, learnIcs } from './ics/source.mjs';
 import status from './status/source.mjs';
 import userOfficeHours from './office-hours/source.mjs';
 
-export const SOURCES = [food, portalIcs, learnIcs, status, userOfficeHours];
-export { userOfficeHours };
+export const SOURCES = [food, portalIcs, googleCalendarIcs, learnIcs, status, userOfficeHours];
+export { userOfficeHours, portalIcs, googleCalendarIcs, learnIcs };
 
 export function enabledSources(sources = SOURCES) {
   return sources.filter((s) => !s.disabled);

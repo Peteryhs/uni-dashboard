@@ -39,8 +39,8 @@ export function SetupGuide({ onExit, onSettings, initialStep }: { onExit: () => 
   const origin = dashboardOrigin(address);
   const command = origin ? oauthSetupCommand(origin, weeks) : null;
   const configured = step === 0
-    ? (setupStatus.data?.schedule_configured ?? status.data?.portal.configured)
-    : (setupStatus.data?.learn_configured ?? status.data?.learn.configured);
+    ? (setupStatus.data?.schedule_configured ?? Boolean(status.data?.portal?.configured || status.data?.google_calendar?.configured))
+    : (setupStatus.data?.learn_configured ?? status.data?.learn?.configured);
   const checkingCredentials = status.isPending;
   const credentialError = status.error;
 
@@ -69,9 +69,8 @@ export function SetupGuide({ onExit, onSettings, initialStep }: { onExit: () => 
     setSaving(true); setFeedback(null);
     try {
       const url = normalizeFeedAddress(feed);
-      // Both runtimes accept these keys; assigning the same schedule avoids a stale Google
-      // override when replacing a previous feed with a Portal subscription.
-      await updateCredentials(step === 0 ? { PORTAL_ICS_URL: url, GOOGLE_CALENDAR_ICS_URL: url } : { LEARN_ICS_URL: url });
+      const isGoogle = provider === 'google' || /calendar\.google\.com/i.test(url);
+      await updateCredentials(step === 0 ? (isGoogle ? { GOOGLE_CALENDAR_ICS_URL: url } : { PORTAL_ICS_URL: url }) : { LEARN_ICS_URL: url });
       setFeed('');
       setFeedback({ error: false, text: 'Feed saved. Check source results in Review; saving alone does not confirm the feed can be read.' });
       await Promise.all([

@@ -14,7 +14,8 @@ const LIVE_SHAPES = Object.keys(SHAPES);
 const SUCCESS_OUTCOMES = new Set(['ok', 'empty']);
 
 const CONFIG_KEYS = {
-  'uw-portal-ics': ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'SCHEDULE_ICS_URL'],
+  'uw-portal-ics': ['PORTAL_ICS_URL', 'SCHEDULE_ICS_URL'],
+  'google-calendar-ics': ['GOOGLE_CALENDAR_ICS_URL'],
   'uw-learn-ics': ['LEARN_ICS_URL'],
 };
 const DURABLE_USER_SETTINGS = new Set(['OFFICE_HOURS_JSON', 'FOOD_AI_PROFILE_JSON', 'COURSE_LIBRARY_JSON']);
@@ -27,7 +28,7 @@ function hasDurableUserSettings(settings) {
 }
 
 function changedAt(settings, sourceId) {
-  const marker = sourceId === 'uw-portal-ics' ? SETUP_SCHEDULE_CHANGED_AT : SETUP_LEARN_CHANGED_AT;
+  const marker = (sourceId === 'uw-portal-ics' || sourceId === 'google-calendar-ics') ? SETUP_SCHEDULE_CHANGED_AT : SETUP_LEARN_CHANGED_AT;
   const markerRow = settings.find((row) => row?.name === marker);
   if (markerRow?.value && Number.isFinite(Number(markerRow.value))) return Number(markerRow.value);
   const names = CONFIG_KEYS[sourceId] ?? [];
@@ -89,18 +90,28 @@ export async function getSetupStatus(store, { sources = [], now = Date.now() } =
     await store.setSetting(SETUP_STARTED_AT, String(now), now);
   }
 
-  const schedule = sources.find((source) => source?.id === 'uw-portal-ics');
+  const portal = sources.find((source) => source?.id === 'uw-portal-ics');
+  const google = sources.find((source) => source?.id === 'google-calendar-ics');
   const learn = sources.find((source) => source?.id === 'uw-learn-ics');
-  const [scheduleConfigured, learnConfigured, scheduleRun, learnRun] = await Promise.all([
-    configured(schedule, settings),
+  const [portalConfigured, googleConfigured, learnConfigured, portalRun, googleRun, learnRun] = await Promise.all([
+    configured(portal, settings),
+    configured(google, settings),
     configured(learn, settings),
     latestRun(store, 'uw-portal-ics'),
+    latestRun(store, 'google-calendar-ics'),
     latestRun(store, 'uw-learn-ics'),
   ]);
-  const scheduleCutoff = changedAt(settings, 'uw-portal-ics');
+  const portalCutoff = changedAt(settings, 'uw-portal-ics');
+  const googleCutoff = changedAt(settings, 'google-calendar-ics');
   const learnCutoff = changedAt(settings, 'uw-learn-ics');
-  const scheduleSynced = scheduleConfigured && SUCCESS_OUTCOMES.has(scheduleRun?.outcome)
-    && (scheduleCutoff == null || Number(scheduleRun?.started_at) >= scheduleCutoff);
+  const portalSynced = portalConfigured && SUCCESS_OUTCOMES.has(portalRun?.outcome)
+    && (portalCutoff == null || Number(portalRun?.started_at) >= portalCutoff);
+  const googleSynced = googleConfigured && SUCCESS_OUTCOMES.has(googleRun?.outcome)
+    && (googleCutoff == null || Number(googleRun?.started_at) >= googleCutoff);
+  const scheduleConfigured = portalConfigured || googleConfigured;
+  const scheduleSynced = scheduleConfigured
+    && (!portalConfigured || portalSynced)
+    && (!googleConfigured || googleSynced);
   const learnSynced = learnConfigured && SUCCESS_OUTCOMES.has(learnRun?.outcome)
     && (learnCutoff == null || Number(learnRun?.started_at) >= learnCutoff);
   // Existing populated installations are not onboarding just because a feed is absent. A marker

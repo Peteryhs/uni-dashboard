@@ -336,3 +336,24 @@ test('personalization ranks nearby changes above lunch, and snoozes keep a stabl
   assert.equal(recommendationsFromData({ calendar, actions, now: now + 3600001 }).items[0]?.id, feed.items[0].id);
   store.close();
 });
+
+test('updates can be dismissed permanently instead of pushing back an hour, and undo works', async () => {
+  const change = alerts([event({ category: 'deadline', kind: 'deadline', title: 'Tutorial Assignment 3', description: 'The tutorial is cancelled. Complete the assignment on Crowdmark.' })])[0];
+  const calendar = { days: [], courses: [], sources: [], alerts: [change] };
+  const feed = recommendationsFromData({ calendar, now });
+  assert.equal(feed.items[0].kind, 'change');
+  const store = new SqliteStore();
+  await saveRecommendationAction(store, { id: feed.items[0].id, action: 'dismiss' }, { now });
+  let actions = JSON.parse(store.getSetting('RECOMMENDATION_ACTIONS_JSON'));
+  assert.equal(recommendationsFromData({ calendar, actions, now: now + 60000 }).items.length, 0);
+  // Unlike snooze, dismiss does NOT push back an hour to reappear later
+  assert.equal(recommendationsFromData({ calendar, actions, now: now + 3600001 }).items.length, 0);
+  assert.equal(recommendationsFromData({ calendar, actions, now: now + 86400000 }).items.length, 0);
+
+  // Undo restores the update
+  await saveRecommendationAction(store, { id: feed.items[0].id, action: 'undo' }, { now });
+  actions = JSON.parse(store.getSetting('RECOMMENDATION_ACTIONS_JSON'));
+  assert.equal(recommendationsFromData({ calendar, actions, now: now + 3600001 }).items[0]?.id, feed.items[0].id);
+  store.close();
+});
+

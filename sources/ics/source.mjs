@@ -223,10 +223,18 @@ export const portalIcs = makeIcsSource({
   id: 'uw-portal-ics',
   role: 'portal',
   envVar: 'PORTAL_ICS_URL',
-  fallbackEnvVars: ['GOOGLE_CALENDAR_ICS_URL', 'SCHEDULE_ICS_URL'],
+  fallbackEnvVars: ['SCHEDULE_ICS_URL'],
   // Google Calendar subscriptions change slowly. Polling every 15 minutes triggered Google's
   // per-IP throttle during normal use, so the Worker now checks this source at most four times a
   // day and gives repeated 429s progressively longer quiet periods.
+  cadenceMs: 6 * 60 * 60 * 1000,
+  rateLimitMinMs: 12 * 60 * 60 * 1000,
+  rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,
+});
+export const googleCalendarIcs = makeIcsSource({
+  id: 'google-calendar-ics',
+  role: 'portal',
+  envVar: 'GOOGLE_CALENDAR_ICS_URL',
   cadenceMs: 6 * 60 * 60 * 1000,
   rateLimitMinMs: 12 * 60 * 60 * 1000,
   rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,

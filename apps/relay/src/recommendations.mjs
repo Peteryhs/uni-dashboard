@@ -165,7 +165,7 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   }
   const isVisible = candidate => {
     const saved = actions[candidate.id];
-    return !saved || (saved.action !== 'done' && !(saved.action === 'snooze' && saved.until > now));
+    return !saved || (saved.action !== 'done' && saved.action !== 'dismiss' && !(saved.action === 'snooze' && saved.until > now));
   };
   const activeTasks = tasks.filter(isVisible);
   candidates.push(...activeTasks);
@@ -289,12 +289,12 @@ export async function buildRecommendations(store, { now = Date.now(), freshnessN
 
 /** Bounded account-wide state survives browser changes and is reusable by Android. */
 export async function saveRecommendationAction(store, { id, action, until = null } = {}, { now = Date.now() } = {}) {
-  if (typeof id !== 'string' || !/^rec:[a-z_]+:[a-z0-9]+:[a-z0-9]+$/.test(id) || id.length > 240 || !['done', 'undo', 'snooze'].includes(action)) throw new RangeError('invalid recommendation action');
+  if (typeof id !== 'string' || !/^rec:[a-z_]+:[a-z0-9]+:[a-z0-9]+$/.test(id) || id.length > 240 || !['done', 'undo', 'snooze', 'dismiss'].includes(action)) throw new RangeError('invalid recommendation action');
   if (action === 'done' && !/^rec:(task|learning):/.test(id)) throw new RangeError('only tasks and learning items can be completed');
   if (action === 'snooze' && until == null) until = now + HOUR;
   if (action === 'snooze' && (!Number.isInteger(until) || until <= now || until > now + 7 * DAY)) throw new RangeError('snooze must end within the next seven days');
   const previous = json(await store.getSetting(ACTION_KEY), {});
-  const entries = Object.entries(previous).filter(([key, value]) => key !== id && value && value.at >= now - 90 * DAY && (value.action === 'done' || value.until > now)).sort((a, b) => b[1].at - a[1].at).slice(0, 255);
+  const entries = Object.entries(previous).filter(([key, value]) => key !== id && value && value.at >= now - 90 * DAY && (value.action === 'done' || value.action === 'dismiss' || value.until > now)).sort((a, b) => b[1].at - a[1].at).slice(0, 255);
   const next = Object.fromEntries(entries);
   if (action !== 'undo') next[id] = { action, until: action === 'snooze' ? until : null, at: now };
   await store.setSetting(ACTION_KEY, JSON.stringify(next));
