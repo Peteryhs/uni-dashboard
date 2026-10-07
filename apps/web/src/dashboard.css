@@ -42,7 +42,8 @@
 .top-refresh-message { display: block; overflow: hidden; text-overflow: ellipsis; }
 .top-refresh.has-error .top-refresh-status { color: #ffbbb3; }
 .top-settings, .context-control, .section-control { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent; color: #cbd2da; font-size: 12px; font-weight: 560; transition: color 180ms ease, background 180ms ease; }
-.top-settings:hover, .context-control:hover, .section-control:hover { background: rgb(255 255 255 / 5%); color: #fff; }
+.context-control:hover, .section-control:hover { background: rgb(255 255 255 / 5%); color: #fff; }
+.top-settings:hover { background: transparent; color: #fff; outline: none; }
 .top-settings:focus-visible, .context-control:focus-visible, .section-control:focus-visible { outline: 2px solid #70a8ff; outline-offset: 3px; }
 .top-settings:disabled, .context-control:disabled, .section-control:disabled { color: #858c96; opacity: 0.72; }
 .recommendation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }

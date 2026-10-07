@@ -346,7 +346,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun act(item: Recommendation, action: String, until: Long? = null) {
         viewModelScope.launch {
             app.repository.act(item, action, until)
-                .onSuccess { _messages.tryEmit(if (action == "done") "Marked done" else "Snoozed") }
+                .onSuccess {
+                    _messages.tryEmit(
+                        when (action) {
+                            "done" -> "Marked done"
+                            "dismiss" -> "Dismissed"
+                            else -> "Snoozed"
+                        }
+                    )
+                }
                 .onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
         }
     }

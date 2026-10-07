@@ -262,8 +262,17 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
         reason: nextBlock ? 'Conditions around the next scheduled trip.' : 'Conditions around your current campus time.', evidence: `Forecast cached ${weather.observed_at ? new Date(weather.observed_at).toISOString() : 'at an unknown time'}.` }));
     }
   }
-  const sourceNames = { 'uw-portal-ics': 'Class schedule', 'uw-learn-ics': 'LEARN calendar', 'user-office-hours': 'Office hours' };
-  for (const source of calendar.sources || []) if (source.status !== 'ok') warnings.push(`${sourceNames[source.id] || source.id}: ${source.status === 'failed' ? 'the latest sync failed; cached events may be out of date.' : source.status === 'unconfigured' ? 'not configured.' : 'waiting for its first sync.'}`);
+  const sourceNames = { 'uw-portal-ics': 'Class schedule', 'google-calendar-ics': 'Google Calendar', 'uw-learn-ics': 'LEARN calendar', 'user-office-hours': 'Office hours' };
+  const calendarSources = calendar.sources || [];
+  const scheduleSources = calendarSources.filter(s => s.id === 'uw-portal-ics' || s.id === 'google-calendar-ics');
+  const hasConfiguredSchedule = scheduleSources.some(s => s.status !== 'unconfigured');
+  for (const source of calendarSources) {
+    if (source.status === 'ok') continue;
+    if (source.id === 'google-calendar-ics' && source.status === 'unconfigured') continue;
+    if (source.id === 'uw-portal-ics' && source.status === 'unconfigured' && hasConfiguredSchedule) continue;
+    if (source.optional && source.status === 'unconfigured') continue;
+    warnings.push(`${sourceNames[source.id] || source.id}: ${source.status === 'failed' ? 'the latest sync failed; cached events may be out of date.' : source.status === 'unconfigured' ? 'not configured.' : 'waiting for its first sync.'}`);
+  }
   const staleCalendarSources = new Set(events.filter(event => ['stale', 'dead'].includes(event.state))
     .map(event => sourceNames[event.source_id] || event.source_label || event.source_id)
     .filter(Boolean));

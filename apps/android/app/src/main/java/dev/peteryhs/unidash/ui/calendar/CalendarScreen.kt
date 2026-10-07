@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.data.CalendarEvent
 import dev.peteryhs.unidash.data.CalendarChangeAlert
+import dev.peteryhs.unidash.data.CalendarSource
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
@@ -57,6 +58,25 @@ import dev.peteryhs.unidash.ui.FreshnessLabel
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.theme.Spacing
+
+internal val CALENDAR_SOURCE_NAMES = mapOf(
+    "uw-portal-ics" to "Class schedule",
+    "google-calendar-ics" to "Google Calendar",
+    "uw-learn-ics" to "LEARN calendar",
+    "user-office-hours" to "Office hours",
+)
+
+internal fun filterWarnedCalendarSources(sources: List<CalendarSource>): List<CalendarSource> {
+    val scheduleSources = sources.filter { it.id == "uw-portal-ics" || it.id == "google-calendar-ics" }
+    val hasConfiguredSchedule = scheduleSources.any { it.status != "unconfigured" }
+    return sources.filter { s ->
+        if (s.status == "ok") return@filter false
+        if (s.id == "google-calendar-ics" && s.status == "unconfigured") return@filter false
+        if (s.id == "uw-portal-ics" && s.status == "unconfigured" && hasConfiguredSchedule) return@filter false
+        if (s.optional && s.status == "unconfigured") return@filter false
+        s.status == "unconfigured" || s.status == "failed"
+    }
+}
 
 private enum class Filter(val label: String, val categories: Set<String>) {
     All("All", emptySet()),
@@ -83,8 +103,9 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
             item { EmptyNote("No calendar loaded yet.") }
             return@ScreenScaffold
         }
-        calendar.sources.filter { it.status == "unconfigured" || it.status == "failed" }.forEach { s ->
-            item(key = "src:${s.id}") { EmptyNote("${s.id}: ${if (s.status == "failed") "last fetch failed" else "not configured"}") }
+        filterWarnedCalendarSources(calendar.sources).forEach { s ->
+            val name = CALENDAR_SOURCE_NAMES[s.id] ?: s.id
+            item(key = "src:${s.id}") { EmptyNote("$name: ${if (s.status == "failed") "last fetch failed" else "not configured"}") }
         }
         var shown = 0
         calendar.alerts.filter { it.kind in setOf("cancelled", "removed") }.forEach { change ->

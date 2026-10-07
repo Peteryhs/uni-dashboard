@@ -271,12 +271,17 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
     val haptics = LocalHapticFeedback.current
     val snooze = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); vm.act(rec, "snooze", now + HOUR) }
     val done = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "done") }
+    val dismiss = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "dismiss") }
     val swipe = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = swipe,
         enableDismissFromStartToEnd = false,
-        onDismiss = { value -> if (value == SwipeToDismissBoxValue.EndToStart) snooze() },
-        backgroundContent = { SwipeBackground(swipe.dismissDirection) },
+        onDismiss = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                if (rec.canComplete) snooze() else dismiss()
+            }
+        },
+        backgroundContent = { SwipeBackground(swipe.dismissDirection, rec.canComplete) },
         modifier = modifier.padding(horizontal = Spacing.m, vertical = Spacing.xs),
     ) {
         Card(
@@ -284,8 +289,12 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
             shape = MaterialTheme.shapes.large,
             modifier = Modifier.fillMaxWidth().semantics {
                 customActions = buildList {
-                    if (rec.canComplete) add(CustomAccessibilityAction("Mark done") { done(); true })
-                    add(CustomAccessibilityAction("Snooze for an hour") { snooze(); true })
+                    if (rec.canComplete) {
+                        add(CustomAccessibilityAction("Mark done") { done(); true })
+                        add(CustomAccessibilityAction("Snooze for an hour") { snooze(); true })
+                    } else {
+                        add(CustomAccessibilityAction("Dismiss") { dismiss(); true })
+                    }
                 }
             },
         ) {
@@ -305,11 +314,15 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                     if (rec.reason.isNotBlank()) Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     FreshnessLabel(rec.state, null, now)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
-                        if (rec.canComplete) FilledTonalButton(onClick = done) {
-                            Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                            Text("Done", Modifier.padding(start = Spacing.s))
+                        if (rec.canComplete) {
+                            FilledTonalButton(onClick = done) {
+                                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                Text("Done", Modifier.padding(start = Spacing.s))
+                            }
+                            OutlinedButton(onClick = snooze) { Text("Snooze 1 h") }
+                        } else {
+                            OutlinedButton(onClick = dismiss) { Text("Dismiss") }
                         }
-                        OutlinedButton(onClick = snooze) { Text("Snooze 1 h") }
                         rec.action?.let { a ->
                             TextButton(onClick = { uri.openUri(a.url) }) {
                                 Text(a.label)
@@ -324,7 +337,7 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
 }
 
 @Composable
-private fun SwipeBackground(direction: SwipeToDismissBoxValue) {
+private fun SwipeBackground(direction: SwipeToDismissBoxValue, canComplete: Boolean = true) {
     if (direction != SwipeToDismissBoxValue.EndToStart) return
     Card(
         colors = CardDefaults.cardColors(
@@ -336,8 +349,8 @@ private fun SwipeBackground(direction: SwipeToDismissBoxValue) {
     ) {
         Box(Modifier.fillMaxSize().padding(horizontal = Spacing.l), contentAlignment = Alignment.CenterEnd) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                Icon(Icons.Outlined.Snooze, contentDescription = null)
-                Text("Snooze", style = MaterialTheme.typography.labelLarge)
+                Icon(if (canComplete) Icons.Outlined.Snooze else Icons.Outlined.Close, contentDescription = null)
+                Text(if (canComplete) "Snooze" else "Dismiss", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

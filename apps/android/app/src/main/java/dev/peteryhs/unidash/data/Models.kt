@@ -282,7 +282,12 @@ data class CalendarGroupScope(
 data class CalendarDay(val date: String, val events: List<CalendarEvent> = emptyList())
 
 @Serializable
-data class CalendarSource(val id: String, val status: String, @SerialName("last_run_at") val lastRunAt: Long? = null)
+data class CalendarSource(
+    val id: String,
+    val status: String,
+    @SerialName("last_run_at") val lastRunAt: Long? = null,
+    val optional: Boolean = false,
+)
 
 @Serializable
 data class CalendarChangeAlert(
@@ -332,6 +337,7 @@ data class SourceHealth(
     @SerialName("blocked_by") val blockedBy: String = "",
     @SerialName("last_run") val lastRun: LastRun? = null,
     @SerialName("age_s") val ageS: Long? = null,
+    val optional: Boolean = false,
 )
 
 @Serializable

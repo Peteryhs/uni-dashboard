@@ -351,3 +351,30 @@ test('recommendation engine creates active task for description-derived due date
   assert.ok(!completedFeed.tasks.large.some(t => t.id === task.id));
 });
 
+test('unconfigured optional Google Calendar does not generate warning when schedule is configured', () => {
+  const data = syntheticDay();
+  data.calendar.sources.push({ id: 'google-calendar-ics', status: 'unconfigured', optional: true });
+  const feed = recommendationsFromData({ ...data, now: at(DATE, '10:00') });
+  assert.ok(!feed.warnings.some(w => w.includes('Google Calendar') || w.includes('google-calendar-ics')));
+
+  // When neither is configured, only one Class schedule warning is surfaced
+  data.calendar.sources = [
+    { id: 'uw-portal-ics', status: 'unconfigured' },
+    { id: 'google-calendar-ics', status: 'unconfigured', optional: true },
+    { id: 'uw-learn-ics', status: 'ok' }
+  ];
+  const unconfiguredFeed = recommendationsFromData({ ...data, now: at(DATE, '10:00') });
+  assert.ok(unconfiguredFeed.warnings.some(w => w.includes('Class schedule: not configured.')));
+  assert.ok(!unconfiguredFeed.warnings.some(w => w.includes('Google Calendar')));
+
+  // When Google Calendar is configured and Portal is not, Class schedule unconfigured warning is suppressed
+  data.calendar.sources = [
+    { id: 'uw-portal-ics', status: 'unconfigured' },
+    { id: 'google-calendar-ics', status: 'ok', optional: true },
+    { id: 'uw-learn-ics', status: 'ok' }
+  ];
+  const gcalFeed = recommendationsFromData({ ...data, now: at(DATE, '10:00') });
+  assert.ok(!gcalFeed.warnings.some(w => w.includes('Class schedule: not configured.')));
+  assert.ok(!gcalFeed.warnings.some(w => w.includes('Google Calendar: not configured.')));
+});
+

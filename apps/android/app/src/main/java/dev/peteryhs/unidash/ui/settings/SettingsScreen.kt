@@ -336,7 +336,7 @@ private fun SourceRow(s: dev.peteryhs.unidash.data.SourceHealth, now: Long) {
         supportingContent = {
             Text(
                 when {
-                    !s.ready -> "Not set up · ${s.blockedBy.ifBlank { "needs configuration" }}"
+                    !s.ready -> if (s.optional) "Optional · not configured" else "Not set up · ${s.blockedBy.ifBlank { "needs configuration" }}"
                     run?.at == null -> "Not fetched yet"
                     else -> buildString {
                         append(OUTCOMES[run.outcome] ?: run.outcome.ifBlank { "OK" }).append(" · updated ").append(Format.age(run.at, now).removeSuffix(" old").let { if (it == "just now") it else "$it ago" })

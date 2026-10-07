@@ -157,6 +157,7 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
       const run = lastRuns.find((entry) => entry.source_id === source.id);
       return {
         id: source.id,
+        optional: Boolean(source.optional),
         status: !source.ready ? 'unconfigured' :
           !run ? (source.id === 'user-office-hours' ? 'ok' : 'pending') :
             ['ok', 'empty'].includes(run.outcome) ? 'ok' : 'failed',
