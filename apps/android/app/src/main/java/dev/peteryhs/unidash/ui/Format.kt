@@ -13,8 +13,14 @@ object Format {
     private val dayTime = DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
     private val dayHeader = DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.CANADA)
 
+    private val shortDay = DateTimeFormatter.ofPattern("EEE MMM d", Locale.CANADA).withZone(CAMPUS_ZONE)
+
     fun time(ms: Long): String = time.format(Instant.ofEpochMilli(ms))
     fun dayTime(ms: Long): String = dayTime.format(Instant.ofEpochMilli(ms))
+    /** "Tue Oct 6": the compact day used inside change blocks. */
+    fun shortDay(ms: Long): String = shortDay.format(Instant.ofEpochMilli(ms))
+    fun sameDay(a: Long, b: Long): Boolean =
+        Instant.ofEpochMilli(a).atZone(CAMPUS_ZONE).toLocalDate() == Instant.ofEpochMilli(b).atZone(CAMPUS_ZONE).toLocalDate()
 
     fun dayHeader(isoDate: String, today: LocalDate = LocalDate.now(CAMPUS_ZONE)): String {
         val date = LocalDate.parse(isoDate)

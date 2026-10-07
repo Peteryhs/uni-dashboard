@@ -52,6 +52,19 @@ class ContractParsingTest {
     }
 
     @Test
+    fun `food dishes carry their station, and unpinned outlets carry dishes too`() {
+        val food = ContractJson.decodeFromString<Food>(
+            """{"service_date":"2026-10-06","pinned":[{"outlet":"REVelation - Residence Dining Hall","pinned":true,"serving":true,
+              "dish_count":2,"dishes":[{"dish":"Chili","station":"Hot Dish","diet":["vegan"],"url":""},
+              {"dish":"Pasta","station":"Creation Station","diet":[],"url":""}],"hidden_dishes":0}],
+              "others":[{"outlet":"Pop-up","pinned":false,"serving":true,"dish_count":1,"dishes":[{"dish":"Burger","station":"Grill"}]}],
+              "others_count":1,"total_dishes":3}""",
+        )
+        assertEquals(listOf("Hot Dish", "Creation Station"), food.pinned.single().dishes.map { it.station })
+        assertEquals("Grill", food.others.single().dishes.single().station)
+    }
+
+    @Test
     fun `an unknown card type is skipped and counted, not fatal`() {
         val json = fixture("dashboard.json").replaceFirst("\"type\": \"food\"", "\"type\": \"transit_v9\"")
         val bundle = ContractJson.decodeFromString<Bundle>(json)

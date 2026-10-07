@@ -42,9 +42,13 @@ object NotificationPlanner {
         val tutorialAlerts = calendar.alerts.filter { it.kind == "tutorial_work" }.associateBy { it.eventId }
         return events.filter { it.attendance != "replaced" && it.state in setOf(CardState.Live, CardState.Ageing) }.flatMap { event ->
             remindersFor(event).map { reminder ->
-                val room = roomAlerts[event.id]?.let { " · ${if (it.kind == "room") "Room changed" else "Different room"} (usually ${it.previousLocation})" }.orEmpty()
-                val tutorial = tutorialAlerts[event.id]?.let { " · Check tutorial instructions before attending" }.orEmpty()
-                reminder.copy(text = reminder.text + room + tutorial)
+                // Terse on purpose: a lock screen shows one line. "E7 2409 → RCH 101", "?" when unconfirmed.
+                val roomAlert = roomAlerts[event.id]
+                val room = roomAlert?.let { " · ${it.previousLocation} → ${it.location}${if (it.confidence == "confirmed") "" else " ?"}" }.orEmpty()
+                val tutorial = tutorialAlerts[event.id]?.let { " · Online work · check instructions" }.orEmpty()
+                // The arrow already names the new room, so drop the plain one.
+                val base = if (roomAlert != null) reminder.text.removeSuffix(" · ${event.location}") else reminder.text
+                reminder.copy(text = base + room + tutorial)
             }
         }
             .filter { it.fireAt > now && it.fireAt <= now + HORIZON_MS }

@@ -109,21 +109,25 @@ export const DueSoonData = z.object({
   error: z.string().optional(),
 });
 
+/** One dish. `station` is the counter inside the outlet ("Hot Dish", "The Carvery"), '' if unknown. */
+export const FoodDish = z.object({
+  dish: z.string(),
+  station: z.string().default(''),
+  diet: z.array(z.string()).default([]),
+  url: z.string().default(''),
+});
+
 export const FoodData = z.object({
   service_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** Every outlet carries its full dish list in page order; clients group by station. */
   pinned: z.array(
     z.object({
       outlet: z.string(),
       pinned: z.literal(true),
       serving: z.boolean(),
       dish_count: z.number().int().nonnegative(),
-      dishes: z.array(
-        z.object({
-          dish: z.string(),
-          diet: z.array(z.string()).default([]),
-          url: z.string().default(''),
-        }),
-      ),
+      dishes: z.array(FoodDish),
+      /** Always 0 now that dishes are never truncated; kept so older clients still parse. */
       hidden_dishes: z.number().int().nonnegative().default(0),
     }),
   ),
@@ -133,6 +137,7 @@ export const FoodData = z.object({
       pinned: z.literal(false),
       serving: z.boolean(),
       dish_count: z.number().int().nonnegative(),
+      dishes: z.array(FoodDish).default([]),
     }),
   ),
   others_count: z.number().int().nonnegative(),

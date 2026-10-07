@@ -69,6 +69,35 @@ test('finds the residence dining halls by name', { skip: !haveFixture && 'no cap
   assert.ok(names.some((n) => n.includes('REVelation')), `REVelation missing from ${JSON.stringify(names)}`);
 });
 
+test('each dish carries the station heading it sits under', { skip: !haveFixture && 'no captured fixture' }, () => {
+  const { outlets } = parseFoodPage(html);
+  const stations = (name) => [...new Set(outlets.find((o) => o.name.startsWith(name)).dishes.map((d) => d.station))];
+  assert.deepEqual(stations("Mudie's"), ["Mom's Counter", 'Station 57']);
+  assert.deepEqual(stations('REVelation'), ['Hot Dish', 'Creation Station']);
+  assert.deepEqual(stations('The Market'), ['Hot Dish', 'Creation Station', 'The Carvery']);
+  assert.ok(outlets.every((o) => o.dishes.every((d) => d.station)), 'no dish is left without a station');
+});
+
+test('every diet icon on a dish is read, not only the first', () => {
+  const icon = (title) => `<div class="uw-icon"><svg><style>.halal-black{fill:#000}</style><title>${title}</title><path d="M0"/></svg></div>`;
+  const page = '<h2 class="food_header_title">A</h2><div class="food_item"><a class="food_link" href="/x">Sole</a></div>'
+    + `<div class="food_diet">${icon('halal')}${icon('made without gluten')}${icon('made without dairy')}</div></div>`
+    + `<div class="food_item"><a class="food_link" href="/y">Fries</a></div><div class="food_diet">${icon('vegan')}</div>`;
+  const dishes = parseFoodPage(page).outlets[0].dishes;
+  assert.deepEqual(dishes.map((d) => d.diet), [['halal', 'gluten', 'dairy'], ['vegan']]);
+});
+
+test('a station resets at the next outlet, and the same dish at two stations keeps two rows', () => {
+  const page = '<h2 class="food_header_title">A</h2><h3 class="food_header food-menu_type">Grill</h3>'
+    + '<a class="food_link" href="/x">Fries</a><h3 class="food_header food-menu_type">Deli</h3><a class="food_link" href="/y">Fries</a>'
+    + '<h2 class="food_header_title">B</h2><a class="food_link" href="/z">Soup</a>';
+  const parsed = parseFoodPage(page);
+  assert.deepEqual(parsed.outlets.map((o) => o.dishes.map((d) => d.station)), [['Grill', 'Deli'], ['']]);
+  const rows = toMenuItems(parsed, { sourceId: 's', serviceDate: '2026-09-21', observedAt: 1, validUntil: 2, baseUrl: 'https://uwaterloo.ca/' });
+  assert.equal(new Set(rows.map((r) => r.external_id)).size, 3);
+  assert.deepEqual(rows.map((r) => r.station), ['Grill', 'Deli', '']);
+});
+
 test('menu rows satisfy the canonical contract and have unique ids', { skip: !haveFixture && 'no captured fixture' }, () => {
   const parsed = parseFoodPage(html);
   const rows = toMenuItems(parsed, {

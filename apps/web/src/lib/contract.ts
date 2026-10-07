@@ -43,6 +43,21 @@ export interface RecommendationItem {
   source_label: string;
   state: 'live' | 'ageing' | 'stale' | 'dead';
   can_complete: boolean;
+  /** Optional because recommendations cached by an older build do not carry it. */
+  change?: ChangeDetail | null;
+}
+
+export type ChangeKind = 'room' | 'unusual_room' | 'time' | 'deadline' | 'cancelled' | 'removed' | 'tutorial_work';
+
+/** The structured before → after of a schedule change, drawn as blocks rather than a sentence. */
+export interface ChangeDetail {
+  kind: ChangeKind;
+  previous_location: string;
+  location: string;
+  previous_at: number | null;
+  current_at: number | null;
+  all_day: boolean;
+  confidence: 'confirmed' | 'check';
 }
 
 export interface RecommendationResponse {
@@ -146,10 +161,11 @@ export interface CalendarEvent {
 
 export interface CalendarChangeAlert {
   id: string; event_id: string | null;
-  kind: 'room' | 'unusual_room' | 'time' | 'deadline' | 'cancelled' | 'removed' | 'tutorial_work';
+  kind: ChangeKind;
   title: string; body: string; course: string | null;
   starts_at: number; ends_at: number; observed_at: number;
   location: string; previous_location: string; url: string | null;
+  previous_at?: number | null; current_at?: number | null; all_day?: boolean;
   confidence: 'confirmed' | 'check'; evidence: string; source_label: string; state: 'live' | 'ageing' | 'stale' | 'dead';
 }
 
@@ -358,36 +374,8 @@ export interface DueSoonData {
   error?: string;
 }
 
-export interface FoodDish {
-  dish: string;
-  diet: string[];
-  url: string;
-}
-
-export interface FoodOutletPinned {
-  outlet: string;
-  pinned: true;
-  serving: boolean;
-  dish_count: number;
-  dishes: FoodDish[];
-  hidden_dishes: number;
-}
-
-export interface FoodOutletOther {
-  outlet: string;
-  pinned: false;
-  serving: boolean;
-  dish_count: number;
-}
-
-export interface FoodData {
-  service_date: string;
-  pinned: FoodOutletPinned[];
-  others: FoodOutletOther[];
-  others_count: number;
-  total_dishes: number;
-  error?: string;
-}
+// The web menu reads GET /v1/menu (PostedMenu in lib/api.ts), not the bundle's food card, so the
+// food card's shape is not mirrored here. Android reads the food card.
 
 export interface FoodAiHighlight {
   dish: string;

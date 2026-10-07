@@ -128,9 +128,16 @@ data class DueSoon(
     val error: String? = null,
 )
 
+/** One dish. `station` is the counter inside the outlet ("Hot Dish", "The Carvery"); "" if unnamed. */
 @Serializable
-data class Dish(val dish: String, val diet: List<String> = emptyList(), val url: String = "")
+data class Dish(
+    val dish: String,
+    val station: String = "",
+    val diet: List<String> = emptyList(),
+    val url: String = "",
+)
 
+/** Every outlet, pinned or not, carries its full dish list in page order (station order). */
 @Serializable
 data class Outlet(
     val outlet: String,
@@ -138,7 +145,6 @@ data class Outlet(
     val serving: Boolean = false,
     @SerialName("dish_count") val dishCount: Int = 0,
     val dishes: List<Dish> = emptyList(),
-    @SerialName("hidden_dishes") val hiddenDishes: Int = 0,
 )
 
 @Serializable
@@ -233,6 +239,8 @@ data class Recommendation(
     @SerialName("source_label") val sourceLabel: String = "",
     val state: CardState = CardState.Live,
     @SerialName("can_complete") val canComplete: Boolean = false,
+    /** Set on schedule changes, and on classes whose session has a room or tutorial notice. */
+    val change: ChangeDetail? = null,
 )
 
 @Serializable
@@ -307,7 +315,32 @@ data class CalendarChangeAlert(
     val evidence: String = "",
     @SerialName("source_label") val sourceLabel: String = "",
     val state: CardState = CardState.Live,
-)
+    @SerialName("previous_at") val previousAt: Long? = null,
+    @SerialName("current_at") val currentAt: Long? = null,
+    @SerialName("all_day") val allDay: Boolean = false,
+) {
+    val detail: ChangeDetail
+        get() = ChangeDetail(kind, previousLocation, location, previousAt, currentAt, allDay, confidence)
+}
+
+/**
+ * The structured before → after of a schedule change (packages/contract ChangeDetail), drawn as
+ * blocks: [E7 2409] → [RCH 101], [10:30 AM] → [11:30 AM]. Blank location / null time means that
+ * part did not change.
+ */
+@Serializable
+data class ChangeDetail(
+    val kind: String,
+    @SerialName("previous_location") val previousLocation: String = "",
+    val location: String = "",
+    @SerialName("previous_at") val previousAt: Long? = null,
+    @SerialName("current_at") val currentAt: Long? = null,
+    @SerialName("all_day") val allDay: Boolean = false,
+    val confidence: String = "check",
+) {
+    val roomMoved: Boolean get() = previousLocation.isNotBlank() && previousLocation != location
+    val confirmed: Boolean get() = confidence == "confirmed"
+}
 
 @Serializable
 data class Calendar(

@@ -7,6 +7,7 @@
 import { ageState, buildBundle } from '#contract/cards.mjs';
 import { validateCardData } from '#contract/card-data.mjs';
 import { config } from './config.mjs';
+import { MENU_ROW_LIMIT, menuDish } from './menu.mjs';
 import { taskContext, phaseOf, groupScope, cleanDisplayTitle, isSameAssessment } from './task-context.mjs';
 import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 import { alertIdentity, alertSummaryFor, ALERT_SUMMARY_SETTING, ALERT_DISMISSED_SETTING } from './alert-summary.mjs';
@@ -415,7 +416,8 @@ export function dueSoonCard(store, { now = Date.now() } = {}) {
  */
 export function foodCard(store, { now = Date.now(), date = null } = {}) {
   return maybePromise(
-    store.rows('menu_item', { where: 'service_date = ?', params: [date ?? todayLocal(now)], limit: 500 }),
+    // Rows come back in page order (insertion order), which is also station order.
+    store.rows('menu_item', { where: 'service_date = ?', params: [date ?? todayLocal(now)], limit: MENU_ROW_LIMIT }),
     (rows) => {
       const byOutlet = new Map();
       for (const r of rows || []) {
@@ -454,6 +456,7 @@ export function foodCard(store, { now = Date.now(), date = null } = {}) {
             };
           }
 
+          // Every dish ships, with its station: clients group by station and never truncate.
           const pinned = config.pinnedOutlets.map((name) => {
             const dishes = byOutlet.get(name) ?? [];
             return {
@@ -461,14 +464,20 @@ export function foodCard(store, { now = Date.now(), date = null } = {}) {
               pinned: true,
               serving: dishes.length > 0,
               dish_count: dishes.length,
-              dishes: dishes.slice(0, 6).map((d) => ({ dish: d.dish, diet: d.diet ?? [], url: d.url ?? '' })),
-              hidden_dishes: Math.max(0, dishes.length - 6),
+              dishes: dishes.map(menuDish),
+              hidden_dishes: 0,
             };
           });
 
           const unpinned = [...byOutlet.entries()]
             .filter(([name]) => !config.pinnedOutlets.includes(name))
-            .map(([name, dishes]) => ({ outlet: name, pinned: false, serving: true, dish_count: dishes.length }));
+            .map(([name, dishes]) => ({
+              outlet: name,
+              pinned: false,
+              serving: true,
+              dish_count: dishes.length,
+              dishes: dishes.map(menuDish),
+            }));
 
           const env = envelope(rows, { now, cadenceMs: 12 * HOUR });
           return {

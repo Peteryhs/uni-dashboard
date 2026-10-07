@@ -5,6 +5,7 @@ import { getCourseSyllabus, previewSyllabus, saveCourseSyllabus } from './syllab
 import { aiBudgetGuard, aiBudgetStatus } from './ai-budget.mjs';
 import { processAiJob, publicAiJob, queueAiJob } from './ai-jobs.mjs';
 import { getCachedWeather } from './weather-cache.mjs';
+import { MENU_ROW_LIMIT, menuDish } from './menu.mjs';
 
 export function isGuidanceRoute(path) {
   return path === '/v1/recommendations' || path === '/v1/recommendations/actions' || path === '/v1/ai/usage' || path === '/v1/menu' || path === '/v1/weather/current' ||
@@ -41,9 +42,9 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
       const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
       const paramDate = url.searchParams.get('date');
       const targetDate = paramDate && /^\d{4}-\d{2}-\d{2}$/.test(paramDate) ? paramDate : todayDate;
-      const matched = await store.rows('menu_item', { where: 'service_date = ?', params: [targetDate], limit: 500 });
+      const matched = await store.rows('menu_item', { where: 'service_date = ?', params: [targetDate], limit: MENU_ROW_LIMIT });
       const rows = matched.length ? matched : await store.rows('menu_item', {
-        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: 500,
+        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: MENU_ROW_LIMIT,
       });
       const serviceDate = rows[0]?.service_date ?? null;
       const status = !serviceDate
@@ -53,7 +54,7 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
           : 'previous';
       return { status: 200, body: {
         requested_date: targetDate, service_date: serviceDate, status,
-        items: rows.map(row => ({ outlet: row.outlet, station: row.station || '', dish: row.dish, diet: row.diet || [], allergens: row.allergens || [], url: row.url || '' })),
+        items: rows.map(row => ({ outlet: row.outlet, ...menuDish(row), allergens: row.allergens || [] })),
       } };
     }
     if (url.pathname === '/v1/weather/current' && method === 'GET') {

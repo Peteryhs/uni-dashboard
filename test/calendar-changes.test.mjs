@@ -73,13 +73,18 @@ test('room and time changes preserve evidence and resolve after a reversion', ()
   assert.match(result[0].body, /E7 2409 → RCH 101/);
   assert.match(result[0].body, /Sep/);
   assert.equal(result[0].confidence, 'confirmed');
+  // the structured before/after that clients draw as blocks
+  assert.equal(result[0].previous_location, 'E7 2409');
+  assert.equal(result[0].location, 'RCH 101');
+  assert.equal(result[0].previous_at, row().starts_at);
+  assert.equal(result[0].current_at, next.starts_at);
   assert.deepEqual(alerts([event()], changes), []);
 });
 
 test('missing is qualified, explicit cancellations are confirmed, and partial feeds cannot cancel', () => {
   const removed = detectCalendarChanges([row()], [], { sourceId: 'uw-portal-ics', now, complete: true });
   assert.equal(alerts([], removed)[0].confidence, 'check');
-  assert.match(alerts([], removed)[0].body, /Confirm/);
+  assert.match(alerts([], removed)[0].body, /Not in calendar/);
   const cancelled = detectCalendarChanges([row()], [], { sourceId: 'uw-portal-ics', now, complete: true, cancelledUids: ['lecture'] });
   assert.equal(alerts([], cancelled)[0].kind, 'cancelled');
   assert.deepEqual(detectCalendarChanges([row()], [], { sourceId: 'uw-portal-ics', now, complete: false, cancelledUids: ['lecture'] }), []);
@@ -110,7 +115,9 @@ test('unusual rooms use recurring sessions, not another tutorial, and require a 
   const result = alerts([special, ...peers, tutorial]);
   assert.equal(result.length, 1);
   assert.equal(result[0].kind, 'unusual_room');
-  assert.match(result[0].body, /usually E7 2409/);
+  assert.match(result[0].body, /E7 2409 → RCH 101/);
+  assert.equal(result[0].previous_location, 'E7 2409', 'the usual room is the "before" block');
+  assert.equal(result[0].confidence, 'check');
   assert.deepEqual(alerts([special, ...peers.slice(0, 2)]), []);
   assert.equal(alerts([special, ...peers.map((peer, index) => ({ ...peer, uid: `individual-${index}` }))])[0].kind, 'unusual_room', 'exact lecture title supports separately exported occurrences');
   assert.deepEqual(alerts([special, ...peers.map((peer, i) => ({ ...peer, location: i % 2 ? 'RCH 101' : 'E7 2409' }))]), []);
@@ -122,7 +129,7 @@ test('tutorial assignments require explicit cancellation language, and stable ID
   assert.equal(tutorialInstructions(work).confirmed, false);
   const possible = alerts([work])[0];
   assert.equal(possible.confidence, 'check');
-  assert.match(possible.body, /cancellation is not confirmed/);
+  assert.match(possible.body, /cancellation unconfirmed/);
   assert.equal(possible.url, work.links[0].url);
   assert.equal(alerts([{ ...work, observed_at: now + 60000 }])[0].id, possible.id);
   const confirmed = { ...work, description: 'The tutorial is cancelled. Complete Tutorial Assignment 3 on Crowdmark instead.' };
@@ -329,6 +336,8 @@ test('personalization ranks nearby changes above lunch, and snoozes keep a stabl
   const calendar = { days: [], courses: [], sources: [], alerts: [change] };
   const feed = recommendationsFromData({ calendar, now });
   assert.equal(feed.items[0].kind, 'change');
+  assert.equal(feed.items[0].change.kind, 'tutorial_work', 'change items carry the structured detail clients draw');
+  assert.equal(feed.items[0].change.confidence, change.confidence);
   const store = new SqliteStore();
   await saveRecommendationAction(store, { id: feed.items[0].id, action: 'snooze' }, { now });
   const actions = JSON.parse(store.getSetting('RECOMMENDATION_ACTIONS_JSON'));

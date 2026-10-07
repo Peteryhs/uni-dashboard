@@ -1,6 +1,6 @@
 import type { DiningRecommendationController } from '@/components/use-dining-recommendation';
 import { getRankedDiningOutlets } from '@/components/use-dining-recommendation';
-import { getOutletLocation } from '@/components/cards/food';
+import { getOutletLocation } from '@/lib/dining';
 import { RefreshCw } from 'lucide-react';
 import './ai-menu-summary.css';
 

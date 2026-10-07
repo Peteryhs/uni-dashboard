@@ -52,6 +52,7 @@ import dev.peteryhs.unidash.data.CalendarEvent
 import dev.peteryhs.unidash.data.CalendarChangeAlert
 import dev.peteryhs.unidash.data.CalendarSource
 import dev.peteryhs.unidash.data.Snapshot
+import dev.peteryhs.unidash.ui.ChangeBlocks
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.FreshnessLabel
@@ -109,7 +110,17 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         }
         var shown = 0
         calendar.alerts.filter { it.kind in setOf("cancelled", "removed") }.forEach { change ->
-            item(key = "change:${change.id}") { EmptyNote("${change.title}. ${change.body}") }
+            item(key = "change:${change.id}") {
+                FlowRow(
+                    Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    Text(change.course ?: "Class", style = MaterialTheme.typography.titleSmall)
+                    ChangeBlocks(change.detail)
+                    Text(Format.dayTime(change.startsAt), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         calendar.days.forEach { day ->
             val events = day.events.filter { filter.categories.isEmpty() || it.category in filter.categories }
@@ -146,7 +157,7 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
         label = "Calendar detail chevron",
     )
     val time = when {
-        ev.allDay -> "All day · no exact time"
+        ev.allDay -> "All day"
         ev.category == "deadline" -> "Due ${Format.time(ev.startsAt)}"
         else -> "${Format.time(ev.startsAt)} – ${Format.time(ev.endsAt)}"
     }
@@ -165,9 +176,11 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
                 },
                 headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = {
-                    Column {
-                        Text(listOf(time, ev.location).filter { it.isNotBlank() }.joinToString(" · "))
-                        alerts.forEach { Text(if (expanded) it.body else it.title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        // A moved room is drawn as [old] → [new] below, so it is not repeated here.
+                        val roomShownBelow = alerts.any { it.detail.roomMoved }
+                        Text(listOf(time, ev.location.takeUnless { roomShownBelow }.orEmpty()).filter { it.isNotBlank() }.joinToString(" · "))
+                        alerts.forEach { ChangeBlocks(it.detail) }
                     }
                 },
                 trailingContent = {
@@ -315,7 +328,7 @@ private fun DetailLine(label: String, value: String) {
 @Composable
 private fun categoryStyle(ev: CalendarEvent): Pair<Color, String> {
     val c = MaterialTheme.colorScheme
-    if (ev.attendance == "replaced") return c.tertiary to "Replaced by online work"
+    if (ev.attendance == "replaced") return c.tertiary to "Online work instead"
     return when (ev.category) {
         // The course is usually the start of the title already ("MATH 115 LEC 001"); say what it is instead.
         "class" -> c.primary to (ev.course?.takeUnless { ev.title.startsWith(it) } ?: classKind(ev.title))

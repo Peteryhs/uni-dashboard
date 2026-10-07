@@ -12,6 +12,8 @@
  *     <div class="food_diet"> ...inline svg icons... </div>
  *   </div>
  *   outlet names live in class="food_header_title"
+ *   station names ("Hot Dish", "The Carvery") live in <h3 class="food_header food-menu_type">,
+ *   placed before the dishes they serve
  */
 
 const ENTITIES = {
@@ -64,8 +66,17 @@ function clean(s) {
  * (none exists). Unknown icon sets degrade to an empty list, not a crash.
  */
 function dietFlags(block) {
+  // Each icon names itself in an SVG <title> ("vegan", "made without gluten"). Read only those, so
+  // style class names inside the SVG cannot add a flag. Without titles, fall back to the raw block.
+  let labels = '';
+  for (let at = block.indexOf('<title>'); at !== -1; at = block.indexOf('<title>', at + 7)) {
+    const close = block.indexOf('</title>', at);
+    if (close === -1) break;
+    labels += ' ' + block.substring(at + 7, close);
+  }
+  const lower = (labels || block).toLowerCase();
   const flags = [];
-  const lower = block.toLowerCase();
+  // 'gluten' and 'dairy' mean "made without": the page only ever marks their absence.
   for (const key of ['vegetarian', 'vegan', 'halal', 'gluten', 'nuts', 'dairy', 'pork', 'beef', 'seafood']) {
     if (lower.indexOf(key) !== -1) flags.push(key);
   }
@@ -74,7 +85,7 @@ function dietFlags(block) {
 
 /**
  * @param {string} html
- * @returns {{outlets: Array<{name: string, dishes: Array<{dish: string, url: string, diet: string[]}>}>}}
+ * @returns {{outlets: Array<{name: string, dishes: Array<{dish: string, station: string, url: string, diet: string[]}>}>}}
  */
 export function parseFoodPage(html) {
   const outlets = [];
@@ -86,11 +97,12 @@ export function parseFoodPage(html) {
     const outletAt = html.indexOf('class="food_header_title"', i);
     const dishAt = html.indexOf('class="food_link"', i);
     const dietAt = html.indexOf('class="food_diet"', i);
+    const stationAt = html.indexOf('food-menu_type"', i);
 
     // pick the earliest marker
     let kind = 0;
     let at = -1;
-    for (const [k, pos] of [[1, outletAt], [2, dishAt], [3, dietAt]]) {
+    for (const [k, pos] of [[1, outletAt], [2, dishAt], [3, dietAt], [4, stationAt]]) {
       if (pos !== -1 && (at === -1 || pos < at)) {
         at = pos;
         kind = k;
@@ -102,9 +114,13 @@ export function parseFoodPage(html) {
     if (gt === -1) break;
 
     if (kind === 3) {
-      // diet block: read a bounded window, then jump past the inline SVG
-      const end = html.indexOf('</div>', gt);
-      const stop = end === -1 ? Math.min(len, gt + 2000) : end;
+      // Diet block: one inline-SVG icon per flag, each in its own <div>, so the block runs to the
+      // next dish or heading rather than the first </div> (which would keep only the first icon).
+      let stop = len;
+      for (const marker of ['class="food_item"', 'class="food_link"', 'class="food_header']) {
+        const next = html.indexOf(marker, gt);
+        if (next !== -1 && next < stop) stop = next;
+      }
       const block = html.substring(gt + 1, stop);
       if (current && current.pendingDish) {
         current.pendingDish.diet = dietFlags(block);
@@ -120,9 +136,12 @@ export function parseFoodPage(html) {
 
     if (kind === 1) {
       if (text) {
-        current = { name: text, dishes: [] };
+        current = { name: text, station: '', dishes: [] };
         outlets.push(current);
       }
+    } else if (kind === 4) {
+      // A station heading ("Hot Dish", "The Carvery") applies to every dish until the next one.
+      if (current) current.station = text;
     } else if (text) {
       let url = '';
       const hrefAt = html.lastIndexOf('href="', gt);
@@ -132,17 +151,20 @@ export function parseFoodPage(html) {
       }
       if (!current) {
         // dishes before any outlet heading: keep them under an explicit unknown bucket
-        current = { name: 'Unknown outlet', dishes: [] };
+        current = { name: 'Unknown outlet', station: '', dishes: [] };
         outlets.push(current);
       }
-      const dish = { dish: text, url, diet: [] };
+      const dish = { dish: text, station: current.station, url, diet: [] };
       current.dishes.push(dish);
       current.pendingDish = dish;
     }
     i = lt;
   }
 
-  for (const o of outlets) delete o.pendingDish;
+  for (const o of outlets) {
+    delete o.pendingDish;
+    delete o.station;
+  }
   return { outlets };
 }
 
@@ -155,12 +177,13 @@ export function toMenuItems(parsed, { sourceId, serviceDate, observedAt, validUn
         source_id: sourceId,
         // The service date is part of the identity: the same dish appears on many days, and
         // without the date a poll for one day rewrites the other day's rows under the same key
-        // (tombstoning them, or silently moving them to the new date).
-        external_id: `${serviceDate}::${outlet.name}::${d.dish}`,
+        // (tombstoning them, or silently moving them to the new date). The station is part of it
+        // too: one outlet can serve the same dish name at two stations.
+        external_id: `${serviceDate}::${outlet.name}::${d.station ?? ''}::${d.dish}`,
         observed_at: observedAt,
         valid_until: validUntil,
         outlet: outlet.name,
-        station: '',
+        station: d.station ?? '',
         dish: d.dish,
         service_date: serviceDate,
         diet: d.diet ?? [],

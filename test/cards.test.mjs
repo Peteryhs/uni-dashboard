@@ -36,6 +36,21 @@ test('food card keeps pinned outlets even when they are not serving', () => {
   assert.deepEqual(card.data.others.map((o) => o.outlet), ['Station 57'], 'unpinned outlets still appear when serving');
 });
 
+test('food card sends every dish for every outlet, with its station', () => {
+  const store = new SqliteStore(':memory:');
+  const row = (outlet, station, dish) => ({ source_id: 'uw-food-daily-menu', external_id: `2026-09-21::${outlet}::${station}::${dish}`, observed_at: now - MIN,
+    valid_until: now + 12 * 3600_000, outlet, station, dish, service_date: '2026-09-21' });
+  const rev = 'REVelation - Residence Dining Hall';
+  const revRows = Array.from({ length: 11 }, (_, i) => row(rev, i < 7 ? 'Hot Dish' : 'Creation Station', `Dish ${i}`));
+  store.upsertRows('menu_item', [...revRows, row('Pop-up', 'Grill', 'Burger'), row('Pop-up', 'Grill', 'Fries')]);
+  const card = foodCard(store, { now });
+  const pinned = card.data.pinned.find((p) => p.outlet === rev);
+  assert.equal(pinned.dishes.length, 11, 'no six-dish cap');
+  assert.equal(pinned.hidden_dishes, 0);
+  assert.deepEqual([...new Set(pinned.dishes.map((d) => d.station))], ['Hot Dish', 'Creation Station']);
+  assert.deepEqual(card.data.others[0].dishes.map((d) => [d.station, d.dish]), [['Grill', 'Burger'], ['Grill', 'Fries']]);
+});
+
 test('food card is empty, not broken, when nothing is posted', () => {
   const store = new SqliteStore(':memory:');
   const card = foodCard(store, { now, date: '2026-09-22' });

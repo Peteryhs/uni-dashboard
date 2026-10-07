@@ -1,4 +1,5 @@
 /** Persistent dining recommendation shared by the Worker, local relay, and clients. */
+import { MENU_ROW_LIMIT } from './menu.mjs';
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
@@ -164,7 +165,7 @@ export async function getFoodRecommendation(store, serviceDate = '') {
 /** Manual work owns the current signature while it runs, so cron does not spend AI on the same menu. */
 export async function markManualFoodRanking(store, { jobId, serviceDate, now = Date.now() }) {
   const profile = cleanFoodProfile(await getFoodProfile(store) || await saveFoodProfile(store, {}));
-  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
+  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: MENU_ROW_LIMIT });
   const signature = foodRecommendationSignature(serviceDate, profile, menuItems);
   const previous = parseJson(await store.getSetting(RESULT_KEY), null);
   const recommendation = previous?.recommendation?.service_date === serviceDate ? previous.recommendation : null;
@@ -240,7 +241,7 @@ export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.n
   });
   if (!fallback.length) return { status: 'pending', reason: 'no menu' };
   const serviceDate = fallback[0].service_date;
-  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
+  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: MENU_ROW_LIMIT });
   const profile = cleanFoodProfile(parseJson(await store.getSetting(PROFILE_KEY), {}));
   const signature = foodRecommendationSignature(serviceDate, profile, menuItems);
   const previous = parseJson(await store.getSetting(RESULT_KEY), null);

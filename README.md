@@ -11,7 +11,7 @@ an account yet).
 
 | Source | Data | State |
 |---|---|---|
-| `uw-food-daily-menu` | today's dishes per outlet | live, no auth, no CORS |
+| `uw-food-daily-menu` | every dish per outlet and station, with diet tags | live, no auth, no CORS |
 | `uw-status` | campus and IT status | live, no auth, CORS `*` |
 | `open-meteo` | hourly weather for the next class hour | live, no auth, CORS `*` |
 | `uw-portal-ics` | class timetable and exams | needs the Portal iCal token URL |
@@ -119,9 +119,10 @@ sources/status/      Statuspage JSON
 apps/relay/          runner, SQLite store (D1 dialect), job scheduler, card builders, server, cli
 apps/relay/src/static.mjs   serves the built client; deleted when Workers static assets take over
 apps/web/            Vite + React + Tailwind v4 + shadcn/ui client
+  src/App.tsx               the single page: today, calendar, due work, dining menu, courses
   src/lib/contract.ts       typed bridge to packages/contract
-  src/components/freshness.tsx   the age ladder, rendered
-  src/components/cards/          one renderer per card type, plus the degrade chain
+  src/lib/menu.ts           station grouping, station icons and diet chips (mirrored on Android)
+  src/components/change-blocks.tsx   schedule changes drawn as [old] → [new] blocks
 fixtures/            captured real bytes plus labelled synthetic samples
 test/                integration and regression tests
 tools/               fixture capture, db inspection, the parse benchmark

@@ -77,6 +77,7 @@ function freshness(sourceId, observedAt, now, failed) {
 }
 function alert(values) {
   return { course: null, event_id: null, source_label: 'Schedule', location: '', previous_location: '',
+    previous_at: null, current_at: null, all_day: false,
     confidence: 'confirmed', state: 'live', ...values, url: safeUrl(values.url) };
 }
 function safeUrl(value) { try { const url = new URL(value); return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; } }
@@ -118,7 +119,7 @@ export function tutorialAttendanceAlerts(events, { now, section = null, group = 
     const replaced = work.instructions.confirmed && explicitTutorialDate(work.instructions, work.event) === dateKey(session.starts_at);
     result.push(alert({ id: `attendance:${session.id}:${fingerprint(work.instructions.evidence + work.event.title)}`, event_id: session.id, kind: 'tutorial_work',
       attendance: replaced ? 'replaced' : 'check_instructions', title: `${session.course}: ${replaced ? 'Tutorial replaced' : 'Check tutorial instructions'}`,
-      body: `${work.event.title}: ${replaced ? 'Complete this online work instead of attending.' : 'Online tutorial work; session date unconfirmed. Check before attending.'}`,
+      body: `${work.event.title} · ${replaced ? 'Online work replaces this tutorial' : 'Online work · date unconfirmed'}`,
       course: session.course, starts_at: session.starts_at, ends_at: session.ends_at, observed_at: work.event.observed_at,
       source_label: work.event.source_label, url: work.event.links?.find(link => link.kind === 'crowdmark')?.url || work.event.url,
       confidence: replaced ? 'confirmed' : 'check', evidence: work.instructions.evidence, state: work.event.state }));
@@ -162,17 +163,24 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     for (const kind of kinds) seen.add(`${change.event_id}:${kind}`);
     const cancelled = kinds.includes('cancelled'), removed = kinds.includes('removed');
     const removedDue = kinds.includes('deadline') && change.before.due_at != null && value.due_at == null && change.before.starts_at === value.starts_at;
+    // Bodies are a terse text fallback (notifications, old clients). Current clients draw the
+    // structured fields instead: previous_location → location, previous_at → current_at.
     const parts = [];
-    if (kinds.includes('room')) parts.push(`${change.before.location || 'Room not listed'} → ${value.location || 'Room not listed'}`);
-    if (kinds.some(kind => ['time', 'deadline'].includes(kind))) {
+    const timed = kinds.some(kind => ['time', 'deadline'].includes(kind));
+    const endOnly = timed && !removedDue && stamp(change.before.due_at ?? change.before.starts_at, change.before.all_day) === stamp(value.due_at ?? value.starts_at, value.all_day) && change.before.ends_at !== value.ends_at;
+    if (kinds.includes('room')) parts.push(`${change.before.location || 'No room'} → ${value.location || 'No room'}`);
+    if (timed) {
       const oldTime = stamp(change.before.due_at ?? change.before.starts_at, change.before.all_day), newTime = stamp(value.due_at ?? value.starts_at, value.all_day);
-      parts.push(removedDue ? `Due time (${oldTime}) removed. Confirm the deadline.` : oldTime === newTime && change.before.ends_at !== value.ends_at ? `End time: ${stamp(change.before.ends_at)} → ${stamp(value.ends_at)}` : `${oldTime} → ${newTime}`);
+      parts.push(removedDue ? `Due time removed (was ${oldTime})` : endOnly ? `Ends ${stamp(change.before.ends_at)} → ${stamp(value.ends_at)}` : `${oldTime} → ${newTime}`);
     }
-    if (cancelled) parts.push(`Cancelled in calendar (${stamp(value.starts_at)}).`);
-    if (removed) parts.push(`Missing from calendar (${stamp(value.starts_at)}). Confirm course instructions.`);
+    if (cancelled) parts.push(`Cancelled · ${stamp(value.starts_at)}`);
+    if (removed) parts.push(`Not in calendar · ${stamp(value.starts_at)}`);
+    const times = !timed ? {} : endOnly
+      ? { previous_at: change.before.ends_at, current_at: value.ends_at, all_day: false }
+      : { previous_at: change.before.due_at ?? change.before.starts_at, current_at: removedDue ? null : value.due_at ?? value.starts_at, all_day: Boolean(value.all_day) };
     result.push(alert({ id: change.id, event_id: current.has(`${change.event_id}:due`) && kinds.includes('deadline') ? `${change.event_id}:due` : change.event_id, kind: cancelled ? 'cancelled' : removed ? 'removed' : kinds.includes('room') ? 'room' : kinds[0],
       title: `${value.course}: ${cancelled ? 'Session cancelled' : removed ? 'Removed from calendar' : kinds.includes('room') ? 'Room changed' : removedDue ? 'Check deadline' : kinds.includes('deadline') ? 'Deadline changed' : 'Time changed'}`,
-      body: `${value.title}. ${parts.join(' · ')}`, course: value.course, starts_at: removedDue ? change.before.due_at : Math.min(value.due_at ?? value.starts_at, change.before.due_at ?? change.before.starts_at), ends_at: change.ends_at,
+      body: `${value.title} · ${parts.join(' · ')}`, ...times, course: value.course, starts_at: removedDue ? change.before.due_at : Math.min(value.due_at ?? value.starts_at, change.before.due_at ?? change.before.starts_at), ends_at: change.ends_at,
       observed_at: change.observed_at, location: value.location, previous_location: change.before.location, source_label: label(change.source_id),
       url: event?.url || value.url, confidence: removed || removedDue ? 'check' : 'confirmed', evidence: 'Compared two successfully parsed calendar snapshots.',
       state: freshness(change.source_id, event?.observed_at || sourceObservedAt.get(change.source_id) || change.observed_at, now, failedSources.has(change.source_id)) }));
@@ -194,7 +202,7 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     const instructions = tutorialInstructions(event);
     if (instructions) result.push(alert({ id: `tutorial:${event.id}:${fingerprint(clean(event.description) + event.title)}`, event_id: event.id, kind: 'tutorial_work',
       title: `${event.course}: ${instructions.confirmed ? 'Tutorial replaced' : 'Check tutorial instructions'}`,
-      body: `${event.title}. ${instructions.confirmed ? 'Online work replaces a tutorial. Check submission requirements.' : 'Online tutorial work; cancellation is not confirmed.'}`,
+      body: `${event.title} · ${instructions.confirmed ? 'Online work replaces a tutorial' : 'Online work · cancellation unconfirmed'}`,
       course: event.course, starts_at: effectiveTime, ends_at: effectiveEnd, observed_at: event.observed_at,
       source_label: event.source_label, url: event.links?.find(link => /(^|\.)crowdmark\.com$/i.test((() => { try { return new URL(link.url).hostname; } catch { return ''; } })()))?.url || event.url,
       confidence: instructions.confirmed ? 'confirmed' : 'check', evidence: instructions.evidence,
@@ -210,7 +218,7 @@ export function calendarChangeAlerts({ changes = [], events, roomEvents = events
     const [usualKey, usual] = [...counts.entries()].sort((a, b) => b[1].count - a[1].count)[0];
     if (usual.count < 3 || usual.count / (peers.length + 1) < 0.75 || usualKey === roomKey(event.location)) continue;
     result.push(alert({ id: `unusual:${event.id}:${roomKey(event.location)}`, event_id: event.id, kind: 'unusual_room',
-      title: `${event.course}: Different room`, body: `${event.title}: ${event.location}; usually ${usual.room}. Confirm before attending.`,
+      title: `${event.course}: Different room`, body: `${event.title} · ${usual.room} → ${event.location}`,
       course: event.course, starts_at: event.starts_at, ends_at: event.ends_at, observed_at: event.observed_at,
       location: event.location, previous_location: usual.room, source_label: event.source_label, url: event.url,
       confidence: 'check', evidence: `${usual.count} of ${peers.length} other occurrences of this session list ${usual.room}.`,

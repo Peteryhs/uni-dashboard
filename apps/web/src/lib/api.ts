@@ -145,11 +145,15 @@ export async function fetchRecommendations(section: number | null = null, group:
   return response;
 }
 
+/** One dish from /v1/menu. `station` is the counter inside the outlet ("Hot Dish"); '' if unnamed. */
+export interface MenuDish { outlet: string; station: string; dish: string; diet: string[]; allergens: string[]; url: string }
+
 export interface PostedMenu {
   requested_date: string;
   service_date: string | null;
   status: 'today' | 'upcoming' | 'previous' | 'unavailable';
-  items: { outlet: string; station: string; dish: string; diet: string[]; allergens: string[]; url: string }[];
+  /** Every dish for the day, in page order (which is station order within an outlet). */
+  items: MenuDish[];
 }
 
 export function fetchPostedMenu(date?: string, signal?: AbortSignal): Promise<PostedMenu> {

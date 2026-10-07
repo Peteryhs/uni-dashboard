@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,19 +18,27 @@ import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.peteryhs.unidash.data.Dish
 import dev.peteryhs.unidash.data.Food
+import dev.peteryhs.unidash.data.Highlight
 import dev.peteryhs.unidash.data.FoodPick
 import dev.peteryhs.unidash.data.FoodRecommendationResponse
 import dev.peteryhs.unidash.data.Outlet
@@ -56,7 +66,7 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
     val pick = ranking?.recommendation ?: pickCard?.payload<FoodPick>()?.takeIf { food == null || it.serviceDate == food.serviceDate }
 
     ScreenScaffold(
-        "Food", food?.serviceDate?.let { date -> Format.dayHeader(date).let { d -> if (d == "Today" || d == "Tomorrow") "Menus for ${d.lowercase()}" else "Menus for $d" } }, snapshot, now, snackbar, onRefresh = vm::refresh,
+        "Food", food?.serviceDate?.let { Format.dayHeader(it) }, snapshot, now, snackbar, onRefresh = vm::refresh,
         actions = {
             food?.serviceDate?.let { date ->
                 IconButton(onClick = { uri.openUri("https://uwaterloo.ca/food-services/daily-menu?date=$date") }) {
@@ -192,32 +202,65 @@ private fun OutletCard(outlet: Outlet, ranked: RankedOutlet?, isTop: Boolean) {
                 Modifier.padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
                 verticalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
-                outlet.dishes.forEach { d ->
-                    val highlight = ranked?.highlights?.firstOrNull { diningNameMatches(it.dish, d.dish) }
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                    ) {
-                        if (highlight == null) Spacer(Modifier.width(4.dp))
-                        else Box(Modifier.width(4.dp).height(40.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            Text(
-                                d.dish,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (highlight == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                                fontWeight = if (highlight == null) FontWeight.Normal else FontWeight.SemiBold,
-                            )
-                            if (d.diet.isNotEmpty()) Text(d.diet.joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            highlight?.why?.takeIf { it.isNotBlank() }?.let { why ->
-                                Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                            }
+                stationGroups(outlet.dishes).forEachIndexed { index, (station, dishes) ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(vertical = Spacing.xs), color = MaterialTheme.colorScheme.outlineVariant)
+                    if (station.isNotBlank()) StationHeader(station, dishes.size)
+                    dishes.forEach { d -> DishRow(d, ranked?.highlights?.firstOrNull { diningNameMatches(it.dish, d.dish) }) }
+                }
+            }
+        }
+    }
+}
+
+/** Icon, "THE CARVERY", count: the counter inside the hall, so the list reads like the room does. */
+@Composable
+private fun StationHeader(station: String, count: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = Spacing.s, bottom = Spacing.xs).semantics(mergeDescendants = true) { heading() },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        Icon(stationIcon(station), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        Text(station.uppercase(Locale.CANADA), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+        Text("$count", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { contentDescription = "$count dishes" })
+    }
+}
+
+@Composable
+private fun DishRow(d: Dish, highlight: Highlight?) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        // The AI pick is marked by a bar and the primary colour, not by words.
+        if (highlight == null) Spacer(Modifier.width(4.dp))
+        else Box(Modifier.width(4.dp).height(36.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                d.dish,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (highlight == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                fontWeight = if (highlight == null) FontWeight.Normal else FontWeight.SemiBold,
+            )
+            if (d.diet.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    d.diet.forEach { tag ->
+                        val (short, label) = dietTag(tag)
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            shape = MaterialTheme.shapes.extraSmall,
+                            modifier = Modifier.semantics { contentDescription = label },
+                        ) {
+                            Text(short, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
                         }
                     }
                 }
-                if (outlet.hiddenDishes > 0) {
-                    Text("+${outlet.hiddenDishes} more dishes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            }
+            highlight?.why?.takeIf { it.isNotBlank() }?.let { why ->
+                Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }

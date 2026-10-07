@@ -14,14 +14,6 @@ const timeFmt = new Intl.DateTimeFormat('en-CA', {
   hour12: true,
 });
 
-const weekdayTimeFmt = new Intl.DateTimeFormat('en-CA', {
-  timeZone: CAMPUS_TZ,
-  weekday: 'short',
-  hour: 'numeric',
-  minute: '2-digit',
-  hour12: true,
-});
-
 const dayFmt = new Intl.DateTimeFormat('en-CA', {
   timeZone: CAMPUS_TZ,
   weekday: 'long',
@@ -38,10 +30,6 @@ const shortDayFmt = new Intl.DateTimeFormat('en-CA', {
 
 export function formatTime(ms: number): string {
   return timeFmt.format(new Date(ms)).replace(/\s?([ap])\.?m\.?/i, (_, p) => p.toLowerCase() + 'm');
-}
-
-export function formatWeekdayTime(ms: number): string {
-  return weekdayTimeFmt.format(new Date(ms)).replace(/\s?([ap])\.?m\.?/i, (_, p) => p.toLowerCase() + 'm');
 }
 
 export function formatDay(ms: number): string {
@@ -65,15 +53,6 @@ export function campusDate(ms: number): string {
       .map((p) => [p.type, p.value]),
   );
   return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-/** 0 = today, 1 = tomorrow, -1 = yesterday, in campus-calendar days. */
-export function dayOffset(ms: number, now: number = Date.now()): number {
-  const a = campusDate(ms);
-  const b = campusDate(now);
-  if (a === b) return 0;
-  const diffMs = Date.parse(`${a}T12:00:00Z`) - Date.parse(`${b}T12:00:00Z`);
-  return Math.round(diffMs / 86_400_000);
 }
 
 /**
@@ -112,9 +91,4 @@ export function shortAge(ms: number, now: number = Date.now()): string {
   const h = Math.floor(m / 60);
   if (h < 48) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
-}
-
-/** Human label for a diet tag. The feed uses lowercase single words. */
-export function dietLabel(tag: string): string {
-  return tag.charAt(0).toUpperCase() + tag.slice(1);
 }

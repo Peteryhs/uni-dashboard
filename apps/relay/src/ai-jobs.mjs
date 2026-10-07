@@ -1,4 +1,5 @@
 /** Persist user-started AI work so closing the page cannot own or cancel it. */
+import { MENU_ROW_LIMIT } from './menu.mjs';
 import { rankDailyMenu, parseOfficeHoursWithAi } from './ai.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
@@ -87,7 +88,7 @@ async function runFoodRanking(store, job, cfEnv) {
   if (fallback[0]?.service_date && fallback[0].service_date !== serviceDate && fallback[0].service_date > serviceDate) {
     throw new Error('The menu date changed. Refresh dining and rank again.');
   }
-  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
+  const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: MENU_ROW_LIMIT });
   if (!menuItems.length) throw new Error('No dining menu items are available for this date.');
   const saved = await getFoodProfile(store) || await saveFoodProfile(store, {});
   const profile = cleanFoodProfile(saved);

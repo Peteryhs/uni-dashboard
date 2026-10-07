@@ -366,8 +366,38 @@
   .menu-day-select::after, .menu-day-select button { transition: none; }
   .dashboard-app *, .dashboard-app *::before, .dashboard-app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
-.calendar-change-tag { font-size: 11px; color: #f1c77a; }
-.calendar-event-detail .calendar-change-text { color: #f1c77a; }
-.calendar-change-summary { margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.5; color: #f1c77a; }
-.calendar-change-summary span { flex: 1 1 280px; }
-.calendar-change-summary a { display: inline-flex; align-items: center; gap: 4px; text-decoration: underline; }
+/* Schedule changes are violet (see change-blocks.css); amber stays reserved for stale data. */
+.calendar-change-tag { font-size: 11px; }
+.calendar-change-summary { margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; line-height: 1.5; color: #d9d2ff; }
+.calendar-change-summary > span:not(.change-blocks) { color: #aeb5be; font-variant-numeric: tabular-nums; }
+.calendar-change-summary a { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #c9bfff; text-decoration: underline; }
+.calendar-room, .calendar-change-cached { display: flex; align-items: center; gap: 6px; }
+.calendar-room svg { flex: none; color: #9ca5b0; }
+.calendar-change-cached { color: var(--amber); font-size: 12px; }
+.hero-change { display: flex; margin-top: 10px; }
+.rec-detail-change { display: flex; margin: 4px 0 10px; }
+.more-rec-row small .change-blocks { margin-top: 2px; }
+
+/* Icon rows: one glyph and a number instead of a sentence. */
+.icon-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.icon-line-items { display: contents; }
+.icon-line span, .icon-line small { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.icon-line svg { flex: none; color: #9ca5b0; }
+.icon-line small { color: #9fa7b1; font-size: 11px; }
+
+.menu-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.menu-status svg { flex: none; color: #9ca5b0; }
+.menu-status--old { color: var(--amber); }
+.menu-status--old svg { color: currentColor; }
+
+/* Stations inside an outlet: "Hot Dish", "The Carvery", each with its own short list. */
+.menu-station + .menu-station { border-top: 1px solid #484c53; }
+.menu-station-head { display: flex; align-items: center; gap: 7px; margin: 0; padding: 12px 22px 2px; color: #c9d0d8; font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.menu-station-head svg { flex: none; color: var(--live); }
+.menu-station-head small { margin-left: auto; color: #8f97a1; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.menu-dish-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.diet-chip { display: inline-block; min-width: 22px; padding: 0 5px; border: 1px solid #4b5059; border-radius: 4px; color: #b9e6d0; font-size: 10px; font-weight: 650; line-height: 16px; text-align: center; text-decoration: none; cursor: help; }
+.diet-chip--allergen { color: #ffd0b5; text-transform: capitalize; }
+@media (max-width: 560px) {
+  .menu-station-head { padding-inline: 18px; }
+}

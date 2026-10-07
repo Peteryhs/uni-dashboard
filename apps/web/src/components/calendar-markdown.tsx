@@ -46,12 +46,6 @@ function inline(text: string): ReactNode[] {
   return nodes;
 }
 
-export function calendarMarkdownPreview(source: string): string {
-  return parseCalendarMarkdown(source).map((block) => block.text
-    .replace(/\[([^\]]+)]\(https?:\/\/[^\s)]+\)/g, '$1')
-    .replace(/\*\*|__|[`*_]/g, '')).join(' · ');
-}
-
 export function CalendarMarkdown({ description, showLabel = true }: { description: string; showLabel?: boolean }) {
   const blocks = parseCalendarMarkdown(description);
   if (!blocks.length) return null;

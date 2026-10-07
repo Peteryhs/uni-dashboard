@@ -102,27 +102,3 @@ export function useHealthz(enabled: boolean) {
     retry: 1,
   });
 }
-
-/**
- * Fires once when a value actually changes, so the UI can flash it.
- *
- * The spec is explicit that motion means information: a poll returning identical bytes must produce
- * no movement. Comparing the value rather than the fetch is what enforces that.
- */
-export function useChanged(value: unknown): boolean {
-  const serialized = JSON.stringify(value ?? null);
-  const previous = useRef<string | null>(null);
-  const [changed, setChanged] = useState(false);
-
-  useEffect(() => {
-    if (previous.current !== null && previous.current !== serialized) {
-      setChanged(true);
-      const id = setTimeout(() => setChanged(false), 1700);
-      previous.current = serialized;
-      return () => clearTimeout(id);
-    }
-    previous.current = serialized;
-  }, [serialized]);
-
-  return changed;
-}

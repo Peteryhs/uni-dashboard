@@ -28,8 +28,10 @@ class ScheduleChangesTest {
 
     @Test fun `room warning is carried into the class reminder`() {
         val reminder = NotificationPlanner.plan(calendar(), now).single()
-        assertTrue(reminder.text.contains("RCH 101"))
-        assertTrue(reminder.text.contains("Different room (usually E7 2409)"))
+        assertTrue(reminder.text.endsWith(" · E7 2409 → RCH 101 ?"))
+        assertEquals("the new room appears once, inside the arrow", 1, Regex("RCH 101").findAll(reminder.text).count())
+        val confirmed = NotificationPlanner.plan(calendar(alerts = listOf(change.copy(kind = "room", confidence = "confirmed"))), now).single()
+        assertTrue(confirmed.text.endsWith(" · E7 2409 → RCH 101"))
     }
 
     @Test fun `cancellation leaves a change alert without a class alarm`() {
@@ -45,7 +47,17 @@ class ScheduleChangesTest {
     @Test fun `dated replacement work cancels attendance while unclear work keeps a warning`() {
         assertTrue(NotificationPlanner.plan(calendar(events = listOf(event.copy(attendance = "replaced"))), now).isEmpty())
         val check = calendar(events = listOf(event.copy(attendance = "check_instructions")), alerts = listOf(change.copy(kind = "tutorial_work")))
-        assertTrue(NotificationPlanner.plan(check, now).single().text.contains("Check tutorial instructions before attending"))
+        assertTrue(NotificationPlanner.plan(check, now).single().text.contains("Online work · check instructions"))
+    }
+
+    @Test fun `an alert exposes the before and after that the UI draws as blocks`() {
+        val detail = change.copy(previousAt = now, currentAt = now + 3_600_000).detail
+        assertTrue(detail.roomMoved)
+        assertEquals("E7 2409", detail.previousLocation)
+        assertEquals("RCH 101", detail.location)
+        assertEquals(now + 3_600_000, detail.currentAt)
+        assertTrue(!detail.confirmed)
+        assertTrue(!change.copy(previousLocation = "RCH 101").detail.roomMoved)
     }
 
     @Test fun `a whole series moving coalesces while separate unusual sessions remain separate`() {

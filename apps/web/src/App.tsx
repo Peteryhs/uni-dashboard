@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronLeft, ChevronRight, ExternalLink, Settings2, Star, WifiOff, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, CloudRain, ExternalLink, History, MapPin, Settings2, Star, Thermometer, WifiOff, Wind, X } from 'lucide-react';
+import { ChangeBlocks, alertChange } from '@/components/change-blocks';
+import { StationIcon } from '@/components/station-icon';
+import { dietTag, stationGroups } from '@/lib/menu';
 import { SearchField } from '@/components/ui/search-field';
 import { RefreshButton } from '@/components/ui/refresh-button';
 import { CustomizationSheet } from '@/components/customization-sheet';
@@ -10,13 +13,13 @@ import { AiMenuSummary } from '@/components/ai-menu-summary';
 import { CourseDetailContent } from '@/components/course-detail-content';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
-import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/components/cards/food';
+import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/lib/dining';
 import { matchDiningDish, matchDiningOutlet, useDiningRecommendation } from '@/components/use-dining-recommendation';
-import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, fetchSetupStatus, getToken, readCachedCalendar, readCachedRecommendations, RelayError, saveRecommendationAction, triggerPoll } from '@/lib/api';
+import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, fetchSetupStatus, getToken, readCachedCalendar, readCachedRecommendations, RelayError, saveRecommendationAction, triggerPoll, type MenuDish } from '@/lib/api';
 import { useDashboard, useNow } from '@/hooks/use-dashboard';
 import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge } from '@/lib/time';
-import type { AlertData, CalendarData, CalendarEvent, CardState, DueSoonData, DueSoonItem, NextCommitmentData, RecommendationItem } from '@/lib/contract';
+import type { AlertData, CalendarData, CalendarEvent, CardState, DueSoonData, DueSoonItem, NextCommitmentData, RecommendationItem, WeatherSlice } from '@/lib/contract';
 import './dashboard.css';
 
 function cleanTitle(value: string): string {
@@ -60,6 +63,15 @@ function progress(item: RecommendationItem, now: number): number | null {
   if (item.kind === 'change') return null;
   if (!item.starts_at || !item.ends_at || now < item.starts_at || now > item.ends_at) return null;
   return Math.round(((now - item.starts_at) / (item.ends_at - item.starts_at)) * 100);
+}
+/** Spoken form of the weather icon row, since the icons themselves are decorative. */
+function weatherLabel(weather: WeatherSlice): string {
+  return [
+    weather.temp_c != null ? `${Math.round(weather.temp_c)} degrees` : null,
+    weather.feels_c != null ? `feels like ${Math.round(weather.feels_c)}` : null,
+    weather.precip_prob ? `${Math.round(weather.precip_prob)} percent chance of rain` : null,
+    weather.wind_kmh != null && weather.wind_kmh >= 20 ? `wind ${Math.round(weather.wind_kmh)} kilometres per hour` : null,
+  ].filter(Boolean).join(', ');
 }
 function dateLabel(date: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', month: 'long', day: 'numeric' }).format(new Date(date + 'T12:00:00Z'));
@@ -250,8 +262,9 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       </div>
       <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
     </div>
+    {item.change && <ChangeBlocks className="rec-detail-change" change={item.change} />}
     {isAiFood(item) ? <p>{recommendationBody(item)}</p> : <CourseDetailContent
-      description={recommendationBody(item)} topics={item.topics} readings={item.readings}
+      description={item.kind === 'change' && item.change ? '' : recommendationBody(item)} topics={item.topics} readings={item.readings}
     />}
     <div className="rec-detail-actions">
       {item.kind === 'food'
@@ -275,8 +288,9 @@ function NextCommitment({ data, state, now }: { data?: NextCommitmentData; state
   const label = state === 'failed' || state === 'degraded' ? 'Schedule unavailable' : ({ deadline: 'Next due', exam: 'Next exam', class: 'Next class', office_hours: 'Next office hours' } as Record<string, string>)[data.kind || ''] || 'Next on your schedule';
   const sourceAge = state === 'stale' || state === 'dead' ? ' · Saved schedule' : '';
   if (!data.starts_at) return <div className="next-commitment next-commitment-empty"><span>{label}</span><strong>{data.title || 'Nothing scheduled'}</strong>{data.subtitle && <small>{data.subtitle}</small>}</div>;
+  const weather = data.weather && !data.weather.error && data.weather.temp_c != null ? data.weather : null;
   const when = campusDate(data.starts_at) === campusDate(now) ? 'Today' : campusDate(data.starts_at) === shiftDate(campusDate(now), 1) ? 'Tomorrow' : formatShortDay(data.starts_at);
-  return <BlurFadeDisclosure className="next-commitment" contentClassName="next-commitment-detail" summary={<><span>{label}</span><strong>{cleanTitle(data.title)}</strong><small>{when}{data.all_day ? ' · Date only' : ' · ' + formatTime(data.starts_at)}{data.location ? ' · ' + data.location : ''}{sourceAge}</small><ChevronRight size={15} /></>}>{data.subtitle && <p>{data.subtitle}</p>}{data.following && <p>Then: {cleanTitle(data.following.title)}{data.following.starts_at ? ' · ' + formatShortDay(data.following.starts_at) + (data.following.all_day ? '' : ' ' + formatTime(data.following.starts_at)) : ''}{data.following.location ? ' · ' + data.following.location : ''}</p>}{data.weather && !data.weather.error && data.weather.temp_c != null && <p>At that time: {Math.round(data.weather.temp_c)}°C{data.weather.feels_c != null ? ' · feels ' + Math.round(data.weather.feels_c) + '°C' : ''}{data.weather.precip_prob != null && data.weather.precip_prob > 0 ? ' · ' + Math.round(data.weather.precip_prob) + '% rain' : ''}{data.weather.wind_kmh != null && data.weather.wind_kmh >= 20 ? ' · wind ' + Math.round(data.weather.wind_kmh) + ' km/h' : ''}{data.weather.show && data.weather.reason ? ' · ' + data.weather.reason : ''}</p>}</BlurFadeDisclosure>;
+  return <BlurFadeDisclosure className="next-commitment" contentClassName="next-commitment-detail" summary={<><span>{label}</span><strong>{cleanTitle(data.title)}</strong><small>{when}{data.all_day ? ' · Date only' : ' · ' + formatTime(data.starts_at)}{data.location ? ' · ' + data.location : ''}{sourceAge}</small><ChevronRight size={15} /></>}>{data.subtitle && <p>{data.subtitle}</p>}{weather && <p className="icon-line"><span className="sr-only">{weatherLabel(weather)}</span><span className="icon-line-items" aria-hidden><span><Thermometer size={13} />{Math.round(weather.temp_c!)}°{weather.feels_c != null && Math.round(weather.feels_c) !== Math.round(weather.temp_c!) ? <small> / {Math.round(weather.feels_c)}°</small> : null}</span>{weather.precip_prob != null && weather.precip_prob > 0 && <span><CloudRain size={13} />{Math.round(weather.precip_prob)}%</span>}{weather.wind_kmh != null && weather.wind_kmh >= 20 && <span><Wind size={13} />{Math.round(weather.wind_kmh)} km/h</span>}</span></p>}{data.following && <p className="icon-line"><span className="sr-only">Then </span><ArrowRight size={13} aria-hidden /><span>{cleanTitle(data.following.title)}</span>{data.following.starts_at ? <small>{formatShortDay(data.following.starts_at)}{data.following.all_day ? '' : ' ' + formatTime(data.following.starts_at)}</small> : null}{data.following.location && <small><MapPin size={12} aria-hidden />{data.following.location}</small>}</p>}</BlurFadeDisclosure>;
 }
 
 function CalendarSection({ data, pending, error, now, page, setPage, nextCommitment, nextCommitmentState }: { data?: CalendarData; pending: boolean; error: boolean; now: number; page: number; setPage: (page: number) => void; nextCommitment?: NextCommitmentData; nextCommitmentState?: CardState }) {
@@ -382,6 +396,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
     });
   }
 
+  const alertsFor = (event: CalendarEvent) => data?.alerts?.filter(alert => alert.event_id === event.id) ?? [];
   const renderCalendarEvent = (event: CalendarEvent, dayBadge?: string) => (
     <BlurFadeDisclosure className="calendar-event" key={`${event.id}:${dayBadge ?? ''}`} contentClassName="calendar-event-detail" summary={<>
         <span className="calendar-time">
@@ -392,15 +407,14 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
           <strong>{cleanTitle(event.title)}</strong>
           <span className="course-tag">{event.course || 'Course not identified'}</span>
           <span className={'event-tag event-' + event.category}>{event.attendance === 'replaced' ? 'Replaced' : calendarKind(event)}</span>
-          {event.attendance !== 'replaced' && data?.alerts?.some(alert => alert.event_id === event.id) && <span className="calendar-change-tag">{data.alerts.find(alert => alert.event_id === event.id)?.kind === 'unusual_room' ? `Different room · ${event.location}` : data.alerts.find(alert => alert.event_id === event.id)?.kind === 'room' ? `Room changed · ${event.location || 'check source'}` : event.attendance === 'check_instructions' ? 'Check instructions' : 'Updated'}</span>}
+          {event.attendance !== 'replaced' && alertsFor(event).map(alert => <ChangeBlocks key={alert.id} className="calendar-change-tag" change={alertChange(alert)} />)}
         </span>
         <ChevronRight className="calendar-item-chevron" size={14} />
       </>}>
-        {event.all_day && (event.category === 'deadline' || event.category === 'exam') && <p>No exact time was supplied.</p>}
         {event.category === 'opens' && event.due_at && <p><strong>Due:</strong> {formatShortDay(event.due_at)} · {formatTime(event.due_at)}</p>}
         {distinctCalendarSubtitle(event) && <p>{distinctCalendarSubtitle(event)}</p>}
-        {event.location && !data?.alerts?.some(alert => alert.event_id === event.id && ['room', 'unusual_room'].includes(alert.kind)) && <p>{event.attendance === 'replaced' ? 'Original room · ' : ''}{event.location}</p>}
-        {data?.alerts?.filter(alert => alert.event_id === event.id).map(alert => <p className="calendar-change-text" key={alert.id}>{alert.body}{['stale', 'dead'].includes(alert.state) ? ' · Cached; check source.' : ''}</p>)}
+        {event.location && !alertsFor(event).some(alert => ['room', 'unusual_room'].includes(alert.kind)) && <p className="calendar-room"><MapPin size={13} aria-hidden />{event.attendance === 'replaced' ? <s>{event.location}</s> : event.location}</p>}
+        {alertsFor(event).some(alert => ['stale', 'dead'].includes(alert.state)) && <p className="calendar-change-cached"><History size={13} aria-hidden />Cached change</p>}
         {(event.group_scope.section != null || event.group_scope.groups != null) && <p>{[event.group_scope.section != null ? `Section ${event.group_scope.section}` : null, event.group_scope.groups != null ? `Groups ${event.group_scope.groups[0]}–${event.group_scope.groups[1]}` : null].filter(Boolean).join(' · ')}</p>}
         <CourseDetailContent description={event.description} topics={event.topics} readings={event.readings}
           syllabusScope={event.syllabus_scope} syllabusEvidence={event.syllabus_evidence} />
@@ -432,7 +446,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
       {pending && <p className="empty-state">Loading calendar…</p>}
       {error && !data && <p className="empty-state" role="alert">Calendar is unavailable right now.</p>}
       {data && calendarRows.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
-      {data?.alerts?.filter(alert => ['cancelled', 'removed'].includes(alert.kind) && campusDate(alert.starts_at) < shiftDate(rangeStart ?? today, rangeLength)).map(alert => <p className="calendar-change-summary" key={alert.id}><strong>{alert.title}</strong><span>{alert.body}</span>{alert.url && <a href={alert.url} target="_blank" rel="noopener noreferrer">Check source <ExternalLink size={12} /></a>}</p>)}
+      {data?.alerts?.filter(alert => ['cancelled', 'removed'].includes(alert.kind) && campusDate(alert.starts_at) < shiftDate(rangeStart ?? today, rangeLength)).map(alert => <p className="calendar-change-summary" key={alert.id}><strong>{alert.course || 'Class'}</strong><ChangeBlocks change={alertChange(alert)} /><span>{formatShortDay(alert.starts_at)} · {formatTime(alert.starts_at)}</span>{alert.url && <a href={alert.url} target="_blank" rel="noopener noreferrer" aria-label={'Source for ' + alert.title}>Source <ExternalLink size={12} aria-hidden /></a>}</p>)}
       <div className="calendar-day-list" id="calendar-day-list">
       {calendarRows.map(row => {
         if (row.kind === 'weekend') {
@@ -518,8 +532,8 @@ function MenuSection() {
 
   const menu = useQuery({ queryKey: ['posted-menu', selectedDay], queryFn: ({ signal }) => fetchPostedMenu(activeDate, signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
   const diningRecommendation = useDiningRecommendation(menu.data?.service_date ?? undefined);
-  const groups = new Map<string, NonNullable<typeof menu.data>['items']>();
   const search = preferences.dishSearchQuery.trim().toLowerCase();
+  const groups = new Map<string, MenuDish[]>();
   for (const dish of menu.data?.items ?? []) {
     if (preferences.dietaryFilter !== 'all' && !dish.diet.some(tag => tag.toLowerCase() === preferences.dietaryFilter)) continue;
     if (preferences.onlyFavorites && !isFavoriteDish(dish.dish)) continue;
@@ -573,25 +587,12 @@ function MenuSection() {
       </div>
     </div>
     <BlurFade key={selectedDay} duration={0.35} offset={8} blur="6px" direction="up">
-      {menu.data?.status === 'previous' && (
-        <p className="menu-status">
-          {isWeekendDay(menu.data.requested_date)
-            ? `Food Services usually does not publish daily menus on weekends. Showing the last posted menu from ${dateLabel(menu.data.service_date!)}.`
-            : `Today’s menu has not been posted yet. Showing the last posted menu from ${dateLabel(menu.data.service_date!)}.`}
-        </p>
-      )}
-      {menu.data?.status === 'today' && (
-        <p className="menu-status">
-          {isWeekendDay(menu.data.service_date!)
-            ? `Weekend menu for today, ${dateLabel(menu.data.service_date!)} (some locations may not publish on weekends).`
-            : `Posted for today, ${dateLabel(menu.data.service_date!)}.`}
-        </p>
-      )}
-      {menu.data?.status === 'upcoming' && (
-        <p className="menu-status">
-          {isWeekendDay(menu.data.service_date!)
-            ? `Weekend menu for ${dateLabel(menu.data.service_date!)} (some locations may not publish on weekends).`
-            : `Posted in advance for ${dateLabel(menu.data.service_date!)}.`}
+      {menu.data?.service_date && menu.data.status !== 'unavailable' && (
+        <p className={'menu-status' + (menu.data.status === 'previous' ? ' menu-status--old' : '')}>
+          <CalendarDays size={13} aria-hidden />
+          {menu.data.status === 'previous'
+            ? <><span>{isWeekendDay(menu.data.requested_date) ? 'No weekend menu' : 'Not posted yet'}</span><ArrowRight size={12} aria-hidden /><span>Showing {dateLabel(menu.data.service_date)}</span></>
+            : <span>{menu.data.status === 'today' ? 'Today · ' : ''}{dateLabel(menu.data.service_date)}{isWeekendDay(menu.data.service_date) ? ' · weekend' : ''}</span>}
         </p>
       )}
       {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
@@ -600,26 +601,33 @@ function MenuSection() {
       {refreshError && <p className="action-error" role="alert">{refreshError}</p>}
       {menu.data?.status === 'unavailable' && (
         <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">
-          {isWeekendDay(menu.data?.requested_date)
-            ? 'Food Services usually does not publish daily menus on weekends. No menu is currently published for this date.'
-            : 'No menu has been published in the feed yet.'}
+          {isWeekendDay(menu.data?.requested_date) ? 'No weekend menu posted' : 'No menu posted yet'}
         </BlurFade>
       )}
-      {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your dining filters.</BlurFade>}
+      {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your filters</BlurFade>}
       {groups.size > 0 && <div className="menu-grid">{sortedGroups.map(([outlet, dishes], outletIndex) => {
         const aiOutlet = diningRecommendation.state.status === 'ready'
           ? matchDiningOutlet(diningRecommendation.state.recommendation, outlet)
           : undefined;
         return <BlurFade as="article" className={'menu-outlet' + (aiOutlet?.rank === 1 ? ' menu-outlet--best' : '')} key={outlet} inView delay={Math.min(outletIndex, 5) * 0.06} duration={0.5} offset={12} blur="6px">
           <div className="menu-outlet-head"><div><h3>{getOutletLocation(outlet).name}</h3><small>{getOutletLocation(outlet).building} · {getOutletLocation(outlet).campusZone}</small>{aiOutlet?.verdict.trim() && <p className="menu-outlet-ai-verdict">{aiOutlet.verdict.trim()}</p>}</div><div><span>{dishes.length} {dishes.length === 1 ? 'dish' : 'dishes'}</span><button onClick={() => toggleFavoriteOutlet(outlet)} aria-label={(isFavoriteOutlet(outlet) ? 'Unpin ' : 'Pin ') + getOutletLocation(outlet).name} aria-pressed={isFavoriteOutlet(outlet)}><Star size={15} fill={isFavoriteOutlet(outlet) ? 'currentColor' : 'none'} /></button></div></div>
-          {dishes.length ? <ul>{dishes.map((dish, index) => {
-            const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
-            const meta = [dish.station, ...dish.diet, ...dish.allergens.map(allergen => 'Contains ' + allergen)].filter(Boolean).join(' · ');
-            return <li className={aiHighlight ? 'menu-dish--ai-picked' : undefined} key={dish.dish + index}>
-              <div className="menu-dish-copy"><strong>{dish.dish}</strong>{aiHighlight?.why.trim() && <small className="menu-dish-ai-why">{aiHighlight.why.trim()}</small>}{meta && <small className="menu-dish-meta">{meta}</small>}</div>
-              <div className="menu-dish-actions"><button onClick={() => toggleFavoriteDish(dish.dish)} aria-label={(isFavoriteDish(dish.dish) ? 'Remove ' : 'Favorite ') + dish.dish} aria-pressed={isFavoriteDish(dish.dish)}><Star size={14} fill={isFavoriteDish(dish.dish) ? 'currentColor' : 'none'} /></button>{dish.url && <a href={dish.url} target="_blank" rel="noopener noreferrer" aria-label={'View ' + dish.dish}><ExternalLink size={14} /></a>}</div>
-            </li>;
-          })}</ul> : <p className="menu-outlet-empty">{selectedDay === 'tomorrow' ? 'No dishes posted here for tomorrow.' : 'No dishes posted here today.'}</p>}
+          {dishes.length ? stationGroups(dishes).map(([station, stationDishes]) => <section className="menu-station" key={station || '_'} aria-label={station || 'Menu'}>
+            {station && <h4 className="menu-station-head"><StationIcon station={station} /><span>{station}</span><small>{stationDishes.length}</small></h4>}
+            <ul>{stationDishes.map((dish, index) => {
+              const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
+              return <li className={aiHighlight ? 'menu-dish--ai-picked' : undefined} key={dish.dish + index}>
+                <div className="menu-dish-copy">
+                  <strong>{dish.dish}</strong>
+                  {aiHighlight?.why.trim() && <small className="menu-dish-ai-why">{aiHighlight.why.trim()}</small>}
+                  {(dish.diet.length > 0 || dish.allergens.length > 0) && <span className="menu-dish-tags">
+                    {dish.diet.map(tag => <abbr className="diet-chip" key={tag} title={dietTag(tag).label}>{dietTag(tag).short}</abbr>)}
+                    {dish.allergens.map(allergen => <abbr className="diet-chip diet-chip--allergen" key={allergen} title={'Contains ' + allergen}>{allergen}</abbr>)}
+                  </span>}
+                </div>
+                <div className="menu-dish-actions"><button onClick={() => toggleFavoriteDish(dish.dish)} aria-label={(isFavoriteDish(dish.dish) ? 'Remove ' : 'Favorite ') + dish.dish} aria-pressed={isFavoriteDish(dish.dish)}><Star size={14} fill={isFavoriteDish(dish.dish) ? 'currentColor' : 'none'} /></button>{dish.url && <a href={dish.url} target="_blank" rel="noopener noreferrer" aria-label={'View ' + dish.dish}><ExternalLink size={14} /></a>}</div>
+              </li>;
+            })}</ul>
+          </section>) : <p className="menu-outlet-empty">Nothing posted</p>}
         </BlurFade>;
       })}</div>}
     </BlurFade>
@@ -815,13 +823,13 @@ export default function App() {
         <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
-            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' ? recommendationBody(featured) : featured.course || recommendationBody(featured).split('.')[0]}</p><ChevronRight size={18} /></button>
+            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} />}<ChevronRight size={18} /></button>
             {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>
         </BlurFade>
         <BlurFade as="section" className="more-recs" aria-label="More recommendations" duration={0.58} delay={0.14} offset={14} blur="7px"><span className="more-label">More for today</span>
-          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
+          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} /> : timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
           {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small></button>}
         </BlurFade>
       </div>}

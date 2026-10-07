@@ -23,8 +23,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Air
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Umbrella
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Snooze
 import androidx.compose.material.icons.outlined.Thermostat
@@ -57,6 +60,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,6 +71,7 @@ import dev.peteryhs.unidash.data.DueSoon
 import dev.peteryhs.unidash.data.NextCommitment
 import dev.peteryhs.unidash.data.Recommendation
 import dev.peteryhs.unidash.data.Snapshot
+import dev.peteryhs.unidash.ui.ChangeBlocks
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.FreshnessLabel
@@ -77,6 +82,7 @@ import dev.peteryhs.unidash.ui.theme.Spacing
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val HOUR = 3_600_000L
 
@@ -225,7 +231,12 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
                     }
                     if (next.location.isNotBlank()) IconText(Icons.Outlined.Place, next.location)
                     weather?.let { w ->
-                        IconText(Icons.Outlined.Thermostat, "${w.tempC!!.toInt()}°" + (w.reason.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""))
+                        // One glyph and a number each, instead of "rain risk" prose.
+                        val temp = w.tempC!!.roundToInt()
+                        val feels = w.feelsC?.roundToInt()?.takeIf { it != temp }
+                        IconText(Icons.Outlined.Thermostat, "$temp°" + (feels?.let { " / $it°" } ?: ""), "Temperature")
+                        w.precipProb?.roundToInt()?.takeIf { it >= 20 }?.let { IconText(Icons.Outlined.Umbrella, "$it%", "Chance of rain") }
+                        w.windKmh?.roundToInt()?.takeIf { it >= 20 }?.let { IconText(Icons.Outlined.Air, "$it km/h", "Wind") }
                     }
                 }
             }
@@ -239,20 +250,29 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
             }
             next.following?.let { f ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
-                Text(
-                    "Then ${f.title}" + (f.startsAt?.let { " at ${Format.time(it)}" } ?: "") +
-                        (f.location.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Then", modifier = Modifier.size(18.dp))
+                    Text(
+                        listOfNotNull(f.title, f.startsAt?.let { Format.time(it) }, f.location.takeIf { it.isNotBlank() }).joinToString(" · "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             FreshnessLabel(state, observedAt, now)
         }
     }
 }
 
+/** An icon and a short value. `label` names the value for TalkBack when the icon carries the meaning. */
 @Composable
-private fun IconText(icon: ImageVector, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+private fun IconText(icon: ImageVector, text: String, label: String? = null) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        modifier = if (label != null) Modifier.clearAndSetSemantics { contentDescription = "$label $text" } else Modifier,
+    ) {
         Icon(icon, contentDescription = null, modifier = Modifier.padding(top = 1.dp))
         Text(text, style = MaterialTheme.typography.bodyLarge)
     }
@@ -307,11 +327,13 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                         recTime(rec, now),
                     ).joinToString(" · ")
                     if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // A change is drawn as blocks; its sentence body would only repeat them.
+                    rec.change?.let { ChangeBlocks(it, Modifier.padding(vertical = Spacing.xs)) }
                     val repeatsTime = time != null && rec.timeLabel != null && rec.body.startsWith(rec.timeLabel) && rec.body.length < 48
-                    if (rec.body.isNotBlank() && !repeatsTime) Text(rec.body, style = MaterialTheme.typography.bodyMedium)
+                    if (rec.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
+                        Text(rec.body, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
                     rec.eventProgress(now)?.let { EventTimeline(it, Modifier.padding(vertical = Spacing.xs)) }
-                    // Why this was picked: the web shows it as blue text; here it is the primary role.
-                    if (rec.reason.isNotBlank()) Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     FreshnessLabel(rec.state, null, now)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
                         if (rec.canComplete) {
@@ -319,9 +341,15 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                                 Icon(Icons.Outlined.CheckCircle, contentDescription = null)
                                 Text("Done", Modifier.padding(start = Spacing.s))
                             }
-                            OutlinedButton(onClick = snooze) { Text("Snooze 1 h") }
+                            OutlinedButton(onClick = snooze) {
+                                Icon(Icons.Outlined.Snooze, contentDescription = null)
+                                Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
+                            }
                         } else {
-                            OutlinedButton(onClick = dismiss) { Text("Dismiss") }
+                            OutlinedButton(onClick = dismiss) {
+                                Icon(Icons.Outlined.Close, contentDescription = null)
+                                Text("Dismiss", Modifier.padding(start = Spacing.s))
+                            }
                         }
                         rec.action?.let { a ->
                             TextButton(onClick = { uri.openUri(a.url) }) {
@@ -359,7 +387,7 @@ private fun SwipeBackground(direction: SwipeToDismissBoxValue, canComplete: Bool
 private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Long?, now: Long) {
     item(key = "due-header") {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionHeader("Due in the next ${due.windowDays} days", Modifier.weight(1f))
+            SectionHeader("Due · next ${due.windowDays} days", Modifier.weight(1f))
             FreshnessLabel(state, observedAt, now, Modifier.padding(end = Spacing.m, top = Spacing.m))
         }
     }
@@ -385,11 +413,16 @@ private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Lo
         )
         if (url != null) {
             Row(Modifier.fillMaxWidth().padding(start = Spacing.m, bottom = Spacing.xs)) {
-                AssistChip(onClick = { uri.openUri(url) }, label = { Text("Open in LEARN") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) })
+                AssistChip(
+                    onClick = { uri.openUri(url) },
+                    label = { Text("LEARN") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
+                    modifier = Modifier.semantics { contentDescription = "Open ${item.title} in LEARN" },
+                )
             }
         }
     }
-    if (items.size > 6) item { EmptyNote("${items.size - 6} more in Calendar") }
+    if (items.size > 6) item { EmptyNote("+${items.size - 6} more in Calendar") }
 }
 
 private fun kindLabel(kind: String?): String = when (kind) {
@@ -402,7 +435,7 @@ private fun kindLabel(kind: String?): String = when (kind) {
 
 /** A deadline counts down; a window says whether it is on now, ahead, or already over. */
 private fun recTime(rec: Recommendation, now: Long): String? {
-    if (rec.kind == "change") return rec.startsAt?.let { "Affects ${Format.whenLabel(it, now)}" }
+    if (rec.kind == "change") return rec.startsAt?.let { Format.whenLabel(it, now) }
     rec.dueAt?.let { return "${rec.timeLabel ?: "Due"} ${Format.whenLabel(it, now)}" }
     val start = rec.startsAt ?: return null
     val end = rec.endsAt

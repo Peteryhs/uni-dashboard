@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" font-family="Inter, 'Segoe UI', system-ui, sans-serif">
+  <title>Logo concepts for the Waterloo student dashboard</title>
+  <rect width="1200" height="720" fill="#0d0f12"/>
+
+  <!-- 1. Gander: a goose neck that is also a glance. "Take a gander" = a quick look. -->
+  <g transform="translate(30 30)">
+    <rect width="555" height="315" rx="22" fill="#16191e" stroke="#262b32"/>
+    <g transform="translate(48 88)">
+      <rect width="140" height="140" rx="34" fill="#0f3138"/>
+      <path d="M44 116 C40 80 46 54 74 44" fill="none" stroke="#35d0e0" stroke-width="15" stroke-linecap="round"/>
+      <circle cx="84" cy="42" r="15" fill="#35d0e0"/>
+      <path d="M96 35 L118 42 L96 49 Z" fill="#f4f6f8"/>
+      <circle cx="85" cy="38" r="3.6" fill="#0f3138"/>
+    </g>
+    <text x="222" y="158" fill="#f4f6f8" font-size="54" font-weight="680" letter-spacing="-1.5">Gander</text>
+    <text x="224" y="196" fill="#9aa3ad" font-size="19">take a quick look at your day</text>
+    <text x="32" y="290" fill="#5d6670" font-size="14" letter-spacing="1.5">01 · GOOSE + GLANCE</text>
+  </g>
+
+  <!-- 2. Hop: two blocks and an arrow, the same shape as a room change [PSE 535] → [PSE 545]. -->
+  <g transform="translate(615 30)">
+    <rect width="555" height="315" rx="22" fill="#16191e" stroke="#262b32"/>
+    <g transform="translate(48 88)">
+      <rect width="140" height="140" rx="34" fill="#1d1a33"/>
+      <rect x="22" y="50" width="38" height="40" rx="9" fill="none" stroke="#7b7f8a" stroke-width="7"/>
+      <path d="M66 70 H86" stroke="#b9a8ff" stroke-width="7" stroke-linecap="round"/>
+      <path d="M80 60 L90 70 L80 80" fill="none" stroke="#b9a8ff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="94" y="50" width="28" height="40" rx="9" fill="#b9a8ff"/>
+    </g>
+    <text x="222" y="158" fill="#f4f6f8" font-size="54" font-weight="680" letter-spacing="-1.5">Hop</text>
+    <text x="224" y="196" fill="#9aa3ad" font-size="19">where to be next, at a glance</text>
+    <text x="32" y="290" fill="#5d6670" font-size="14" letter-spacing="1.5">02 · BLOCK → BLOCK</text>
+  </g>
+
+  <!-- 3. Ringroad: Waterloo's Ring Road loops campus; the bright arc is "now" on your day. -->
+  <g transform="translate(30 375)">
+    <rect width="555" height="315" rx="22" fill="#16191e" stroke="#262b32"/>
+    <g transform="translate(48 88)">
+      <rect width="140" height="140" rx="34" fill="#0f3138"/>
+      <circle cx="70" cy="70" r="40" fill="none" stroke="#24484f" stroke-width="13"/>
+      <path d="M70 30 A40 40 0 0 1 108 82" fill="none" stroke="#35d0e0" stroke-width="13" stroke-linecap="round"/>
+      <circle cx="108" cy="82" r="9" fill="#f4f6f8"/>
+    </g>
+    <text x="222" y="158" fill="#f4f6f8" font-size="54" font-weight="680" letter-spacing="-1.5">Ringroad</text>
+    <text x="224" y="196" fill="#9aa3ad" font-size="19">your whole campus day, one loop</text>
+    <text x="32" y="290" fill="#5d6670" font-size="14" letter-spacing="1.5">03 · CAMPUS LOOP</text>
+  </g>
+
+  <!-- 4. Quad: four tiles like the dashboard, one lit; also the campus quad. -->
+  <g transform="translate(615 375)">
+    <rect width="555" height="315" rx="22" fill="#16191e" stroke="#262b32"/>
+    <g transform="translate(48 88)">
+      <rect width="140" height="140" rx="34" fill="#1a1e24"/>
+      <rect x="26" y="26" width="40" height="40" rx="11" fill="#35d0e0"/>
+      <rect x="74" y="26" width="40" height="40" rx="11" fill="#3a414b"/>
+      <rect x="26" y="74" width="40" height="40" rx="11" fill="#3a414b"/>
+      <rect x="74" y="74" width="40" height="40" rx="11" fill="#3a414b"/>
+    </g>
+    <text x="222" y="158" fill="#f4f6f8" font-size="54" font-weight="680" letter-spacing="-1.5">Quad</text>
+    <text x="224" y="196" fill="#9aa3ad" font-size="19">class, due, food, alerts</text>
+    <text x="32" y="290" fill="#5d6670" font-size="14" letter-spacing="1.5">04 · FOUR TILES</text>
+  </g>
+</svg>

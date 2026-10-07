@@ -19,7 +19,7 @@ test('day simulation adapts from class preparation to lunch and evening deadline
   assert.equal(quiz.action.label, 'Open quiz');
   assert.equal(morning.tasks.small.filter(task => task.title.includes('Quiz 2')).length, 1, 'LEARN and syllabus represent one quiz');
   assert.ok(morning.tasks.large.find(task => task.title.includes('Design project')), 'large project visible five days before due');
-  assert.ok(morning.items.find(item => item.kind === 'weather').body.includes('rain protection'));
+  assert.ok(morning.items.find(item => item.kind === 'weather').body.includes('umbrella'));
   const afternoon = recommendationsFromData({ ...data, now: at(DATE, '15:10') });
   assert.ok(afternoon.items.some(item => item.kind === 'office_hours' && item.course === 'ECE 198'));
 });
@@ -277,7 +277,7 @@ test('unknown weather is not cold, old food carries old state, and weekly topics
   assert.equal(lunch.items.find(item => item.kind === 'weather').title, 'Weather for your next break');
   assert.equal(lunch.items.find(item => item.kind === 'food').state, 'stale');
   const morning = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
-  assert.match(morning.items.find(item => item.kind === 'class' && item.course === 'ECE 150').body, /for this period/);
+  assert.match(morning.items.find(item => item.kind === 'class' && item.course === 'ECE 150').body, /This period: /);
   const reading = morning.items.find(item => item.kind === 'learning');
   assert.match(reading.reason, /exact lecture topic is not confirmed/);
   const tomorrow = recommendationsFromData({ ...data, now: at('2026-09-24', '08:00'), actions: { [reading.id]: { action: 'done' } } });

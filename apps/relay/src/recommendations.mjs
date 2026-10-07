@@ -6,6 +6,8 @@ import { isSameAssessment } from './task-context.mjs';
 import { validateRecommendations } from '#contract/recommendations.mjs';
 import { zonedToEpoch } from '#sources/ics/parse.mjs';
 import { ageState } from '#contract/cards.mjs';
+import { changeDetail } from '#contract/calendar-changes.mjs';
+import { MENU_ROW_LIMIT } from './menu.mjs';
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const ACTION_KEY = 'RECOMMENDATION_ACTIONS_JSON';
@@ -29,7 +31,7 @@ function item(kind, key, values) {
   const revision = hash(JSON.stringify(revision_seed || [values.title, values.starts_at, values.ends_at, values.due_at, values.topics, values.readings]));
   return { id: `rec:${kind}:${hash(key)}:${revision}`, revision, kind, priority: 0, title: '', body: '', course: null,
     starts_at: null, ends_at: null, due_at: null, scheduled_date: null, time_label: null, effort: 'unknown', estimated_minutes: null, available_minutes: null,
-    action: null, topics: [], readings: [], reason: '', evidence: '', source_label: '', state: 'live', can_complete: false, ...rest };
+    action: null, topics: [], readings: [], reason: '', evidence: '', source_label: '', state: 'live', can_complete: false, change: null, ...rest };
 }
 function linkFor(event, course, entry = null) {
   const preferred = /quiz/i.test(event?.title || entry?.title || '') ? ['quiz', 'crowdmark', 'submit', 'module', 'discussion'] : ['crowdmark', 'submit', 'quiz', 'module', 'discussion'];
@@ -134,8 +136,8 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
       priority: Math.min(['stale', 'dead'].includes(change.state) ? 720 : Infinity, soon ? (change.confidence === 'confirmed' ? 1160 : 1060) : change.starts_at <= now + DAY ? 960 : change.starts_at <= now + 3 * DAY ? 810 : 620),
       course: change.course, starts_at: change.starts_at, ends_at: change.ends_at, time_label: 'Scheduled',
       action: safeUrl(change.url) ? { label: change.kind === 'tutorial_work' ? 'Check tutorial work' : 'Check source', url: safeUrl(change.url) } : linkFor(null, courses.get(change.course)),
-      source_label: change.source_label, state: change.state,
-      reason: change.confidence === 'confirmed' ? 'Confirmed schedule change.' : 'Check course instructions; cancellation is unconfirmed.', evidence: change.evidence,
+      source_label: change.source_label, state: change.state, change: changeDetail(change),
+      reason: change.confidence === 'confirmed' ? 'Confirmed schedule change.' : 'Unconfirmed; check the source.', evidence: change.evidence,
     });
     candidates.push(recommendation);
     if (change.event_id) changeRecommendations.set(change.event_id, recommendation);
@@ -180,7 +182,9 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     candidates.push(item('class', event.id, {
       revision_seed: [event.id, event.title, event.starts_at, event.ends_at, event.location, learning.topics, learning.readings],
       title: `${current ? 'Now' : until <= 15 * MIN ? 'Starting soon' : 'Next today'}: ${event.title}`,
-      body: `${displayTime(event.starts_at)}–${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.${notice ? ` ${notice.body}` : ''}${learning.topics.length ? ` ${learning.period ? 'Syllabus topics for this period' : 'Learning today'}: ${learning.topics.join('; ')}.` : ' No dated syllabus topic has been imported for this class.'}`,
+      // The room notice travels as `change`, drawn as blocks; the body stays one short line.
+      body: `${displayTime(event.starts_at)}–${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}${learning.topics.length ? ` · ${learning.period ? 'This period' : 'Topics'}: ${learning.topics.join('; ')}` : ''}`,
+      change: notice ? changeDetail(notice) : null,
       priority: current ? 1100 : until <= 15 * MIN ? 1080 : until <= HOUR ? 980 : until <= 3 * HOUR ? 800 : 630,
       course: event.course, starts_at: event.starts_at, ends_at: event.ends_at, time_label: 'Starts', topics: learning.topics, readings: learning.readings,
       action: linkFor(event, courses.get(event.course)), source_label: `${event.source_label}${learning.entries.length ? ' + syllabus' : ''}`, state: event.state,
@@ -200,14 +204,14 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   for (const event of offices) {
     const workload = activeTasks.find(task => task.course === event.course && taskTime(task) > event.starts_at && taskTime(task) < event.starts_at + 7 * DAY);
     if (!workload) continue;
-    candidates.push(item('office_hours', event.id, { title: `${event.course}: ask for help before ${workload.title}`, body: `${dueText(event.starts_at, now)}${event.location ? ` · ${event.location}` : ''}. Bring questions about the upcoming work.`,
+    candidates.push(item('office_hours', event.id, { title: `${event.course}: ask for help before ${workload.title}`, body: `${dueText(event.starts_at, now)}${event.location ? ` · ${event.location}` : ''}`,
       priority: event.starts_at <= now + HOUR ? 820 : 580, course: event.course, starts_at: event.starts_at, ends_at: event.ends_at, action: linkFor(event, courses.get(event.course)), source_label: event.source_label, state: event.state,
       reason: 'Office hours happen before a deadline in this course.', evidence: 'Matched by course and calendar time; no help requirement is assumed.' }));
   }
   for (let i = 0; i < blocks.length; i++) for (let j = i + 1; j < blocks.length; j++) {
     const a = blocks[i], b = blocks[j];
     if (b.starts_at >= a.ends_at) break;
-    candidates.push(item('conflict', [a.id, b.id].sort().join(':'), { title: 'Two scheduled events overlap', body: `${a.title} and ${b.title} overlap from ${displayTime(Math.max(a.starts_at, b.starts_at))}. Check which one you should attend.`,
+    candidates.push(item('conflict', [a.id, b.id].sort().join(':'), { title: 'Two scheduled events overlap', body: `${a.title} ⇄ ${b.title} · from ${displayTime(Math.max(a.starts_at, b.starts_at))}`,
       starts_at: Math.max(a.starts_at, b.starts_at), ends_at: Math.min(a.ends_at, b.ends_at), priority: Math.max(a.starts_at, b.starts_at) <= now + HOUR ? 1090 : 780, source_label: 'Calendar',
       state: a.state === 'dead' || b.state === 'dead' ? 'dead' : a.state === 'stale' || b.state === 'stale' ? 'stale' : 'live', reason: 'Your timetable contains overlapping commitments.', evidence: 'Overlap calculated from supplied event times.' }));
   }
@@ -218,7 +222,7 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     const available = Math.floor((end - now) / MIN);
     if (available >= 25) {
       const task = rankRecommendationItems(activeTasks.filter(task => taskTime(task) >= now))[0];
-      candidates.push(item('focus', `${today}:${nextBlock?.id || 'evening'}:${task.id}`, { revision_seed: [today, nextBlock?.id, task.id, end], title: `A study window for ${task.course || 'your next task'}`, body: `${available} minutes are clear in your imported timetable${nextBlock ? ` before ${nextBlock.title}` : ' until 9 pm'}. Make progress on ${task.title}; leave time for travel and breaks.`,
+      candidates.push(item('focus', `${today}:${nextBlock?.id || 'evening'}:${task.id}`, { revision_seed: [today, nextBlock?.id, task.id, end], title: `A study window for ${task.course || 'your next task'}`, body: `${available} min free${nextBlock ? ` before ${nextBlock.title}` : ' until 9 pm'} · ${task.title}`,
         priority: task.priority >= 900 ? 880 : 600, course: task.course, starts_at: now, ends_at: end, available_minutes: available, action: task.action,
         source_label: 'Calendar + deadlines', state: task.state, reason: 'An open timetable window lines up with upcoming work.', evidence: 'This is a schedule gap, not an estimate of how long the task takes.' }));
     }
@@ -257,7 +261,8 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
       const cold = Number.isFinite(hour.feels_c) && hour.feels_c <= 0, hot = Number.isFinite(hour.feels_c) && hour.feels_c >= 30, windy = Number.isFinite(hour.wind_kmh) && hour.wind_kmh >= 35;
       const stale = ['stale', 'dead'].includes(weather.state);
       candidates.push(item('weather', `${today}:${hour.at}`, { title: rain ? 'Rain near your next trip' : cold ? 'Cold weather outside' : hot ? 'Hot weather outside' : windy ? 'Windy weather outside' : 'Weather for your next break',
-        body: `${Number.isFinite(hour.temp_c) ? `${Math.round(hour.temp_c)}°C` : 'Temperature unavailable'}${Number.isFinite(hour.feels_c) ? `, feels like ${Math.round(hour.feels_c)}°C` : ''}${Number.isFinite(hour.precip_prob) ? `; ${Math.round(hour.precip_prob)}% chance of precipitation` : ''}.${rain ? ' Bring rain protection.' : ''}${stale ? ' This forecast is old; check current conditions.' : ''}`,
+        body: [Number.isFinite(hour.temp_c) ? `${Math.round(hour.temp_c)}°C` : 'No temperature', Number.isFinite(hour.feels_c) ? `feels ${Math.round(hour.feels_c)}°C` : null,
+          Number.isFinite(hour.precip_prob) ? `${Math.round(hour.precip_prob)}% rain` : null, rain ? 'bring an umbrella' : null, stale ? 'old forecast' : null].filter(Boolean).join(' · '),
         priority: stale ? 250 : rain || cold || hot || windy ? 760 : 330, starts_at: hour.at, state: weather.state || 'live', source_label: 'Cached weather forecast',
         reason: nextBlock ? 'Conditions around the next scheduled trip.' : 'Conditions around your current campus time.', evidence: `Forecast cached ${weather.observed_at ? new Date(weather.observed_at).toISOString() : 'at an unknown time'}.` }));
     }
@@ -291,7 +296,7 @@ export async function buildRecommendations(store, { now = Date.now(), freshnessN
   const [calendar, syllabi, saved, foodRaw, menu] = await Promise.all([
     buildCalendar(store, { start: shift(date, -1), days: 16, section, group, now: freshnessNow, includeSyllabus: false }), listCourseSyllabi(store),
     store.getSetting(ACTION_KEY), store.getSetting('FOOD_AI_RECOMMENDATION_JSON'),
-    store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: 100 }),
+    store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: MENU_ROW_LIMIT }),
   ]);
   return recommendationsFromData({ calendar, syllabi, actions: json(saved, {}), food: json(foodRaw, null), menu, weather, now, freshnessNow });
 }

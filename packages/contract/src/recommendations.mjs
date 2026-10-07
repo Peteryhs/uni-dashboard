@@ -1,6 +1,7 @@
 /** Backend-ranked, explainable recommendations shared by web and mobile clients. */
 import { z } from 'zod';
 import { EPOCH_MS } from './canonical.mjs';
+import { ChangeDetail } from './calendar-changes.mjs';
 
 export const RecommendationItem = z.object({
   id: z.string().min(1).max(240),
@@ -26,6 +27,8 @@ export const RecommendationItem = z.object({
   source_label: z.string(),
   state: z.enum(['live', 'ageing', 'stale', 'dead']),
   can_complete: z.boolean(),
+  /** Set on `change` items, and on `class` items whose session has a room or tutorial notice. */
+  change: ChangeDetail.nullable().default(null),
 });
 
 export const RecommendationResponse = z.object({
