@@ -29,6 +29,7 @@ import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidan
 import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
 import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oauth-callback.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
+import { buildHealth } from './health.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -283,23 +284,12 @@ async function handleFetch(request, env, ctx) {
   }
 
   if (path === '/v1/health/sources') {
-    const [last, jobs, snapshots] = [await store.lastRunPerSource(), await store.jobs(), await store.snapshotCount()];
-    return json({
-      now: Date.now(),
-      sources: readiness(enabledSources(SOURCES)).map((r) => {
-        const run = last.find((l) => l.source_id === r.id);
-        const job = jobs.find((j) => j.source_id === r.id);
-        return {
-          ...r,
-          last_run: run
-            ? { at: run.finished_at, outcome: run.outcome, http_status: run.http_status, rows: run.rows_written, bytes: run.bytes, error: run.error, meta: run.meta }
-            : null,
-          age_s: run ? Math.round((Date.now() - run.finished_at) / 1000) : null,
-          job: job ? { next_due_at: job.next_due_at, circuit: job.circuit_state, failures: job.consecutive_failures } : null,
-        };
-      }),
-      snapshots,
-    });
+    if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
+    const now = Date.now();
+    return json(await buildHealth(store, { sources: SOURCES, now, runtime: {
+      target: 'cloudflare', uptime_s: Math.round((now - STARTED_AT) / 1000),
+      uptime_scope: 'isolate', polling: 'scheduled',
+    } }));
   }
 
   if (path.startsWith('/v1/snapshot/')) {

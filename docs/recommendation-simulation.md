@@ -10,8 +10,10 @@ The fixture uses invented courses, tasks, a room, and a menu. It does not contai
 | Wednesday 14:05 | MATH 117 is happening now | Class takes priority; ECE 198 office hours appear because they precede the design project's deadline. |
 | Wednesday 20:00 | ECE 150 Quiz 2 due at 23:59 | The evening deadline takes priority, followed by tomorrow's assignment and a study window. |
 | Saturday 10:00 | Begin the ECE 198 design project | The larger project remains useful before Monday's deadline, even without weekend classes. |
+| Tuesday 21:00 | Friday room change deferred | The change remains in the calendar and diagnostics explain that the reminder opens Thursday at 09:00. Its before/after room values stay structured. |
+| Thursday 09:00 | Friday room change shown | The notice enters daily guidance at the 24-hour boundary, with the room change still available as structured detail. |
 
-The same fixture exercises urgent deadlines and ongoing exams ahead of lunch; completion, undo, and expiring snooze; a changed due date; overlapping commitments; failed and old feeds; old menus; date-only assessments; missing weather measurements; weekly syllabus ranges; and two similarly named quizzes. Twelve recommendation tests cover these behaviors.
+The same fixture exercises urgent deadlines and ongoing exams ahead of lunch; completion, undo, and expiring snooze; a changed due date; overlapping commitments; failed and old feeds; old menus; date-only assessments; missing weather measurements; weekly syllabus ranges; and two similarly named quizzes. It also checks that small tasks enter the daily feed two days before their due time while larger work appears earlier. Recommendation tests cover these behaviors and backwards compatibility when clients omit diagnostics.
 
 ## What the engine can know
 

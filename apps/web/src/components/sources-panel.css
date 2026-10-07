@@ -1,0 +1,115 @@
+.service-status {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  color: #f5f6f7;
+}
+
+.service-status-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.service-status-heading > div { min-width: 0; }
+.service-status-heading h3 { margin: 0; color: #f5f6f7; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.service-status-heading p,
+.service-status-note,
+.service-status-result {
+  margin: 3px 0 0;
+  color: #aeb4bc;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.service-status-heading > .section-control { flex: none; }
+.service-status-list { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+
+.service-source {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  min-height: 56px;
+  padding: 0;
+}
+
+.service-source-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto) minmax(150px, 190px) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+}
+
+.service-source-name { min-width: 0; color: #f0f2f5; font-size: 13px; font-weight: 560; overflow-wrap: anywhere; }
+.service-source-state { color: #b7bec8; font-size: 13px; font-weight: 550; white-space: nowrap; }
+.service-source-state.is-healthy { color: #a8d8c4; }
+.service-source-state.is-failing { color: #f2a4a8; }
+.service-source-state.is-blocked,
+.service-source-state.is-stale,
+.service-source-state.is-dead,
+.service-source-state.is-partial { color: #e7c78d; }
+.service-source-state.is-unknown,
+.service-source-state.is-shared,
+.service-source-state.is-unused { color: #aeb4bc; }
+.service-source-age { min-width: 0; color: #aeb4bc; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+
+.service-source-details { min-width: 0; }
+.service-source-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.service-source-details > summary::-webkit-details-marker { display: none; }
+.service-source-detail-hint { color: #c6ccd4; font-size: 12px; text-align: right; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.service-status-technical > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  color: #c6ccd4;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.service-source-detail-copy { display: grid; gap: 4px; padding: 2px 0 4px; }
+.service-source-detail-copy p { margin: 0; color: #aeb4bc; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.service-source-detail-copy .service-source-error { color: #f2a4a8; }
+.service-source-detail-copy button { width: fit-content; min-height: 34px; padding: 0; color: #d6deea; font-size: 12px; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+
+.service-status-note { margin: 0; }
+.service-status-result { color: #d2d7de; }
+
+.service-status-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 20px;
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.service-status-runtime > div { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font-size: 12px; line-height: 1.5; }
+.service-status-runtime dt { color: #aeb4bc; }
+.service-status-runtime dd { min-width: 0; margin: 0; color: #e0e3e7; overflow-wrap: anywhere; }
+.service-status-technical { margin-top: 2px; }
+.service-status-technical dl { display: grid; gap: 3px; margin: 2px 0 0; }
+.service-status-technical dl > div { display: flex; flex-wrap: wrap; gap: 5px; font-size: 12px; line-height: 1.5; }
+.service-status-technical dt { color: #aeb4bc; }
+.service-status-technical dd { min-width: 0; margin: 0; color: #e0e3e7; overflow-wrap: anywhere; }
+
+.service-status :is(button, summary):focus-visible { outline: 2px solid #78adff; outline-offset: 3px; }
+
+@media (max-width: 520px) {
+  .service-status { gap: 8px; }
+  .service-status-heading { align-items: flex-start; flex-wrap: wrap; gap: 6px 12px; }
+  .service-source-summary { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 8px; min-height: 56px; }
+  .service-source-age { grid-column: 1; grid-row: 2; text-align: left; font-size: 12px; }
+  .service-source-detail-hint { grid-column: 2; grid-row: 2; }
+  .service-status-technical > summary { min-height: 44px; }
+  .service-source-detail-copy button { min-height: 44px; }
+  .service-status-runtime { gap: 6px 14px; }
+}

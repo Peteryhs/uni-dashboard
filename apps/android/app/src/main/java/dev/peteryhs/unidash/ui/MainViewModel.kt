@@ -94,6 +94,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Status is useful even when one of the dashboard feeds is temporarily unavailable. */
+    fun refreshHealth() {
+        viewModelScope.launch { app.repository.refreshHealth() }
+    }
+
     /**
      * Polls while the app is on screen. The Worker's cron runs once a minute, so asking more often
      * than the server suggests (refresh_after_ms, 60 s today) would only re-read the same data.

@@ -394,6 +394,12 @@ test('saved feed settings survive separate Worker requests without environment c
   const health = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
   assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').ready, true);
   assert.equal(health.sources.find((source) => source.id === 'uw-learn-ics').ready, true);
+  assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').condition, 'unknown', 'configured does not mean successfully checked');
+  assert.equal(health.runtime.target, 'cloudflare');
+  assert.equal(health.runtime.uptime_scope, 'isolate', 'instance age must not claim service uptime');
+  assert.equal(health.runtime.polling, 'scheduled');
+  assert.ok(health.sources.some(source => source.id === 'open-meteo'), 'weather participates in shared monitoring');
+  assert.ok(health.summary.unchecked > 0);
 });
 
 test('Worker setup state persists in D1 and requires a new sync after replacing a feed', async (t) => {

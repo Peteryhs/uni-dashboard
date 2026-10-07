@@ -31,6 +31,38 @@ export const RecommendationItem = z.object({
   change: ChangeDetail.nullable().default(null),
 });
 
+/** A trace of actual server decisions, without source URLs or raw imported descriptions. */
+export const RecommendationDiagnostics = z.object({
+  version: z.literal(1),
+  policy: z.object({
+    schedule_notice_hours: z.number().int().positive(),
+    deadline_change_hours: z.number().int().positive(),
+    tutorial_work_notice_hours: z.number().int().positive().default(72),
+    task_horizon_days: z.number().int().positive(),
+    small_task_feed_days: z.number().int().positive(),
+    max_feed_items: z.number().int().positive(),
+  }),
+  summary: z.object({ shown: z.number().int().nonnegative(), deferred: z.number().int().nonnegative(), suppressed: z.number().int().nonnegative() }),
+  candidates: z.array(z.object({
+    id: z.string(),
+    kind: RecommendationItem.shape.kind,
+    title: z.string(),
+    course: z.string().nullable(),
+    starts_at: EPOCH_MS.nullable(),
+    due_at: EPOCH_MS.nullable(),
+    scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+    priority: z.number(),
+    status: z.enum(['shown', 'deferred', 'suppressed']),
+    reason: z.string(),
+    eligible_at: EPOCH_MS.nullable(),
+    position: z.number().int().positive().nullable(),
+    course_penalty: z.number().int().nonnegative(),
+    ranking_score: z.number().nullable(),
+    /** Keep structured before/after details available for deferred and capped changes. */
+    change: ChangeDetail.nullable().default(null),
+  })),
+});
+
 export const RecommendationResponse = z.object({
   schema_version: z.literal(1),
   generated_at: EPOCH_MS,
@@ -40,6 +72,7 @@ export const RecommendationResponse = z.object({
   items: z.array(RecommendationItem),
   tasks: z.object({ large: z.array(RecommendationItem), small: z.array(RecommendationItem) }),
   warnings: z.array(z.string()),
+  diagnostics: RecommendationDiagnostics.optional(),
 });
 
 export function validateRecommendations(value) { return RecommendationResponse.parse(value); }

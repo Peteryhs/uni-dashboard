@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { recommendationsFromData, buildRecommendations, rankRecommendationItems, saveRecommendationAction } from '../apps/relay/src/recommendations.mjs';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
+import { validateRecommendations } from '#contract/recommendations.mjs';
 import { at, DATE, syntheticDay } from './helpers/recommendation-day.mjs';
 
 test('day simulation adapts from class preparation to lunch and evening deadline', () => {
@@ -197,6 +198,116 @@ test('similar non-urgent work rotates courses while urgent priority is preserved
   assert.deepEqual(ranked.map(item => item.id), ['a', 'c', 'b']);
   const urgent = rankRecommendationItems([task('a', 'ECE 150', 1030), task('b', 'ECE 150', 1030), task('c', 'MATH 117', 1010)]);
   assert.deepEqual(urgent.map(item => item.id), ['a', 'b', 'c']);
+});
+
+test('Friday room changes wait until the day before and retain their before/after detail', () => {
+  const data = syntheticDay();
+  const friday = at('2026-09-25', '09:00');
+  data.calendar.days[0].events.push({ id: 'friday-room-class', uid: 'ece150-friday-series', source_id: 'uw-portal-ics', category: 'class',
+    title: 'ECE 150 lecture', course: 'ECE 150', starts_at: friday, ends_at: friday + 60 * 60_000, location: 'RCH 101', state: 'live', source_label: 'Schedule', links: [] });
+  data.calendar.alerts = [{ id: 'friday-room-change', event_id: 'friday-room-class', kind: 'room', title: 'ECE 150: Room changed',
+    body: 'ECE 150 lecture · E7 2409 → RCH 101', course: 'ECE 150', starts_at: friday, ends_at: friday + 60 * 60_000,
+    observed_at: at('2026-09-22', '19:00'), location: 'RCH 101', previous_location: 'E7 2409', previous_at: null, current_at: null,
+    all_day: false, url: 'https://example.edu/calendar', confidence: 'confirmed', evidence: 'Compared two successfully parsed calendar snapshots.',
+    source_label: 'Schedule', state: 'live' }];
+
+  const tuesday = recommendationsFromData({ ...data, now: at('2026-09-22', '21:00') });
+  const roomDecision = tuesday.diagnostics.candidates.find(candidate => candidate.kind === 'change' && candidate.title === 'ECE 150: Room changed');
+  assert.equal(roomDecision.status, 'deferred');
+  assert.equal(roomDecision.eligible_at, at('2026-09-24', '09:00'));
+  assert.equal(roomDecision.change.previous_location, 'E7 2409');
+  assert.equal(roomDecision.change.location, 'RCH 101');
+  assert.ok(!tuesday.items.some(candidate => candidate.kind === 'change' && candidate.title === 'ECE 150: Room changed'));
+
+  const before = recommendationsFromData({ ...data, now: at('2026-09-24', '08:59') });
+  assert.equal(before.diagnostics.candidates.find(candidate => candidate.kind === 'change').status, 'deferred');
+  const eligible = recommendationsFromData({ ...data, now: at('2026-09-24', '09:00') });
+  const change = eligible.items.find(candidate => candidate.kind === 'change');
+  assert.ok(change, 'the reminder enters daily suggestions exactly 24 hours before class');
+  assert.equal(change.change.previous_location, 'E7 2409');
+  assert.equal(change.change.location, 'RCH 101');
+  assert.equal(eligible.diagnostics.candidates.find(candidate => candidate.kind === 'change').status, 'shown');
+
+  const oldClientPayload = { ...eligible };
+  delete oldClientPayload.diagnostics;
+  assert.doesNotThrow(() => validateRecommendations(oldClientPayload), 'older payloads remain valid without diagnostics');
+  const cachedOldDiagnostics = structuredClone(eligible);
+  delete cachedOldDiagnostics.diagnostics.policy.tutorial_work_notice_hours;
+  const oldRoomCandidate = cachedOldDiagnostics.diagnostics.candidates.find(candidate => candidate.kind === 'change');
+  delete oldRoomCandidate.change;
+  const upgradedDiagnostics = validateRecommendations(cachedOldDiagnostics).diagnostics;
+  assert.equal(upgradedDiagnostics.policy.tutorial_work_notice_hours, 72, 'old cached diagnostics receive the policy default');
+  assert.equal(upgradedDiagnostics.candidates.find(candidate => candidate.kind === 'change').change, null, 'old cached candidates receive the optional detail default');
+});
+
+test('small tasks enter the daily feed two days before due while larger work appears earlier', () => {
+  const data = syntheticDay();
+  const due = at('2026-09-28', '18:00');
+  data.calendar.days[0].events.push({ id: 'survey', category: 'deadline', title: 'ECE 150 - Course survey - Due', course: 'ECE 150',
+    starts_at: due, ends_at: due, due_at: due, all_day: false, state: 'live', source_label: 'LEARN', links: [] });
+
+  const early = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
+  const survey = early.diagnostics.candidates.find(candidate => candidate.kind === 'task' && candidate.title.includes('Course survey'));
+  assert.equal(survey.status, 'deferred');
+  assert.equal(survey.eligible_at, at('2026-09-26', '18:00'));
+  assert.ok(early.tasks.small.some(task => task.title.includes('Course survey')), 'the task remains available in the task list');
+  assert.ok(!early.items.some(candidate => candidate.kind === 'task' && candidate.title.includes('Course survey')));
+  assert.ok(early.items.some(candidate => candidate.kind === 'task' && candidate.title.includes('Design project')), 'larger work can surface several days ahead');
+
+  const atWindow = recommendationsFromData({ ...data, now: at('2026-09-26', '18:00') });
+  assert.ok(atWindow.items.some(candidate => candidate.kind === 'task' && candidate.title.includes('Course survey')));
+  assert.equal(atWindow.diagnostics.candidates.find(candidate => candidate.kind === 'task' && candidate.title.includes('Course survey')).status, 'shown');
+});
+
+test('date-only task diagnostics retain the scheduled day without inventing a timestamp', () => {
+  const data = syntheticDay();
+  const quiz = data.syllabi[0].entries.find(entry => entry.kind === 'assessment');
+  data.syllabi[0].entries.push({ ...quiz, id: 'quiz4', title: 'Quiz 4', due_at: null, start_date: '2026-09-26', end_date: '2026-09-26' });
+  const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
+  const task = feed.tasks.small.find(item => item.title.includes('Quiz 4'));
+  const candidate = feed.diagnostics.candidates.find(item => item.kind === 'task' && item.title.includes('Quiz 4'));
+  assert.equal(task.due_at, null);
+  assert.equal(task.starts_at, null);
+  assert.equal(task.scheduled_date, '2026-09-26');
+  assert.equal(candidate.due_at, null);
+  assert.equal(candidate.starts_at, null);
+  assert.equal(candidate.scheduled_date, '2026-09-26');
+
+  const olderCandidate = structuredClone(candidate);
+  delete olderCandidate.scheduled_date;
+  const parsed = validateRecommendations({ ...feed, diagnostics: { ...feed.diagnostics, candidates: feed.diagnostics.candidates.map(item => item.id === candidate.id ? olderCandidate : item) } });
+  assert.equal(parsed.diagnostics.candidates.find(item => item.id === candidate.id).scheduled_date, null, 'older cached diagnostics default the new date field');
+});
+
+test('deadline changes enter within 72 hours and capped suggestions remain explainable', () => {
+  const data = syntheticDay();
+  const deadline = at('2026-09-25', '18:00');
+  data.calendar.days[0].events.push({ id: 'friday-assignment', category: 'deadline', title: 'ECE 150 - Assignment 4 - Due', course: 'ECE 150',
+    starts_at: deadline, ends_at: deadline, due_at: deadline, all_day: false, state: 'live', source_label: 'LEARN', links: [] });
+  data.calendar.alerts = [{ id: 'assignment-time-change', event_id: 'friday-assignment', kind: 'deadline', title: 'ECE 150: Deadline changed',
+    body: 'Assignment due time changed', course: 'ECE 150', starts_at: deadline, ends_at: deadline, observed_at: at('2026-09-22', '12:00'),
+    location: '', previous_location: '', previous_at: null, current_at: deadline, all_day: false, url: null, confidence: 'confirmed',
+    evidence: 'Compared two successfully parsed calendar snapshots.', source_label: 'LEARN', state: 'live' }];
+
+  const oneMinuteEarly = recommendationsFromData({ ...data, now: at('2026-09-22', '17:59') });
+  const earlyChange = oneMinuteEarly.diagnostics.candidates.find(candidate => candidate.kind === 'change');
+  assert.equal(earlyChange.status, 'deferred');
+  assert.equal(earlyChange.eligible_at, at('2026-09-22', '18:00'));
+  const atWindow = recommendationsFromData({ ...data, now: at('2026-09-22', '18:00') });
+  assert.equal(atWindow.diagnostics.candidates.find(candidate => candidate.kind === 'change').status, 'shown');
+
+  const crowded = syntheticDay();
+  crowded.calendar.alerts = Array.from({ length: 20 }, (_, index) => ({ id: `urgent-room-${index}`, event_id: null, kind: 'room',
+    title: `ECE ${150 + index}: Room changed`, body: 'Room changed', course: `ECE ${150 + index}`, starts_at: at(DATE, '10:00'),
+    ends_at: at(DATE, '11:00'), observed_at: at(DATE, '08:00'), location: `RCH ${index}`, previous_location: `E7 ${index}`,
+    previous_at: null, current_at: null, all_day: false, url: null, confidence: 'confirmed', evidence: 'Synthetic change.', source_label: 'Schedule', state: 'live' }));
+  const feed = recommendationsFromData({ ...crowded, now: at(DATE, '08:00') });
+  assert.equal(feed.items.length, 16);
+  const belowLimit = feed.diagnostics.candidates.find(candidate => candidate.kind === 'change' && candidate.position > 16);
+  assert.equal(belowLimit.status, 'deferred');
+  assert.match(belowLimit.reason, /daily guidance limit/);
+  assert.equal(feed.diagnostics.summary.shown, 16);
+  assert.ok(feed.diagnostics.summary.deferred >= 4);
 });
 
 test('backend engine builds from persisted facts with no network and a bounded number of reads', async () => {

@@ -26,6 +26,52 @@ class ScheduleChangesTest {
         assertTrue(NotificationPlanner.changesToShow(calendar(alerts = listOf(change.copy(endsAt = now - 1))), emptySet(), now).isEmpty())
     }
 
+    @Test fun `room change notice starts 24 hours before a Friday class`() {
+        val fridayAt = now + 73 * 3_600_000L // Tuesday 8 a.m. to Friday 9 a.m.
+        val fridayEvent = event.copy(startsAt = fridayAt, endsAt = fridayAt + 3_600_000L)
+        val fridayChange = change.copy(startsAt = fridayAt, endsAt = fridayAt + 3_600_000L)
+        val source = calendar(events = listOf(fridayEvent), alerts = listOf(fridayChange))
+
+        assertTrue(NotificationPlanner.changesToShow(source, emptySet(), now).isEmpty())
+        assertTrue(NotificationPlanner.changesToShow(source, emptySet(), fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS - 1).isEmpty())
+        assertEquals(listOf(fridayChange), NotificationPlanner.changesToShow(source, emptySet(), fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS))
+    }
+
+    @Test fun `deadline moved far away still uses its earlier old time for the notice`() {
+        val previousAt = now + 12 * 3_600_000L
+        val movedTo = now + 7 * 24 * 3_600_000L
+        val deadlineEvent = event.copy(category = "deadline", startsAt = movedTo, endsAt = movedTo)
+        val deadlineChange = change.copy(
+            kind = "deadline",
+            startsAt = movedTo,
+            endsAt = movedTo + 3_600_000L,
+            previousAt = previousAt,
+            currentAt = movedTo,
+        )
+
+        assertEquals(
+            listOf(deadlineChange),
+            NotificationPlanner.changesToShow(calendar(events = listOf(deadlineEvent), alerts = listOf(deadlineChange)), emptySet(), now),
+        )
+    }
+
+    @Test fun `separate deadline edits from one poll keep their own notifications`() {
+        val movedTo = now + 7 * 24 * 3_600_000L
+        val firstEvent = event.copy(id = "deadline-one", occurrenceId = "deadline-one", category = "deadline", startsAt = movedTo, endsAt = movedTo)
+        val secondEvent = event.copy(id = "deadline-two", occurrenceId = "deadline-two", category = "deadline", startsAt = movedTo, endsAt = movedTo)
+        val firstChange = change.copy(id = "deadline-change-one", eventId = firstEvent.id, kind = "deadline", startsAt = movedTo, endsAt = movedTo + 3_600_000L, previousAt = now + 12 * 3_600_000L, currentAt = movedTo)
+        val secondChange = change.copy(id = "deadline-change-two", eventId = secondEvent.id, kind = "deadline", startsAt = movedTo, endsAt = movedTo + 3_600_000L, previousAt = now + 18 * 3_600_000L, currentAt = movedTo)
+
+        assertEquals(
+            listOf(firstChange, secondChange),
+            NotificationPlanner.changesToShow(
+                calendar(events = listOf(firstEvent, secondEvent), alerts = listOf(firstChange, secondChange)),
+                emptySet(),
+                now,
+            ),
+        )
+    }
+
     @Test fun `room warning is carried into the class reminder`() {
         val reminder = NotificationPlanner.plan(calendar(), now).single()
         assertTrue(reminder.text.endsWith(" · E7 2409 → RCH 101 ?"))

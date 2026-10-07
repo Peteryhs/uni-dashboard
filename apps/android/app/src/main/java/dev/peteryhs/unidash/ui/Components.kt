@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +41,7 @@ import androidx.graphics.shapes.RoundedPolygon
 import dev.peteryhs.unidash.data.CardState
 import dev.peteryhs.unidash.data.RelayError
 import dev.peteryhs.unidash.data.Snapshot
+import dev.peteryhs.unidash.data.summaryAt
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import dev.peteryhs.unidash.ui.theme.Spacing
 import kotlinx.coroutines.delay
@@ -83,27 +85,44 @@ fun FreshnessLabel(state: CardState, observedAt: Long?, now: Long, modifier: Mod
  * web's alert slot, so its appearance means something.
  */
 @Composable
-fun ConnectionBanner(snapshot: Snapshot, now: Long) {
+fun ConnectionBanner(snapshot: Snapshot, now: Long, onStatus: (() -> Unit)? = null) {
     val error = snapshot.error
+    val healthError = snapshot.healthError
+    val healthSummary = snapshot.health?.summaryAt(now)
+    val feedWarning = error?.let { MainViewModel.describe(it) }
+    val healthWarning = when {
+        healthError != null -> "Source status could not be checked."
+        healthSummary?.condition == "attention" -> healthSummary.warning ?: "Some sources need attention."
+        healthSummary?.condition == "unknown" -> healthSummary.warning ?: "Some sources have not been checked successfully."
+        else -> null
+    }
+    val warning = feedWarning ?: healthWarning
+    val failure = error ?: healthError
     val stale = LocalStaleColors.current
     AnimatedVisibility(
-        visible = error != null && !snapshot.refreshing,
+        visible = warning != null && !snapshot.refreshing,
         enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
             fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
         exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
             fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
     ) {
-        val auth = error is RelayError.Unauthorized || error is RelayError.NotConfigured
+        val auth = failure is RelayError.Unauthorized || failure is RelayError.NotConfigured || failure is RelayError.ReauthRequired
         val (bg, fg) = if (auth) MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
         else stale.container to stale.onContainer
-        val since = snapshot.fetchedAt?.let { " Showing data from ${Format.time(it)}" } ?: ""
+        val since = if (error != null) snapshot.fetchedAt?.let { " Showing data from ${Format.time(it)}" } ?: "" else ""
         Row(
             Modifier.fillMaxWidth().background(bg).padding(horizontal = Spacing.m, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.s),
         ) {
-            Icon(if (auth) Icons.Outlined.Key else Icons.Outlined.CloudOff, contentDescription = null, tint = fg)
-            Text(MainViewModel.describe(error ?: return@Row) + since, color = fg, style = MaterialTheme.typography.bodyMedium)
+            val icon = when {
+                auth -> Icons.Outlined.Key
+                error is RelayError.Offline || healthError is RelayError.Offline -> Icons.Outlined.CloudOff
+                else -> Icons.Outlined.History
+            }
+            Icon(icon, contentDescription = null, tint = fg)
+            Text(warning.orEmpty() + since, color = fg, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            onStatus?.let { TextButton(onClick = it) { Text("Status", color = fg) } }
         }
     }
 }
@@ -135,7 +154,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier.padding(start = Spacing.m, end = Spacing.m, top = Spacing.l, bottom = Spacing.s),
     )
 }

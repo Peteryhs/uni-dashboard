@@ -18,6 +18,10 @@
 .day-context { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 19px; min-height: 37px; margin: 0 0 18px; color: #c6cbd2; font-size: 13px; }
 .day-context > span:first-child { color: #f0f1f3; font-weight: 550; }
 .day-context-actions { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+.context-date-short { display: none; }
+.top-status.has-warning { color: #e7bc7e; }
+.top-status.has-warning:hover { color: #f5d39e; }
+.top-status.has-warning .status-count { display: inline; font-variant-numeric: tabular-nums; }
 .context-alert { color: #edc9ad; font-size: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .status-unknown { color: #e8bd86; font-size: inherit; }
 .alert-detail { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px 22px; margin: 0 0 15px; padding: 15px 18px; border: 1px solid #765d55; border-radius: 11px; background: #332b2a; color: #f1d8ce; font-size: 12px; }
@@ -102,9 +106,6 @@
 .rec-evidence { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--dash-line); color: #aeb5bf; font-size: 12px; }
 .rec-evidence summary { cursor: pointer; }
 .rec-evidence p { margin: 9px 0 0; font-size: 12px; }
-.warning-strip { margin-top: 14px; padding: 8px 12px; border: 1px solid #665b43; border-radius: 8px; background: #302e27; color: #e6d2a3; font-size: 12px; }
-.warning-strip summary { cursor: pointer; }
-.warning-strip ul { margin: 11px 0 0; padding-left: 20px; }
 .data-note { margin: 10px 0 0; color: #959da7; font-size: 11px; }
 .action-error { color: #ffbbb3; font-size: 13px; }
 .inline-link { color: #fff; text-decoration: underline; }
@@ -292,7 +293,10 @@
   .dashboard-app { --dash-section-gap: 44px; --dash-row-height: 48px; }
   .dashboard-frame { width: min(100% - 28px, 1040px); padding-bottom: 70px; }
   .today-content { padding-top: 27px; }
-  .day-context { column-gap: 10px; font-size: 12px; }
+  .day-context { column-gap: 6px; row-gap: 4px; font-size: 12px; }
+  .context-date-long { display: none; }
+  .context-date-short { display: inline; }
+  .day-context-actions { gap: 4px; }
   .top-refresh, .top-settings { min-width: 44px; min-height: 44px; }
   .top-settings { justify-content: center; padding: 0; }
   .top-refresh.has-status { min-width: 44px; }
@@ -312,9 +316,6 @@
   .close-detail, .menu-outlet-head button { min-width: 44px; min-height: 44px; }
   .solid-action, .quiet-action, .section-control, .context-control, .menu-controls input, .menu-day-select button, .term-work > summary, .dining-directory summary, .rec-evidence summary, .course-manage { min-height: 44px; }
   .course-manage { margin-top: 4px; }
-  .warning-strip { padding: 0 12px; }
-  .warning-strip summary { min-height: 44px; padding: 12px 0; }
-  .warning-strip ul { margin-bottom: 12px; }
   .calendar-event-actions a, .calendar-event-actions button, .work-item-detail a, .work-item-detail button { display: inline-flex; align-items: center; min-height: 44px; }
   .section-head { align-items: center; flex-wrap: wrap; gap: 8px 12px; }
   .section-head > p { text-align: left; }
@@ -360,7 +361,6 @@
   .work-item > summary svg { grid-column: 4; grid-row: 1; }
   .work-item-detail { padding-left: 0; }
   .settings-tabs svg { display: none; }
-  .settings-tabs button { padding-inline: 2px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .menu-day-select::after, .menu-day-select button { transition: none; }
@@ -396,6 +396,11 @@
 .menu-station-head svg { flex: none; color: var(--live); }
 .menu-station-head small { margin-left: auto; color: #8f97a1; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .menu-dish-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.menu-dish-heading { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.menu-outlet li .menu-dish-title { display: block; flex: 1; min-width: 0; }
+.menu-diet-icons { display: inline-flex; align-items: center; flex: none; flex-wrap: wrap; max-width: 40%; gap: 5px; margin-top: 2px; }
+.diet-icon { display: inline-flex; flex: none; color: #b9e6d0; cursor: help; }
+.diet-label { color: #b9e6d0; font-size: 11px; font-weight: 500; }
 .diet-chip { display: inline-block; min-width: 22px; padding: 0 5px; border: 1px solid #4b5059; border-radius: 4px; color: #b9e6d0; font-size: 10px; font-weight: 650; line-height: 16px; text-align: center; text-decoration: none; cursor: help; }
 .diet-chip--allergen { color: #ffd0b5; text-transform: capitalize; }
 @media (max-width: 560px) {

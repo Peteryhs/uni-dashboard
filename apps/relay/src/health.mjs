@@ -1,0 +1,49 @@
+import { readiness, dedupeGoogleSources } from '#sources/registry.mjs';
+import { sourceCondition, healthSummary } from '#contract/source-health.mjs';
+
+const NAMES = {
+  'uw-food-daily-menu': 'Dining menu', 'uw-portal-ics': 'Portal schedule',
+  'google-calendar-ics': 'Google Calendar', 'uw-learn-ics': 'LEARN deadlines',
+  'uw-status': 'Campus services', 'user-office-hours': 'Office hours',
+};
+
+function publicRun(run) {
+  return run ? { at: run.finished_at, outcome: run.outcome, http_status: run.http_status ?? null,
+    rows: run.rows_written ?? 0, bytes: run.bytes ?? 0, error: run.error || '', meta: run.meta ?? {} } : null;
+}
+
+/** Shared by local and Worker routes, so the clients see the same status policy. */
+export async function buildHealth(store, { sources, now = Date.now(), runtime } = {}) {
+  const [last, jobs, snapshots, successful, weatherRaw] = await Promise.all([
+    store.lastRunPerSource(), store.jobs(), store.snapshotCount(), store.lastSuccessfulRunPerSource(),
+    store.getSetting('WEATHER_FORECAST_JSON'),
+  ]);
+  const available = readiness(sources.filter(source => !source.disabled));
+  const uniqueIds = new Set(dedupeGoogleSources(sources.filter(source => !source.disabled)).map(source => source.id));
+  const alternateScheduleReady = available.some(source => ['uw-portal-ics', 'google-calendar-ics'].includes(source.id) && source.ready);
+  const result = available.map(source => {
+    const run = last.find(row => row.source_id === source.id);
+    const success = successful.find(row => row.source_id === source.id);
+    const job = jobs.find(row => row.source_id === source.id);
+    const alternate = ['uw-portal-ics', 'google-calendar-ics'].includes(source.id) && !source.ready && alternateScheduleReady;
+    const value = { ...source, name: NAMES[source.id] ?? source.id,
+      monitored: uniqueIds.has(source.id) && !alternate && !(source.optional && !source.ready), last_run: publicRun(run),
+      last_success_at: success?.finished_at ?? null,
+      age_s: success ? Math.max(0, Math.round((now - success.finished_at) / 1000)) : null,
+      job: job ? { next_due_at: job.next_due_at, circuit: job.circuit_state, failures: job.consecutive_failures } : null };
+    return { ...value, condition: sourceCondition(value, now) };
+  });
+  let weather;
+  try { weather = weatherRaw ? JSON.parse(weatherRaw) : null; } catch { weather = null; }
+  const validWeather = Boolean(weather?.forecast?.length && Number.isFinite(weather.observed_at));
+  const attempt = Number.isFinite(weather?.attempted_at) ? weather.attempted_at : null;
+  const weatherSource = { id: 'open-meteo', name: 'Weather', role: 'weather', shape: 'weather', cadence_ms: 30 * 60_000,
+    stale_after_ms: 60 * 60_000, dead_after_ms: 180 * 60_000,
+    needs_secret: false, optional: false, env_var: null, ready: true, blocked_by: '', monitored: true,
+    last_success_at: validWeather ? weather.observed_at : null,
+    last_run: attempt == null ? null : { at: attempt, outcome: weather.error ? 'failed' : validWeather ? 'ok' : 'skipped',
+      http_status: null, rows: validWeather ? weather.forecast.length : 0, bytes: 0, error: weather.error || '', meta: {} },
+    age_s: validWeather ? Math.max(0, Math.round((now - weather.observed_at) / 1000)) : null, job: null };
+  result.push({ ...weatherSource, condition: sourceCondition(weatherSource, now) });
+  return { now, sources: result, snapshots, runtime, summary: healthSummary(result, now) };
+}

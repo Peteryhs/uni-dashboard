@@ -4,10 +4,9 @@
  */
 .change-blocks { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; vertical-align: middle; }
 .change-row { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.change-icon { flex: none; color: #b9a8ff; }
 .change-block { display: inline-block; max-width: 22ch; overflow: hidden; padding: 2px 7px; border: 1px solid #4b4f57; border-radius: 6px; font-size: 11px; font-weight: 560; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .change-block--before { color: #a3aab3; background: #2c3036; text-decoration: line-through; text-decoration-color: #6d737c; }
 .change-block--after { color: #ece7ff; background: color-mix(in oklch, #8b74ff 22%, transparent); border-color: #6c5bd0; }
 .change-block--gone { color: #ffc2c2; background: color-mix(in oklch, #ff5c5c 16%, transparent); border-color: #8a4646; }
 .change-arrow { flex: none; color: #9ca5b0; }
-.change-check { display: inline-grid; place-items: center; color: #b9a8ff; }
+.change-confidence { color: #b8b2ca; font-size: 11px; line-height: 1.5; }

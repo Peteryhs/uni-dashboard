@@ -18,7 +18,7 @@ The personalization engine now considers room changes, unusual rooms, changed ti
 
 `/v1/calendar` adds `alerts` and each event's `attendance` (`scheduled`, `check_instructions`, `replaced`). Defaults preserve compatibility with older cached responses. Recommendations use the new `change` kind. No AI or upstream network request happens while reading either endpoint.
 
-Android has a separate **Schedule changes** notification channel. Fresh changes affecting the next 48 hours are deduplicated by stable IDs; a whole recurring series moving in one poll is coalesced. Room and tutorial warnings are carried into the class reminder. Disabled notifications are not recorded as delivered, and a user-disabled channel stays disabled. Replaced or stale events do not schedule precise attendance alarms.
+Android has a separate **Schedule changes** notification channel. Fresh room, time and cancellation notices enter within 24 hours; deadline edits and actionable tutorial work use 72 hours. Time and deadline edits consider the earlier of the previous and current time, so postponing an imminent deadline does not hide its notice. Stable IDs deduplicate delivered notices; a whole recurring series moving in one poll is coalesced. Room and tutorial warnings are carried into the class reminder. The separate 48-hour alarm scheduling horizon is unchanged. Disabled notifications are not recorded as delivered, and a user-disabled channel stays disabled. Replaced or stale events do not schedule precise attendance alarms.
 
 ## Limits
 

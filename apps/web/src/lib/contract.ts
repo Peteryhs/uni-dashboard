@@ -69,6 +69,41 @@ export interface RecommendationResponse {
   items: RecommendationItem[];
   tasks: { large: RecommendationItem[]; small: RecommendationItem[] };
   warnings: string[];
+  /** Optional trace for the advanced ranking view; older cached responses do not carry it. */
+  diagnostics?: RecommendationDiagnostics;
+}
+
+export interface RecommendationDiagnostics {
+  version: 1;
+  policy: {
+    schedule_notice_hours: number;
+    deadline_change_hours: number;
+    tutorial_work_notice_hours?: number;
+    task_horizon_days: number;
+    small_task_feed_days: number;
+    max_feed_items: number;
+  };
+  summary: { shown: number; deferred: number; suppressed: number };
+  candidates: RecommendationCandidateDiagnostic[];
+}
+
+export interface RecommendationCandidateDiagnostic {
+  id: string;
+  kind: RecommendationItem['kind'];
+  title: string;
+  course: string | null;
+  starts_at: number | null;
+  due_at: number | null;
+  scheduled_date?: string | null;
+  priority: number;
+  status: 'shown' | 'deferred' | 'suppressed';
+  reason: string;
+  eligible_at: number | null;
+  /** Pre-cap rank. Null means this candidate was not ranked into the visible set. */
+  position: number | null;
+  course_penalty: number;
+  ranking_score: number | null;
+  change?: ChangeDetail | null;
 }
 
 export const validateRecommendations = validateRecommendationsJs as (value: unknown) => RecommendationResponse;
@@ -416,6 +451,12 @@ export interface AlertData {
 
 export interface SourceHealth {
   id: string;
+  name?: string;
+  monitored?: boolean;
+  condition?: string;
+  last_success_at?: number | null;
+  stale_after_ms?: number;
+  dead_after_ms?: number;
   role?: string;
   shape: string;
   cadence_ms: number;
@@ -441,4 +482,15 @@ export interface HealthResponse {
   now: number;
   sources: SourceHealth[];
   snapshots: number;
+  runtime?: { target: 'local' | 'cloudflare'; uptime_s: number; uptime_scope: 'process' | 'isolate'; polling: 'automatic' | 'manual' | 'scheduled' };
+  summary?: HealthSummary;
+}
+
+export interface HealthSummary {
+  condition: 'healthy' | 'attention' | 'unknown';
+  healthy: number;
+  total: number;
+  issues: number;
+  unchecked: number;
+  warning: string | null;
 }

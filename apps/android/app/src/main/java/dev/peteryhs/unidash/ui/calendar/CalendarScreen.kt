@@ -87,12 +87,12 @@ private enum class Filter(val label: String, val categories: Set<String>) {
 
 /** The server-built agenda from /v1/calendar, two weeks ahead, grouped by day. */
 @Composable
-fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState) {
+fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState, onStatus: (() -> Unit)? = null) {
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
     val calendar = snapshot.calendar
 
-    ScreenScaffold("Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh) {
+    ScreenScaffold("Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus) {
         item(key = "filters") {
             Row(Modifier.padding(horizontal = Spacing.m, vertical = Spacing.s), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
                 Filter.entries.forEach { f ->
@@ -206,13 +206,13 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
                     fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
                 exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
                     fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-            ) { EventDetails(ev, now) }
+            ) { EventDetails(ev, now, alerts) }
         }
     }
 }
 
 @Composable
-private fun EventDetails(ev: CalendarEvent, now: Long) {
+private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChangeAlert>) {
     val uri = LocalUriHandler.current
     var showEvidence by rememberSaveable(ev.occurrenceId) { mutableStateOf(false) }
     val description = ev.description.trim()
@@ -232,6 +232,14 @@ private fun EventDetails(ev: CalendarEvent, now: Long) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (ev.category == "opens" && ev.dueAt != null) DetailLine("Due", Format.dayTime(ev.dueAt))
         if (ev.location.isNotBlank()) DetailLine("Location", ev.location)
+        alerts.filterNot { it.detail.confirmed }.forEach { change ->
+            val note = if (change.detail.roomMoved) {
+                "This room change is inferred from the schedule pattern. Confirm it with the course source."
+            } else {
+                "This change needs confirmation. Check the course source before relying on it."
+            }
+            DetailLine("Confidence", note)
+        }
         if (scope.isNotBlank()) DetailLine("For", scope)
         if (subtitle != null) DetailLine("Details", subtitle)
         if (description.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {

@@ -55,6 +55,15 @@ function createMockD1(counter = { prepares: 0 }) {
 const now = Date.UTC(2026, 8, 21, 12);
 const MIN = 60_000;
 
+test('latest and successful receipts include sources without a scheduled job', async () => {
+  const store = new D1Store(createMockD1());
+  await store.init();
+  await store.insertRun({ source_id: 'receipt-only', started_at: now - MIN, finished_at: now - MIN, outcome: 'ok' });
+  await store.insertRun({ source_id: 'receipt-only', started_at: now, finished_at: now, outcome: 'failed' });
+  assert.equal((await store.lastRunPerSource()).find(run => run.source_id === 'receipt-only').outcome, 'failed');
+  assert.equal((await store.lastSuccessfulRunPerSource()).find(run => run.source_id === 'receipt-only').finished_at, now - MIN);
+});
+
 test('D1Store initializes schema and performs row upserts', async () => {
   const mockD1 = createMockD1();
   const store = new D1Store(mockD1);
@@ -300,7 +309,7 @@ test('snapshot retention keeps bodies referenced by recent run receipts', async 
   assert.equal(await store.hasSnapshot(unreferenced), false);
 });
 
-test('existing D1 databases gain receipt indexes and latest runs use scheduled sources', async () => {
+test('existing D1 databases gain receipt indexes and expose their latest runs', async () => {
   const db = createMockD1();
   const store = new D1Store(db);
   await store.init();

@@ -87,7 +87,7 @@ import kotlin.math.roundToInt
 private const val HOUR = 3_600_000L
 
 @Composable
-fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState) {
+fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState, onStatus: (() -> Unit)? = null) {
     val bundle = snapshot.bundle
     val alertCard = bundle?.card("alert")
     val alert = alertCard?.payload<Alert>()
@@ -96,10 +96,25 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
     val dueCard = bundle?.card("due_soon")
     val due = dueCard?.payload<DueSoon>()
     val recs = snapshot.recommendations
+    var showRecommendationExplanation by rememberSaveable { mutableStateOf(false) }
     val subtitle = LocalDate.now(dev.peteryhs.unidash.data.CAMPUS_ZONE)
         .format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.CANADA))
 
-    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh) {
+    if (showRecommendationExplanation) {
+        RecommendationExplanationScreen(
+            diagnostics = recs?.diagnostics,
+            warnings = recs?.warnings.orEmpty(),
+            snapshot = snapshot,
+            now = now,
+            snackbar = snackbar,
+            onBack = { showRecommendationExplanation = false },
+            onRefresh = vm::refresh,
+            onStatus = onStatus,
+        )
+        return
+    }
+
+    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus) {
         if (!snapshot.hasData) {
             item { EmptyNote(if (snapshot.refreshing) "Loading your dashboard…" else "Nothing loaded yet. Pull to refresh.") }
             return@ScreenScaffold
@@ -112,7 +127,9 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
         } else if (next != null) {
             item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
         }
-        recommendations(recs?.headline, recs?.items.orEmpty(), recs?.warnings.orEmpty(), now, vm)
+        recommendations(recs?.headline, recs?.items.orEmpty(), now, vm) {
+            showRecommendationExplanation = true
+        }
         if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now)
     }
 }
@@ -278,11 +295,21 @@ private fun IconText(icon: ImageVector, text: String, label: String? = null) {
     }
 }
 
-private fun LazyListScope.recommendations(headline: String?, items: List<Recommendation>, warnings: List<String>, now: Long, vm: MainViewModel) {
-    item(key = "recs-header") { SectionHeader(if (items.isEmpty()) "Focus" else "Focus · ${items.size}") }
-    if (items.isEmpty()) item(key = "recs-empty") { EmptyNote("Nothing needs you right now.") }
+private fun LazyListScope.recommendations(
+    headline: String?,
+    items: List<Recommendation>,
+    now: Long,
+    vm: MainViewModel,
+    onExplain: () -> Unit,
+) {
+    item(key = "recs-header") {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SectionHeader(if (items.isEmpty()) "Focus" else "Focus · ${items.size}", Modifier.weight(1f))
+            TextButton(onClick = onExplain, modifier = Modifier.padding(end = Spacing.xs)) { Text("How it works") }
+        }
+    }
+    if (items.isEmpty()) item(key = "recs-empty") { EmptyNote(headline?.takeIf { it.isNotBlank() } ?: "Nothing needs you right now.") }
     items(items, key = { "rec:${it.id}" }) { rec -> RecommendationCard(rec, now, vm, Modifier.animateItem()) }
-    warnings.forEach { w -> item { EmptyNote(w) } }
 }
 
 @Composable
@@ -329,6 +356,13 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                     if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     // A change is drawn as blocks; its sentence body would only repeat them.
                     rec.change?.let { ChangeBlocks(it, Modifier.padding(vertical = Spacing.xs)) }
+                    rec.change?.takeIf { !it.confirmed }?.let {
+                        Text(
+                            if (it.roomMoved) "Room change inferred · check the course source" else "Change needs confirmation · check the course source",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                     val repeatsTime = time != null && rec.timeLabel != null && rec.body.startsWith(rec.timeLabel) && rec.body.length < 48
                     if (rec.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
                         Text(rec.body, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)

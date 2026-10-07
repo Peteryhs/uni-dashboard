@@ -1,0 +1,192 @@
+.recommendation-insights {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  color: #f5f6f7;
+}
+
+.recommendation-insights-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recommendation-insights-heading h2 {
+  margin: 0;
+  color: #f5f6f7;
+  font-size: 16px;
+  font-weight: 620;
+  letter-spacing: -.02em;
+}
+
+.recommendation-insights-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  color: #aeb4bc;
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.recommendation-insights-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 20px;
+  min-width: 0;
+}
+
+.recommendation-disclosure { min-width: 0; }
+.recommendation-insights-details > .recommendation-disclosure:not([open]) { width: fit-content; }
+.recommendation-insights-details > .recommendation-disclosure[open] { flex-basis: 100%; }
+
+.recommendation-disclosure > summary,
+.recommendation-score-detail > summary {
+  width: fit-content;
+  color: #cbd2da;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  text-underline-offset: 3px;
+}
+
+.recommendation-data-warnings > summary { color: #ddc894; }
+.recommendation-policy[open] > summary,
+.recommendation-data-warnings[open] > summary,
+.recommendation-score-detail[open] > summary { margin-bottom: 6px; }
+
+.recommendation-data-warnings ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #c4b99e;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.recommendation-policy dl {
+  display: grid;
+  gap: 4px 16px;
+  margin: 0;
+  max-width: 680px;
+}
+
+.recommendation-policy dl > div {
+  display: grid;
+  grid-template-columns: minmax(125px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.recommendation-policy dt { color: #aeb4bc; }
+.recommendation-policy dd { margin: 0; color: #e0e3e7; }
+
+.recommendation-outcome-filters {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+}
+
+.recommendation-outcome-filters > button { gap: 6px; }
+
+.recommendation-outcome-filters > button > span {
+  color: #9ba3ad;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.recommendation-candidate-list {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recommendation-candidate {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 0;
+}
+
+.recommendation-candidate-rank {
+  padding-top: 1px;
+  color: #aeb4bc;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.recommendation-candidate-body { min-width: 0; }
+
+.recommendation-candidate-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.recommendation-candidate-title-row h3 {
+  min-width: 0;
+  margin: 0;
+  color: #f0f2f5;
+  font-size: 13px;
+  font-weight: 590;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.recommendation-candidate-status {
+  flex: none;
+  color: #b5bdc7;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.recommendation-candidate-status--deferred { color: #ddc894; }
+.recommendation-candidate-status--suppressed { color: #8f98a3; }
+
+.recommendation-candidate-meta,
+.recommendation-candidate-reason,
+.recommendation-candidate-eligible {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.recommendation-candidate-meta { color: #aeb4bc; }
+.recommendation-candidate-reason { color: #d1d5db; }
+.recommendation-candidate-eligible { color: #aeb4bc; }
+.recommendation-candidate-change { display: flex; margin-top: 5px; }
+
+.recommendation-score-detail { margin-top: 4px; }
+.recommendation-score-detail > summary { font-size: 12px; }
+.recommendation-score-detail > span { margin-right: 12px; color: #aeb4bc; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.recommendation-insights-state {
+  margin: 0;
+  color: #b8c0ca;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.recommendation-insights summary:focus-visible {
+  outline: 2px solid #70a8ff;
+  outline-offset: 3px;
+}
+
+@media (max-width: 520px) {
+  .recommendation-disclosure > summary,
+  .recommendation-score-detail > summary { min-height: 44px; display: flex; align-items: center; }
+  .recommendation-candidate { grid-template-columns: 24px minmax(0, 1fr); gap: 8px; }
+  .recommendation-candidate-title-row { flex-wrap: wrap; align-items: flex-start; gap: 2px 8px; }
+  .recommendation-candidate-title-row h3 { font-size: 14px; }
+  .recommendation-policy dl > div { grid-template-columns: 1fr; gap: 1px; }
+}

@@ -14,7 +14,10 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -65,6 +68,65 @@ class SessionRaceTest {
         repo.clearInvalidated(invalidatedGeneration)
         assertFalse(repo.snapshot.value.hasData)
         assertTrue("sign-out removed stale cache files", cache.listFiles().orEmpty().none { it.isFile })
+    }
+
+    @Test
+    fun `health refresh works independently and keeps last known status after failure`() = runTest {
+        var healthFails = false
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when {
+                request.path.orEmpty().startsWith("/v1/health/sources") -> if (healthFails) {
+                    MockResponse().setResponseCode(503)
+                } else {
+                    json(fixture("health_sources.json"))
+                }
+                else -> MockResponse().setResponseCode(503)
+            }
+        }
+        val cache = tmp.newFolder("health-cache")
+        val repo = DashboardRepository(cache, apiFor = { api })
+
+        assertTrue("feed refresh can fail without preventing the independent status check", repo.refresh().isFailure)
+        val first = repo.refreshHealth().getOrThrow()
+        assertEquals(first, repo.snapshot.value.health)
+        assertFalse(repo.snapshot.value.healthRefreshing)
+        assertTrue("health is live state and is not written into the dashboard cache", cache.listFiles().orEmpty().isEmpty())
+
+        healthFails = true
+        assertTrue(repo.refreshHealth().isFailure)
+        assertEquals("the last successful status remains visible", first, repo.snapshot.value.health)
+        assertNotNull(repo.snapshot.value.healthError)
+        assertFalse(repo.snapshot.value.healthRefreshing)
+    }
+
+    @Test
+    fun `a health result from a signed-out session cannot repopulate status`() = runTest {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.path.orEmpty().startsWith("/v1/health/sources")) {
+                    started.countDown()
+                    release.await(10, TimeUnit.SECONDS)
+                    return json(fixture("health_sources.json"))
+                }
+                return MockResponse().setResponseCode(503)
+            }
+        }
+        val cache = tmp.newFolder("health-session-cache")
+        val repo = DashboardRepository(cache, apiFor = { api })
+        val pending = async(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) { repo.refreshHealth() }
+
+        assertTrue("health request reached the server", started.await(10, TimeUnit.SECONDS))
+        val invalidatedGeneration = repo.invalidateSession()
+        release.countDown()
+        val outcome = runCatching { pending.await() }
+        assertTrue("invalidated health cannot succeed", outcome.isFailure || outcome.getOrNull()?.isFailure == true)
+        repo.clearInvalidated(invalidatedGeneration)
+
+        assertNull(repo.snapshot.value.health)
+        assertFalse(repo.snapshot.value.healthRefreshing)
+        assertTrue(cache.listFiles().orEmpty().isEmpty())
     }
 
     @Test

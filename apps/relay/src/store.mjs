@@ -158,6 +158,12 @@ export class SqliteStore {
       .map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
+  lastSuccessfulRunPerSource() {
+    return this.db.prepare(`SELECT r.* FROM source_run r
+      JOIN (SELECT source_id, MAX(id) AS id FROM source_run WHERE outcome IN ('ok', 'empty') GROUP BY source_id) m ON m.id = r.id`)
+      .all().map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  }
+
   lastSuccessfulRun(sourceId) {
     const row = this.db
       .prepare(

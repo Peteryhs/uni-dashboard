@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, CloudRain, ExternalLink, History, MapPin, Settings2, Star, Thermometer, WifiOff, Wind, X } from 'lucide-react';
+import { Activity, ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, CloudRain, ExternalLink, History, MapPin, Settings2, Star, Thermometer, TriangleAlert, WifiOff, Wind, X } from 'lucide-react';
 import { ChangeBlocks, alertChange } from '@/components/change-blocks';
 import { StationIcon } from '@/components/station-icon';
-import { dietTag, stationGroups } from '@/lib/menu';
+import { DietaryIcon } from '@/components/dietary-icon';
+import { stationGroups } from '@/lib/menu';
 import { SearchField } from '@/components/ui/search-field';
 import { RefreshButton } from '@/components/ui/refresh-button';
 import { CustomizationSheet } from '@/components/customization-sheet';
@@ -16,7 +17,8 @@ import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/lib/dining';
 import { matchDiningDish, matchDiningOutlet, useDiningRecommendation } from '@/components/use-dining-recommendation';
 import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetchRecommendations, fetchSetupStatus, getToken, readCachedCalendar, readCachedRecommendations, RelayError, saveRecommendationAction, triggerPoll, type MenuDish } from '@/lib/api';
-import { useDashboard, useNow } from '@/hooks/use-dashboard';
+import { useDashboard, useHealth, useNow } from '@/hooks/use-dashboard';
+import { healthSummary } from '@/lib/source-status.mjs';
 import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge } from '@/lib/time';
 import type { AlertData, CalendarData, CalendarEvent, CardState, DueSoonData, DueSoonItem, NextCommitmentData, RecommendationItem, WeatherSlice } from '@/lib/contract';
@@ -262,7 +264,7 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       </div>
       <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
     </div>
-    {item.change && <ChangeBlocks className="rec-detail-change" change={item.change} />}
+    {item.change && <ChangeBlocks className="rec-detail-change" change={item.change} showConfidence />}
     {isAiFood(item) ? <p>{recommendationBody(item)}</p> : <CourseDetailContent
       description={item.kind === 'change' && item.change ? '' : recommendationBody(item)} topics={item.topics} readings={item.readings}
     />}
@@ -407,7 +409,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
           <strong>{cleanTitle(event.title)}</strong>
           <span className="course-tag">{event.course || 'Course not identified'}</span>
           <span className={'event-tag event-' + event.category}>{event.attendance === 'replaced' ? 'Replaced' : calendarKind(event)}</span>
-          {event.attendance !== 'replaced' && alertsFor(event).map(alert => <ChangeBlocks key={alert.id} className="calendar-change-tag" change={alertChange(alert)} />)}
+          {event.attendance !== 'replaced' && alertsFor(event).map(alert => <ChangeBlocks key={alert.id} className="calendar-change-tag" change={alertChange(alert)} showConfidence />)}
         </span>
         <ChevronRight className="calendar-item-chevron" size={14} />
       </>}>
@@ -446,7 +448,7 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
       {pending && <p className="empty-state">Loading calendar…</p>}
       {error && !data && <p className="empty-state" role="alert">Calendar is unavailable right now.</p>}
       {data && calendarRows.length === 0 && <p className="empty-state">No events in the next {view === 'full' ? '31' : rangeLength} days.</p>}
-      {data?.alerts?.filter(alert => ['cancelled', 'removed'].includes(alert.kind) && campusDate(alert.starts_at) < shiftDate(rangeStart ?? today, rangeLength)).map(alert => <p className="calendar-change-summary" key={alert.id}><strong>{alert.course || 'Class'}</strong><ChangeBlocks change={alertChange(alert)} /><span>{formatShortDay(alert.starts_at)} · {formatTime(alert.starts_at)}</span>{alert.url && <a href={alert.url} target="_blank" rel="noopener noreferrer" aria-label={'Source for ' + alert.title}>Source <ExternalLink size={12} aria-hidden /></a>}</p>)}
+      {data?.alerts?.filter(alert => ['cancelled', 'removed'].includes(alert.kind) && campusDate(alert.starts_at) < shiftDate(rangeStart ?? today, rangeLength)).map(alert => <p className="calendar-change-summary" key={alert.id}><strong>{alert.course || 'Class'}</strong><ChangeBlocks change={alertChange(alert)} showConfidence /><span>{formatShortDay(alert.starts_at)} · {formatTime(alert.starts_at)}</span>{alert.url && <a href={alert.url} target="_blank" rel="noopener noreferrer" aria-label={'Source for ' + alert.title}>Source <ExternalLink size={12} aria-hidden /></a>}</p>)}
       <div className="calendar-day-list" id="calendar-day-list">
       {calendarRows.map(row => {
         if (row.kind === 'weekend') {
@@ -617,10 +619,9 @@ function MenuSection() {
               const aiHighlight = matchDiningDish(aiOutlet, dish.dish);
               return <li className={aiHighlight ? 'menu-dish--ai-picked' : undefined} key={dish.dish + index}>
                 <div className="menu-dish-copy">
-                  <strong>{dish.dish}</strong>
+                  <div className="menu-dish-heading"><strong className="menu-dish-title">{dish.dish}</strong>{dish.diet.length > 0 && <span className="menu-diet-icons">{dish.diet.map(tag => <DietaryIcon key={tag} tag={tag} />)}</span>}</div>
                   {aiHighlight?.why.trim() && <small className="menu-dish-ai-why">{aiHighlight.why.trim()}</small>}
-                  {(dish.diet.length > 0 || dish.allergens.length > 0) && <span className="menu-dish-tags">
-                    {dish.diet.map(tag => <abbr className="diet-chip" key={tag} title={dietTag(tag).label}>{dietTag(tag).short}</abbr>)}
+                  {dish.allergens.length > 0 && <span className="menu-dish-tags">
                     {dish.allergens.map(allergen => <abbr className="diet-chip diet-chip--allergen" key={allergen} title={'Contains ' + allergen}>{allergen}</abbr>)}
                   </span>}
                 </div>
@@ -661,6 +662,13 @@ export default function App() {
   const { cards, offline, error: dashboardError, refetch } = useDashboard();
   const { preferences, setDietaryFilter, setOnlyFavorites, toggleFavoriteDish, updateTasteProfile, resetPreferences } = usePreferences();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statusRequest, setStatusRequest] = useState(0);
+  const health = useHealth(true);
+  const sourceHealth = health.data ? healthSummary(health.data.sources, now) : null;
+  const sourceWarning = health.isError ? 'Could not check source status. Showing saved information where available.'
+    : sourceHealth ? sourceHealth.warning : health.isPending ? 'Checking source status.' : 'Source status is unavailable.';
+  const sourceAttentionCount = health.isError ? null : sourceHealth?.issues || sourceHealth?.unchecked || null;
+  const openStatus = () => { setStatusRequest(value => value + 1); setSettingsOpen(true); };
   const [guideRequest, setGuideRequest] = useState<{ step: number; key: number }>();
   const [setupLater, setSetupLater] = useState(false);
   const [guideFinished, setGuideFinished] = useState(() => readGuideProgress().finished);
@@ -793,12 +801,16 @@ export default function App() {
   return <div className="dashboard-app"><main className="dashboard-frame">
     <section className="today-content" aria-label="Today">
       <BlurFade as="div" className="day-context" duration={0.5} offset={8} blur="4px">
-        <span>{formatDay(now)} · {formatTime(now)}</span>
+        <span className="day-context-date"><span className="context-date-long">{formatDay(now)} · {formatTime(now)}</span><span className="context-date-short">{formatShortDay(now)} · {formatTime(now)}</span></span>
         {weather.data?.temp_c !== null && weather.data?.temp_c !== undefined && <span>{weather.data.temp_c}°C</span>}
         {alert && alert.count > 0 && !alert.dismissed && <button className="context-alert" onClick={() => setAlertOpen(value => !value)} aria-expanded={alertOpen}>{alert.notices?.[0]?.title || alert.summary || 'Campus service issue'}{alert.count > 1 ? ' · ' + alert.count + ' notices' : ''}</button>}
         {alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}
         {(offline || recs.isError || isOld) && <span className="saved-context"><WifiOff size={13} /> Saved information</span>}
         <div className="day-context-actions">
+          <button type="button" className={'top-settings top-status' + (sourceWarning && !signInRequired ? ' has-warning' : '')} onClick={openStatus} aria-label={sourceWarning && !signInRequired ? `View status: ${sourceWarning}` : 'View status'} title={sourceWarning && !signInRequired ? sourceWarning : 'View status'}>
+            {sourceWarning && !signInRequired ? <><TriangleAlert size={17} /><span className="status-count">{sourceAttentionCount ? sourceAttentionCount : '?'}</span></> : <><Activity size={17} /><span>View status</span></>}
+          </button>
+          <span className="sr-only" role="status">{sourceWarning && !signInRequired ? sourceWarning : ''}</span>
           <RefreshButton label="Refresh all sources" refreshing={syncing} onRefresh={() => void refreshAll()} status={syncStatus} visibleStatus={visibleSyncStatus ?? ''} error={syncError} />
           <span className="sr-only" role="status">{syncError || syncStatus}</span>
           <button className="top-settings" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings2 size={17} /><span>Settings</span></button>
@@ -823,18 +835,17 @@ export default function App() {
         <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
-            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} />}<ChevronRight size={18} /></button>
+            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} showConfidence />}<ChevronRight size={18} /></button>
             {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>
         </BlurFade>
         <BlurFade as="section" className="more-recs" aria-label="More recommendations" duration={0.58} delay={0.14} offset={14} blur="7px"><span className="more-label">More for today</span>
-          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} /> : timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
+          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} showConfidence /> : timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
           {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small></button>}
         </BlurFade>
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
-      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} ${recs.data.warnings.length === 1 ? 'source warning needs' : 'source warnings need'} attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       <AnimatedUndoToast
         lastHidden={lastHiddenRec}
         actionLabel={lastHiddenRec?.action === 'done' ? 'Completed' : 'Dismissed'}
@@ -861,6 +872,11 @@ export default function App() {
     open={settingsOpen}
     onOpenChange={(open) => { setSettingsOpen(open); if (!open) { setSettingsCourse(null); setGuideFinished(readGuideProgress().finished); } }}
     guideRequest={guideRequest}
+    statusRequest={statusRequest}
+    recommendations={recs.data}
+    recommendationsPending={recs.isPending}
+    recommendationsError={recs.isError}
+    onRetryRecommendations={() => void recs.refetch()}
     hideTrigger
     preferences={preferences}
     courseData={settingsCalendar.data}

@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 
 /**
@@ -250,6 +251,47 @@ data class Recommendations(
     val headline: String = "",
     val items: List<Recommendation> = emptyList(),
     val warnings: List<String> = emptyList(),
+    val diagnostics: RecommendationDiagnostics? = null,
+)
+
+@Serializable
+data class RecommendationPolicy(
+    @SerialName("schedule_notice_hours") val scheduleNoticeHours: Int,
+    @SerialName("deadline_change_hours") val deadlineChangeHours: Int,
+    @SerialName("tutorial_work_notice_hours") val tutorialWorkNoticeHours: Int = 72,
+    @SerialName("task_horizon_days") val taskHorizonDays: Int,
+    @SerialName("small_task_feed_days") val smallTaskFeedDays: Int,
+    @SerialName("max_feed_items") val maxFeedItems: Int,
+)
+
+@Serializable
+data class RecommendationSummary(val shown: Int = 0, val deferred: Int = 0, val suppressed: Int = 0)
+
+@Serializable
+data class RecommendationDecision(
+    val id: String,
+    val kind: String,
+    val title: String,
+    val course: String? = null,
+    @SerialName("starts_at") val startsAt: Long? = null,
+    @SerialName("due_at") val dueAt: Long? = null,
+    @SerialName("scheduled_date") val scheduledDate: String? = null,
+    val priority: Double = 0.0,
+    val status: String,
+    val reason: String,
+    @SerialName("eligible_at") val eligibleAt: Long? = null,
+    val position: Int? = null,
+    @SerialName("course_penalty") val coursePenalty: Double = 0.0,
+    @SerialName("ranking_score") val rankingScore: Double? = null,
+    val change: ChangeDetail? = null,
+)
+
+@Serializable
+data class RecommendationDiagnostics(
+    val version: Int,
+    val policy: RecommendationPolicy,
+    val summary: RecommendationSummary,
+    val candidates: List<RecommendationDecision> = emptyList(),
 )
 
 @Serializable
@@ -360,7 +402,11 @@ data class LastRun(
     val outcome: String = "",
     val rows: Int = 0,
     val error: String? = null,
+    val meta: Map<String, JsonElement> = emptyMap(),
 )
+
+@Serializable
+data class SourceHealthJob(val circuit: String = "")
 
 @Serializable
 data class SourceHealth(
@@ -371,7 +417,37 @@ data class SourceHealth(
     @SerialName("last_run") val lastRun: LastRun? = null,
     @SerialName("age_s") val ageS: Long? = null,
     val optional: Boolean = false,
+    val name: String = "",
+    val monitored: Boolean? = null,
+    val condition: String? = null,
+    @SerialName("last_success_at") val lastSuccessAt: Long? = null,
+    val job: SourceHealthJob? = null,
+    @SerialName("stale_after_ms") val staleAfterMs: Long? = null,
+    @SerialName("dead_after_ms") val deadAfterMs: Long? = null,
 )
 
 @Serializable
-data class Health(val now: Long, val sources: List<SourceHealth> = emptyList())
+data class RuntimeHealth(
+    val target: String,
+    @SerialName("uptime_s") val uptimeS: Long,
+    @SerialName("uptime_scope") val uptimeScope: String,
+    val polling: String,
+)
+
+@Serializable
+data class HealthSummary(
+    val condition: String,
+    val healthy: Int = 0,
+    val total: Int = 0,
+    val issues: Int = 0,
+    val unchecked: Int = 0,
+    val warning: String? = null,
+)
+
+@Serializable
+data class Health(
+    val now: Long,
+    val sources: List<SourceHealth> = emptyList(),
+    val runtime: RuntimeHealth? = null,
+    val summary: HealthSummary? = null,
+)

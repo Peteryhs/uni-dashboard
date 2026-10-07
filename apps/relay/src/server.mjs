@@ -31,6 +31,7 @@ import { getCachedWeather, syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { buildRecommendations } from './recommendations.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
+import { buildHealth } from './health.mjs';
 
 export function createServer({
   store,
@@ -241,23 +242,12 @@ export function createServer({
         catch (error) { if (error instanceof RangeError || error instanceof URIError) return send(400, { error: error.message }); throw error; }
       }
       if (url.pathname === '/v1/health/sources') {
-        const last = store.lastRunPerSource();
-        return send(200, {
-          now: Date.now(),
-          sources: readiness(sources).map((r) => {
-            const run = last.find((l) => l.source_id === r.id);
-            const job = store.jobs().find((j) => j.source_id === r.id);
-            return {
-              ...r,
-              last_run: run
-                ? { at: run.finished_at, outcome: run.outcome, http_status: run.http_status, rows: run.rows_written, bytes: run.bytes, error: run.error, meta: run.meta }
-                : null,
-              age_s: run ? Math.round((Date.now() - run.finished_at) / 1000) : null,
-              job: job ? { next_due_at: job.next_due_at, circuit: job.circuit_state, failures: job.consecutive_failures } : null,
-            };
-          }),
-          snapshots: store.snapshotCount(),
-        });
+        if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+        const now = Date.now();
+        return send(200, await buildHealth(store, { sources, now, runtime: {
+          target: 'local', uptime_s: Math.round((now - started) / 1000),
+          uptime_scope: 'process', polling: automaticPolling ? 'automatic' : 'manual',
+        } }));
       }
       if (url.pathname.startsWith('/v1/snapshot/')) {
         const sha = url.pathname.split('/').pop();

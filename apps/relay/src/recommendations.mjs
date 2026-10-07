@@ -10,6 +10,7 @@ import { changeDetail } from '#contract/calendar-changes.mjs';
 import { MENU_ROW_LIMIT } from './menu.mjs';
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+const POLICY = Object.freeze({ schedule_notice_hours: 24, deadline_change_hours: 72, tutorial_work_notice_hours: 72, task_horizon_days: 14, small_task_feed_days: 2, max_feed_items: 16 });
 const ACTION_KEY = 'RECOMMENDATION_ACTIONS_JSON';
 const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
 const timeFormat = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, hour: 'numeric', minute: '2-digit' });
@@ -73,7 +74,7 @@ function taskPriority(delta, effort, exam) {
 function taskItem(event, entry, course, now) {
   const due = event?.all_day ? null : event?.due_at ?? event?.starts_at ?? entry?.due_at ?? null;
   const date = event?.all_day ? day(event.starts_at) : due != null ? day(due) : entry?.start_date;
-  if (!date || date < shift(day(now), -1) || date > shift(day(now), 14) || (due != null && due < now - DAY)) return null;
+  if (!date || date < shift(day(now), -1) || date > shift(day(now), POLICY.task_horizon_days) || (due != null && due < now - DAY)) return null;
   const rankTime = due ?? clock(date, 23, 59);
   const sourceTitle = event?.title || entry.title;
   const title = displayTaskTitle(sourceTitle) || sourceTitle;
@@ -99,7 +100,7 @@ function taskItem(event, entry, course, now) {
 function taskTime(task) { return task.due_at ?? task.starts_at ?? (task.scheduled_date ? clock(task.scheduled_date, 23, 59) : Infinity); }
 
 /** Preserve urgent ordering; use course variety among similarly ranked, non-urgent work. */
-export function rankRecommendationItems(items) {
+export function rankRecommendationItems(items, trace = null) {
   const remaining = [...items].sort((a, b) => b.priority - a.priority || (a.due_at ?? a.starts_at ?? Infinity) - (b.due_at ?? b.starts_at ?? Infinity) || a.id.localeCompare(b.id));
   const ranked = [], counts = new Map();
   while (remaining.length) {
@@ -111,6 +112,7 @@ export function rankRecommendationItems(items) {
       if (adjusted > score) { score = adjusted; index = i; }
     }
     const [next] = remaining.splice(index, 1); ranked.push(next);
+    if (trace) trace.set(next.id, { position: ranked.length, course_penalty: next.priority - score, ranking_score: score });
     if (next.course) counts.set(next.course, (counts.get(next.course) || 0) + 1);
   }
   return ranked;
@@ -119,27 +121,55 @@ export function rankRecommendationItems(items) {
 /** Pure entry point also used to simulate an entire day with fixed, synthetic data. */
 export function recommendationsFromData({ calendar, syllabi = [], food = null, menu = [], weather = null, actions = {}, now = Date.now(), freshnessNow = now }) {
   const today = day(now), tomorrow = shift(today, 1), candidates = [], warnings = [];
+  const decisions = new Map();
   const courses = new Map((calendar.courses || []).map(course => [course.course, course]));
   const events = [...new Map(calendar.days.flatMap(date => date.events).map(event => [event.id, event])).values()];
+  const eventsById = new Map(events.map(event => [event.id, event]));
+  const actionDecision = candidate => {
+    const saved = actions[candidate.id];
+    if (saved?.action === 'done') return { status: 'suppressed', reason: 'Marked complete on this account.', eligible_at: null };
+    if (saved?.action === 'dismiss') return { status: 'suppressed', reason: 'Dismissed on this account; undo restores it.', eligible_at: null };
+    if (saved?.action === 'snooze' && saved.until > now) return { status: 'suppressed', reason: 'Snoozed on this account until the saved time.', eligible_at: saved.until };
+    return null;
+  };
+  const isVisible = candidate => !actionDecision(candidate) && !decisions.has(candidate.id);
   const changes = [...(calendar.alerts || [])].sort((a, b) => a.starts_at - b.starts_at || b.observed_at - a.observed_at);
   const changeRecommendations = new Map();
   const seenChanges = new Set();
   for (const change of changes) {
     // One recurring series can move twenty future meetings in a single update. Surface its
     // nearest affected session, while the calendar retains each occurrence's warning.
-    const key = `${change.course}:${change.kind}:${change.observed_at}:${change.previous_location}:${change.location}`;
-    if (seenChanges.has(key) || change.ends_at <= now || change.starts_at > now + 14 * DAY) continue;
-    seenChanges.add(key);
-    const soon = change.starts_at <= now + 3 * HOUR;
+    if (change.ends_at < now || change.starts_at > now + POLICY.task_horizon_days * DAY) continue;
+    const event = eventsById.get(change.event_id);
+    // Only recurring room moves share a reminder. Separate assessments or tutorial
+    // sessions must not vanish because one poll updated both in the same course.
+    const series = event?.uid ? `${event.source_id}:${event.uid}` : null;
+    const key = series && ['room', 'unusual_room'].includes(change.kind) ? `${series}:${change.kind}:${change.observed_at}:${change.previous_location}:${change.location}` : change.id;
+    const deadlineChange = change.kind === 'deadline' || (change.previous_at != null && ['deadline', 'exam'].includes(event?.category));
+    const tutorialWork = change.kind === 'tutorial_work';
+    const affectedAt = deadlineChange || change.kind === 'time'
+      ? Math.min(change.starts_at, change.previous_at ?? Infinity, change.current_at ?? Infinity)
+      : change.starts_at;
+    const windowHours = deadlineChange ? POLICY.deadline_change_hours : tutorialWork ? POLICY.tutorial_work_notice_hours : POLICY.schedule_notice_hours;
+    const windowLabel = deadlineChange ? 'Deadline changes' : tutorialWork ? 'Tutorial-work notices' : 'Schedule notices';
+    const eligibleAt = affectedAt - windowHours * HOUR;
+    const until = affectedAt - now;
+    const urgency = until <= HOUR ? (change.confidence === 'confirmed' ? 1160 : 1060) : until <= 3 * HOUR ? (change.confidence === 'confirmed' ? 1010 : 970) : until <= DAY ? 820 : 690;
     const recommendation = item('change', change.id, {
       revision_seed: [change.id, change.body], title: change.title, body: change.body,
-      priority: Math.min(['stale', 'dead'].includes(change.state) ? 720 : Infinity, soon ? (change.confidence === 'confirmed' ? 1160 : 1060) : change.starts_at <= now + DAY ? 960 : change.starts_at <= now + 3 * DAY ? 810 : 620),
+      priority: Math.min(['stale', 'dead'].includes(change.state) ? 720 : Infinity, urgency),
       course: change.course, starts_at: change.starts_at, ends_at: change.ends_at, time_label: 'Scheduled',
       action: safeUrl(change.url) ? { label: change.kind === 'tutorial_work' ? 'Check tutorial work' : 'Check source', url: safeUrl(change.url) } : linkFor(null, courses.get(change.course)),
       source_label: change.source_label, state: change.state, change: changeDetail(change),
-      reason: change.confidence === 'confirmed' ? 'Confirmed schedule change.' : 'Unconfirmed; check the source.', evidence: change.evidence,
+      reason: `${change.confidence === 'confirmed' ? 'Confirmed schedule change.' : 'Unconfirmed; check the source.'} ${deadlineChange ? 'The earlier of the previous and current deadline is approaching.' : tutorialWork ? 'The tutorial replacement or related work is approaching.' : 'The affected session is approaching.'}`, evidence: change.evidence,
     });
     candidates.push(recommendation);
+    if (seenChanges.has(key)) {
+      decisions.set(recommendation.id, { status: 'suppressed', reason: 'The nearest occurrence of this recurring room change already has a reminder; each occurrence stays in the calendar.', eligible_at: null });
+      continue;
+    }
+    seenChanges.add(key);
+    if (now < eligibleAt) decisions.set(recommendation.id, { status: 'deferred', reason: `${windowLabel} enter daily guidance ${windowHours} hours before the affected time. This change remains in the calendar.`, eligible_at: eligibleAt });
     if (change.event_id) changeRecommendations.set(change.event_id, recommendation);
   }
   const tasks = [];
@@ -165,12 +195,11 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     const task = taskItem(null, entry, courses.get(doc.course) || { course: doc.course }, now);
     if (task) tasks.push(task);
   }
-  const isVisible = candidate => {
-    const saved = actions[candidate.id];
-    return !saved || (saved.action !== 'done' && saved.action !== 'dismiss' && !(saved.action === 'snooze' && saved.until > now));
-  };
-  const activeTasks = tasks.filter(isVisible);
-  candidates.push(...activeTasks);
+  const activeTasks = tasks.filter(task => !actionDecision(task));
+  candidates.push(...tasks);
+  for (const task of activeTasks) {
+    if (task.effort !== 'large' && taskTime(task) > now + POLICY.small_task_feed_days * DAY) decisions.set(task.id, { status: 'deferred', reason: 'Smaller tasks enter daily guidance two days before they are due. They remain in your task list and calendar.', eligible_at: taskTime(task) - POLICY.small_task_feed_days * DAY });
+  }
   const blocks = events.filter(event => event.attendance !== 'replaced' && ['class', 'exam', 'event'].includes(event.category) &&
     !(event.source_id === 'uw-learn-ics' && event.category === 'event') &&
     !event.all_day && event.ends_at > now && event.starts_at < clock(tomorrow, 0)).sort((a, b) => a.starts_at - b.starts_at);
@@ -217,11 +246,12 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   }
   const nextBlock = blocks.find(event => event.starts_at > now);
   const currentBlock = blocks.find(event => event.starts_at <= now && event.ends_at > now);
-  if (!currentBlock && now >= clock(today, 8) && now < clock(today, 21) && activeTasks.some(task => taskTime(task) >= now)) {
+  const focusTasks = activeTasks.filter(task => isVisible(task) && taskTime(task) >= now);
+  if (!currentBlock && now >= clock(today, 8) && now < clock(today, 21) && focusTasks.length) {
     const end = Math.min(nextBlock?.starts_at ?? clock(today, 21), clock(today, 21));
     const available = Math.floor((end - now) / MIN);
     if (available >= 25) {
-      const task = rankRecommendationItems(activeTasks.filter(task => taskTime(task) >= now))[0];
+      const task = rankRecommendationItems(focusTasks)[0];
       candidates.push(item('focus', `${today}:${nextBlock?.id || 'evening'}:${task.id}`, { revision_seed: [today, nextBlock?.id, task.id, end], title: `A study window for ${task.course || 'your next task'}`, body: `${available} min free${nextBlock ? ` before ${nextBlock.title}` : ' until 9 pm'} · ${task.title}`,
         priority: task.priority >= 900 ? 880 : 600, course: task.course, starts_at: now, ends_at: end, available_minutes: available, action: task.action,
         source_label: 'Calendar + deadlines', state: task.state, reason: 'An open timetable window lines up with upcoming work.', evidence: 'This is a schedule gap, not an estimate of how long the task takes.' }));
@@ -283,12 +313,25 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     .filter(Boolean));
   for (const sourceName of staleCalendarSources) warnings.push(`${sourceName} data is old; this reflects sync age, not a confirmed event change. Check current times and deadlines at the source.`);
   if (calendar.truncated) warnings.push('The calendar response was truncated; some events may be missing.');
-  const ranked = rankRecommendationItems(candidates.filter(isVisible));
-  const items = ranked.slice(0, 16);
+  const uniqueCandidates = [...new Map(candidates.map(candidate => [candidate.id, candidate])).values()];
+  const rankingTrace = new Map();
+  const ranked = rankRecommendationItems(uniqueCandidates.filter(isVisible), rankingTrace);
+  const items = ranked.slice(0, POLICY.max_feed_items);
   const sortedTasks = rankRecommendationItems(activeTasks);
+  const diagnosticsCandidates = [...ranked, ...uniqueCandidates.filter(candidate => !rankingTrace.has(candidate.id))].map(candidate => {
+    const trace = rankingTrace.get(candidate.id);
+    const decision = actionDecision(candidate) || decisions.get(candidate.id) || (trace?.position <= POLICY.max_feed_items
+      ? { status: 'shown', reason: candidate.reason, eligible_at: null }
+      : { status: 'deferred', reason: 'More relevant suggestions fill the daily guidance limit; this item remains available in its source view.', eligible_at: null });
+    return { id: candidate.id, kind: candidate.kind, title: candidate.title, course: candidate.course, starts_at: candidate.starts_at, due_at: candidate.due_at, scheduled_date: candidate.scheduled_date,
+      priority: candidate.priority, ...decision, position: trace?.position ?? null, course_penalty: trace?.course_penalty ?? 0, ranking_score: trace?.ranking_score ?? null, change: candidate.change };
+  });
+  const summary = { shown: 0, deferred: 0, suppressed: 0 };
+  for (const candidate of diagnosticsCandidates) summary[candidate.status]++;
   return validateRecommendations({ schema_version: 1, generated_at: now, timezone: config.timezone, refresh_after_ms: 60_000,
     headline: items[0]?.title || (warnings.length ? 'Your day is waiting for updated course information' : 'Nothing urgent in your imported schedule'), items,
-    tasks: { large: sortedTasks.filter(task => task.effort === 'large').slice(0, 30), small: sortedTasks.filter(task => task.effort !== 'large').slice(0, 30) }, warnings: [...new Set(warnings)] });
+    tasks: { large: sortedTasks.filter(task => task.effort === 'large').slice(0, 30), small: sortedTasks.filter(task => task.effort !== 'large').slice(0, 30) }, warnings: [...new Set(warnings)],
+    diagnostics: { version: 1, policy: POLICY, summary, candidates: diagnosticsCandidates } });
 }
 
 export async function buildRecommendations(store, { now = Date.now(), freshnessNow = now, section = null, group = null, weather = null } = {}) {

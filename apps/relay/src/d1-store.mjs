@@ -195,10 +195,16 @@ export class D1Store {
   async lastRunPerSource() {
     const res = await this.db
       .prepare(
-        `SELECT r.* FROM job j JOIN source_run r ON r.id =
-          (SELECT id FROM source_run WHERE source_id=j.source_id ORDER BY id DESC LIMIT 1)`,
+        `SELECT r.* FROM source_run r
+         JOIN (SELECT source_id, MAX(id) AS id FROM source_run GROUP BY source_id) m ON m.id = r.id`,
       )
       .all();
+    return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  }
+
+  async lastSuccessfulRunPerSource() {
+    const res = await this.db.prepare(`SELECT r.* FROM source_run r
+      JOIN (SELECT source_id, MAX(id) AS id FROM source_run WHERE outcome IN ('ok', 'empty') GROUP BY source_id) m ON m.id = r.id`).all();
     return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 

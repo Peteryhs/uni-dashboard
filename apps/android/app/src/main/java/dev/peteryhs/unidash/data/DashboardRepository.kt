@@ -30,9 +30,13 @@ data class Snapshot(
     /** When this device last got a full answer from the Worker; null before the first one. */
     val fetchedAt: Long? = null,
     val refreshing: Boolean = false,
+    val healthRefreshing: Boolean = false,
     val error: RelayError? = null,
     /** Internal session fence used to keep results from a signed-out session out of callbacks. */
     val sessionGeneration: Long = 0L,
+    /** A live health check is deliberately not restored from disk as an all-clear. */
+    val health: Health? = null,
+    val healthError: RelayError? = null,
 ) {
     val hasData: Boolean get() = bundle != null || recommendations != null || calendar != null
 }
@@ -60,7 +64,7 @@ class DashboardRepository(
         _snapshot.value = readCache()
     }
 
-    /** Fetches all three feeds together. Keeps the previous data on failure and reports why. */
+    /** Fetches the feeds and source health together. Health failure never hides usable feeds. */
     suspend fun refresh(expectedGeneration: Long? = null): Result<Snapshot> {
         val generation = expectedGeneration ?: sessionGeneration.get()
         if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
@@ -79,12 +83,17 @@ class DashboardRepository(
                     _snapshot.update { it.copy(refreshing = true, error = null) }
                 }
                 val today = LocalDate.now(CAMPUS_ZONE).toString()
-                val result: Result<Triple<Pair<Bundle, String>, Pair<Recommendations, String>, Pair<Calendar, String>>> = try {
+                val result: Result<Pair<Triple<Pair<Bundle, String>, Pair<Recommendations, String>, Pair<Calendar, String>>, Result<Health>>> = try {
                     Result.success(coroutineScope {
                         val dash = async { api.dashboard() }
                         val recs = async { api.recommendations() }
                         val cal = async { api.calendar(today, CALENDAR_DAYS) }
-                        Triple(dash.await(), recs.await(), cal.await())
+                        val health = async {
+                            try { Result.success(api.health().first) }
+                            catch (error: CancellationException) { throw error }
+                            catch (error: Throwable) { Result.failure(error) }
+                        }
+                        Triple(dash.await(), recs.await(), cal.await()) to health.await()
                     })
                 } catch (error: CancellationException) {
                     throw error
@@ -92,7 +101,8 @@ class DashboardRepository(
                     Result.failure(error)
                 }
                 result.fold(
-                    onSuccess = { (dash, recs, cal) ->
+                    onSuccess = { (feeds, health) ->
+                        val (dash, recs, cal) = feeds
                         if (!isSessionCurrent(generation)) return@fold Result.failure(StaleSessionException)
                         val foodDate = dash.first.card("food")?.payload<Food>()?.serviceDate
                         // The ranking endpoint is optional for the rest of the dashboard. A failed AI
@@ -110,6 +120,7 @@ class DashboardRepository(
                             val savedDining = dining?.first ?: _snapshot.value.foodRanking?.takeIf {
                                 it.recommendation?.serviceDate == foodDate
                             }
+                            val previousHealth = _snapshot.value.health
                             write(BUNDLE, dash.second)
                             write(RECS, recs.second)
                             write(CALENDAR, cal.second)
@@ -123,6 +134,8 @@ class DashboardRepository(
                                 foodRanking = savedDining,
                                 fetchedAt = now,
                                 sessionGeneration = generation,
+                                health = health.getOrNull() ?: previousHealth,
+                                healthError = health.exceptionOrNull()?.toRelayError(),
                             )
                             Result.success(_snapshot.value)
                         }
@@ -201,13 +214,81 @@ class DashboardRepository(
     }
 
     suspend fun health(): Result<Health> {
+        val generation = sessionGeneration.get()
+        if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
         val api = apiFor() ?: return Result.failure(RelayError.Unauthorized("not signed in"))
         return try {
-            Result.success(api.health().first)
+            val health = api.health().first
+            if (!isSessionCurrent(generation)) Result.failure(StaleSessionException)
+            else Result.success(health)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
             Result.failure(error)
+        }
+    }
+
+    /** Fetches source health without depending on the dashboard, recommendations, or calendar. */
+    suspend fun refreshHealth(expectedGeneration: Long? = null): Result<Health> {
+        val generation = expectedGeneration ?: sessionGeneration.get()
+        if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
+
+        val job = currentCoroutineContext()[Job]
+        if (job != null) synchronized(sessionLock) {
+            if (!isSessionCurrentLocked(generation)) return Result.failure(StaleSessionException)
+            activeRefreshJobs += job
+        }
+        try {
+            synchronized(sessionLock) {
+                if (!isSessionCurrentLocked(generation)) return Result.failure(StaleSessionException)
+                _snapshot.update { it.copy(healthRefreshing = true) }
+            }
+            val result = try {
+                val api = apiFor() ?: throw RelayError.Unauthorized("not signed in")
+                Result.success(api.health().first)
+            } catch (error: CancellationException) {
+                synchronized(sessionLock) {
+                    if (isSessionCurrentLocked(generation)) {
+                        _snapshot.update {
+                            if (it.sessionGeneration == generation) it.copy(healthRefreshing = false) else it
+                        }
+                    }
+                }
+                throw error
+            } catch (error: Throwable) {
+                Result.failure(error)
+            }
+
+            return result.fold(
+                onSuccess = { health ->
+                    synchronized(sessionLock) {
+                        if (!isSessionCurrentLocked(generation)) return@fold Result.failure(StaleSessionException)
+                        _snapshot.update {
+                            if (it.sessionGeneration == generation) it.copy(
+                                health = health,
+                                healthError = null,
+                                healthRefreshing = false,
+                            ) else it
+                        }
+                        Result.success(health)
+                    }
+                },
+                onFailure = { error ->
+                    synchronized(sessionLock) {
+                        if (!isSessionCurrentLocked(generation)) return@fold Result.failure(StaleSessionException)
+                        val relayError = error.toRelayError()
+                        _snapshot.update {
+                            if (it.sessionGeneration == generation) it.copy(
+                                healthError = relayError,
+                                healthRefreshing = false,
+                            ) else it
+                        }
+                        Result.failure(relayError)
+                    }
+                },
+            )
+        } finally {
+            if (job != null) synchronized(sessionLock) { activeRefreshJobs.remove(job) }
         }
     }
 
@@ -227,7 +308,9 @@ class DashboardRepository(
     /** Starts a new signed-in session after credentials have been stored. */
     fun beginSession(): Long = synchronized(sessionLock) {
         sessionInvalidated.set(false)
-        sessionGeneration.incrementAndGet()
+        val generation = sessionGeneration.incrementAndGet()
+        _snapshot.update { it.copy(sessionGeneration = generation) }
+        generation
     }
 
     /** Removes disk and in-memory state while serialized with refresh writes. */
@@ -305,3 +388,6 @@ class DashboardRepository(
         private const val FETCHED_AT = "fetched_at"
     }
 }
+
+private fun Throwable.toRelayError(): RelayError = this as? RelayError
+    ?: RelayError.BadResponse(message ?: "Status check failed")

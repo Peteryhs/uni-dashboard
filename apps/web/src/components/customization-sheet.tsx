@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useSlidingIndicator } from '@/hooks/use-sliding-indicator';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Sliders,
@@ -55,8 +56,8 @@ import { cn } from '@/lib/utils';
 import { ScheduleTab } from './schedule-tab';
 import { CourseSettingsTab } from './course-settings-tab';
 import { SourcesPanel } from './sources-panel';
-import { useHealth, useHealthz } from '@/hooks/use-dashboard';
-import type { CalendarData } from '@/lib/contract';
+import { RecommendationInsights } from './recommendation-insights';
+import type { CalendarData, RecommendationResponse } from '@/lib/contract';
 import './customization-sheet.css';
 import { SetupGuide } from '@/components/setup-guide';
 
@@ -69,7 +70,8 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'gluten', label: 'Gluten-free' },
 ];
 
-const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'about'] as const;
+const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'status', 'recommendations', 'about'] as const;
+type SettingsTab = typeof SETTINGS_TAB_ORDER[number];
 
 const AI_MODEL_OPTIONS: AiModelInfo[] = [
   {
@@ -129,6 +131,11 @@ export function CustomizationSheet({
   courseDataError,
   focusCourse,
   guideRequest,
+  statusRequest,
+  recommendations,
+  recommendationsPending,
+  recommendationsError,
+  onRetryRecommendations,
   onRetryCourseData,
   onCourseDataSaved,
   setDietaryFilter,
@@ -146,6 +153,11 @@ export function CustomizationSheet({
   courseDataError: boolean;
   focusCourse?: string | null;
   guideRequest?: { step: number; key: number };
+  statusRequest?: number;
+  recommendations?: RecommendationResponse;
+  recommendationsPending?: boolean;
+  recommendationsError?: boolean;
+  onRetryRecommendations?: () => void;
   onRetryCourseData: () => void;
   onCourseDataSaved: () => void;
   setDietaryFilter: (f: DietaryPreference) => void;
@@ -157,7 +169,8 @@ export function CustomizationSheet({
   const { undismissTask } = usePreferences();
   const [guideOpen, setGuideOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'mobile');
   const [guideStart, setGuideStart] = useState<number | undefined>(() => new URLSearchParams(window.location.search).get('setup') === 'mobile' ? 3 : undefined);
-  const [activeTab, setActiveTab] = useState<'taste' | 'courses' | 'credentials' | 'schedule' | 'about'>('taste');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('taste');
+  const tabIndicator = useSlidingIndicator(activeTab, '[aria-selected="true"]');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
   const [aiUsage, setAiUsage] = useState<AiUsageStatus | null>(null);
@@ -195,6 +208,12 @@ export function CustomizationSheet({
     setGuideStart(guideRequest.step);
     setGuideOpen(true);
   }, [guideRequest?.key, guideRequest?.step]);
+
+  useEffect(() => {
+    if (!statusRequest) return;
+    setGuideOpen(false);
+    setActiveTab('status');
+  }, [statusRequest]);
 
   useEffect(() => {
     let isMounted = true;
@@ -451,8 +470,8 @@ export function CustomizationSheet({
           hidden={guideOpen}
           style={{ display: guideOpen ? 'none' : undefined }}
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as 'taste' | 'courses' | 'credentials' | 'schedule' | 'about')}
-          className="settings-tabs-wrap mt-5"
+          onValueChange={(v) => setActiveTab(v as SettingsTab)}
+          className="settings-tabs-wrap"
         >
           <BlurFade
             as="div"
@@ -464,7 +483,7 @@ export function CustomizationSheet({
             direction="up"
             inView
           >
-            <TabsList className="settings-tabs grid h-10 w-full grid-cols-5 bg-secondary/50 p-1 border border-border/60 rounded-lg" style={{ '--settings-tab-offset': `${SETTINGS_TAB_ORDER.indexOf(activeTab) * 100}%` } as CSSProperties}>
+            <TabsList ref={tabIndicator.ref} className="settings-tabs settings-selector w-full" style={tabIndicator.style}>
               <TabsTrigger
                 value="taste"
                 className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
@@ -489,6 +508,14 @@ export function CustomizationSheet({
               >
                 <KeyRound className="size-3.5 mr-1" /> Connections
               </TabsTrigger>
+              <TabsTrigger
+                value="status"
+                className="settings-tab"
+              >Status</TabsTrigger>
+              <TabsTrigger
+                value="recommendations"
+                className="settings-tab"
+              >Recommendations</TabsTrigger>
               <TabsTrigger
                 value="about"
                 className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
@@ -693,20 +720,6 @@ export function CustomizationSheet({
               inView
             >
             <CredentialsManager onGuideRequest={openGuideAt} active={!guideOpen} />
-            <div className="space-y-3">
-              <div className="space-y-0.5">
-                <div className="settings-section-label-row">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                    Data sources
-                  </h3>
-                  <button type="button" className="settings-context-help" onClick={() => openGuideAt(4)} aria-label="What’s this? Relay data source connection">What’s this?</button>
-                </div>
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  Check when your connected sources last updated.
-                </p>
-              </div>
-              <SourceStatus />
-            </div>
             <button type="button" className="settings-help-row" aria-label="Open setup guide" onClick={() => openGuideAt()}>
               <span><strong>Setup guide</strong><span>Help with calendar feeds, preferences, and Android sign-in.</span></span>
               <span className="settings-help-action">Open guide</span>
@@ -790,6 +803,12 @@ export function CustomizationSheet({
             </BlurFade>
           </TabsContent>
 
+          <TabsContent value="status" className="settings-panel pt-0">
+            <SourcesPanel onManageConnections={() => setActiveTab('credentials')} />
+          </TabsContent>
+          <TabsContent value="recommendations" className="settings-panel pt-0">
+            <RecommendationInsights response={recommendations} pending={recommendationsPending} error={recommendationsError} onRetry={onRetryRecommendations} />
+          </TabsContent>
           <TabsContent value="about" className="settings-panel settings-about pt-0">
             <BlurFade
               as="section"
@@ -1109,66 +1128,7 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
   );
 }
 
-function SourceStatus() {
-  const queryClient = useQueryClient();
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-
-  const refresh = async () => {
-    setRefreshing(true);
-    setError('');
-    try {
-      const result = await triggerPoll();
-      await Promise.all(['health', 'dashboard', 'full-calendar', 'calendar', 'recommendations', 'setup-status'].map(key =>
-        queryClient.invalidateQueries({ queryKey: [key] }),
-      ));
-      const issues = result.receipts.filter(receipt => !['ok', 'empty'].includes(receipt.outcome));
-      if (issues.length > 0) {
-        setError(issues.map(receipt => `${receipt.source_id}: ${receipt.error || receipt.outcome}`).join(' · '));
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not refresh sources.');
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  return (
-    <div className="mt-2 space-y-2 settings-source-panel">
-      <SourcesPanel onRefresh={() => void refresh()} isFetching={refreshing} />
-      {error && <p className="text-xs text-rose-300" role="alert">{error}</p>}
-    </div>
-  );
-}
-
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (mins < 60) return `${mins}m ${secs}s`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  if (hours < 24) return `${hours}h ${remMins}m`;
-  const days = Math.floor(hours / 24);
-  const remHours = hours % 24;
-  return `${days}d ${remHours}h`;
-}
-
 function AboutTab() {
-  const healthz = useHealthz(true);
-  const health = useHealth(true);
-
-  const uptimeStr = healthz.data?.uptime_s != null ? formatUptime(healthz.data.uptime_s) : null;
-  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  const runtimeName = isLocal ? 'Local Relay Engine (Node)' : 'Cloudflare Workers (Edge)';
-  const hostEndpoint = typeof window !== 'undefined' ? window.location.host : 'localhost:5173';
-
-  const sources = health.data?.sources ?? [];
-  const readySources = sources.filter((s) => s.ready && (!s.last_run || s.last_run.outcome === 'ok')).length;
-  const totalSources = sources.length;
-  const snapshotCount = health.data?.snapshots ?? 0;
-  const isConnected = Boolean(healthz.data?.ok);
-
   return (
     <div className="settings-about space-y-6">
       {/* App Identity & Creator */}
@@ -1193,50 +1153,6 @@ function AboutTab() {
           >
             github.com/Peteryhs/uni-dashboard
           </a>
-        </div>
-      </div>
-
-      {/* Instance Telemetry */}
-      <div>
-        <div className="settings-about-section-header">
-          <h3 className="settings-about-section-title">Instance status</h3>
-          <span className="settings-about-status-indicator">
-            <span className={cn('settings-about-status-dot', !isConnected && 'is-offline')} />
-            {isConnected ? 'Operational' : (healthz.isLoading ? 'Checking…' : 'Unreachable')}
-          </span>
-        </div>
-
-        <div className="settings-about-grid">
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Runtime Target</span>
-            <span className="settings-about-metric-value" title={runtimeName}>{runtimeName}</span>
-          </div>
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Relay Uptime</span>
-            <span className="settings-about-metric-value settings-about-metric-mono">{uptimeStr ?? (healthz.isLoading ? 'Checking…' : 'Unavailable')}</span>
-          </div>
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Feed Health</span>
-            <span className="settings-about-metric-value settings-about-metric-mono">
-              {totalSources > 0 ? `${readySources} / ${totalSources} nominal` : 'Evaluating…'}
-            </span>
-          </div>
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Indexed Snapshots</span>
-            <span className="settings-about-metric-value settings-about-metric-mono">
-              {snapshotCount > 0 ? `${snapshotCount.toLocaleString()} stored` : '0 stored'}
-            </span>
-          </div>
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Host Endpoint</span>
-            <span className="settings-about-metric-value settings-about-metric-mono" title={hostEndpoint}>
-              {hostEndpoint}
-            </span>
-          </div>
-          <div className="settings-about-metric">
-            <span className="settings-about-metric-label">Campus Timezone</span>
-            <span className="settings-about-metric-value settings-about-metric-mono">America/Toronto (EDT)</span>
-          </div>
         </div>
       </div>
 

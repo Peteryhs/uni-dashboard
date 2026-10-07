@@ -31,6 +31,9 @@ object NotificationPlanner {
     val DEADLINE_LEADS_MS = listOf(24 * 3_600_000L, 2 * 3_600_000L)
     /** AlarmManager holds these until they fire; two days is enough, the next sync extends it. */
     const val HORIZON_MS = 48 * 3_600_000L
+    const val SCHEDULE_CHANGE_NOTICE_MS = 24 * 3_600_000L
+    const val DEADLINE_CHANGE_NOTICE_MS = 72 * 3_600_000L
+    const val TUTORIAL_WORK_NOTICE_MS = 72 * 3_600_000L
 
     private val timeFormat = DateTimeFormatter.ofPattern("h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
     private val dayTimeFormat = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
@@ -56,12 +59,33 @@ object NotificationPlanner {
     }
 
     /** Only upcoming, fresh evidence triggers a push. The stable IDs survive ordinary syncs. */
-    fun changesToShow(calendar: Calendar?, shown: Set<String>, now: Long): List<CalendarChangeAlert> =
-        calendar?.alerts.orEmpty()
-            .filter { it.id !in shown && it.endsAt >= now && it.startsAt <= now + HORIZON_MS && it.state in setOf(CardState.Live, CardState.Ageing) }
+    fun changesToShow(calendar: Calendar?, shown: Set<String>, now: Long): List<CalendarChangeAlert> {
+        val events = calendar?.days.orEmpty().flatMap { it.events }.associateBy { it.id }
+        return calendar?.alerts.orEmpty()
+            .filter { change ->
+                if (change.id in shown || change.endsAt < now || change.state !in setOf(CardState.Live, CardState.Ageing)) return@filter false
+                val event = events[change.eventId]
+                val deadlineChange = change.kind == "deadline" ||
+                    (change.previousAt != null && event?.category in setOf("deadline", "exam"))
+                val noticeWindow = when {
+                    deadlineChange -> DEADLINE_CHANGE_NOTICE_MS
+                    change.kind == "tutorial_work" -> TUTORIAL_WORK_NOTICE_MS
+                    else -> SCHEDULE_CHANGE_NOTICE_MS
+                }
+                val affectedAt = if (deadlineChange || change.kind == "time") {
+                    minOf(change.startsAt, change.previousAt ?: Long.MAX_VALUE, change.currentAt ?: Long.MAX_VALUE)
+                } else change.startsAt
+                // HORIZON_MS applies to scheduled reminders. A changed deadline may have moved
+                // farther away, so its notice window follows the earlier of the old and new time.
+                affectedAt <= now + noticeWindow
+            }
             .sortedBy { it.startsAt }
-            .distinctBy { "${it.course}:${it.kind}:${if (it.kind == "unusual_room") it.startsAt else it.observedAt}:${it.previousLocation}:${it.location}" }
+            .distinctBy {
+                if (it.kind == "room") "${it.course}:${it.kind}:${it.previousLocation}:${it.location}"
+                else it.id
+            }
             .take(3)
+    }
 
     private fun remindersFor(e: CalendarEvent): List<Reminder> = when {
         e.allDay -> emptyList()

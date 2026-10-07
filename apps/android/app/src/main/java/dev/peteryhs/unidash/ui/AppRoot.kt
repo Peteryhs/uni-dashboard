@@ -51,6 +51,7 @@ import dev.peteryhs.unidash.data.Alert
 import dev.peteryhs.unidash.ui.calendar.CalendarScreen
 import dev.peteryhs.unidash.ui.food.FoodScreen
 import dev.peteryhs.unidash.ui.settings.SettingsScreen
+import dev.peteryhs.unidash.ui.settings.SettingsDestination
 import dev.peteryhs.unidash.ui.setup.SetupScreen
 import dev.peteryhs.unidash.ui.today.TodayScreen
 
@@ -84,6 +85,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
     val baseUrl by vm.baseUrl.collectAsStateWithLifecycle()
     val managedOAuth by vm.managedOAuth.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
+    var settingsDestination by rememberSaveable { mutableStateOf(SettingsDestination.Overview) }
     val snackbar = remember { SnackbarHostState() }
     val now = rememberNow()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -94,6 +96,10 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
 
     val alert = snapshot.bundle?.card("alert")?.payload<Alert>()
     val alertBadge = alert != null && alert.count > 0 && !alert.dismissed
+    val openStatus = {
+        settingsDestination = SettingsDestination.Status
+        tab = Tab.Settings
+    }
 
     val enter = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
     val exit = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
@@ -104,10 +110,15 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
             label = "tab",
         ) { t ->
             when (t) {
-                Tab.Today -> TodayScreen(vm, snapshot, now, snackbar)
-                Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar)
-                Tab.Food -> FoodScreen(vm, snapshot, now, snackbar)
-                Tab.Settings -> SettingsScreen(vm, snapshot, now, snackbar, baseUrl, managedOAuth, onReauthenticate)
+                Tab.Today -> TodayScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                Tab.Food -> FoodScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                Tab.Settings -> SettingsScreen(
+                    vm, snapshot, now, snackbar, baseUrl, managedOAuth, onReauthenticate,
+                    destination = settingsDestination,
+                    onDestination = { settingsDestination = it },
+                    onStatus = openStatus,
+                )
             }
         }
     }
@@ -124,7 +135,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
                     Tab.entries.forEach { t ->
                         NavigationRailItem(
                             selected = tab == t,
-                            onClick = { tab = t },
+                            onClick = { tab = t; if (t == Tab.Settings) settingsDestination = SettingsDestination.Overview },
                             icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
                             label = { Text(t.label) },
                         )
@@ -141,7 +152,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
                     Tab.entries.forEach { t ->
                         ShortNavigationBarItem(
                             selected = tab == t,
-                            onClick = { tab = t },
+                            onClick = { tab = t; if (t == Tab.Settings) settingsDestination = SettingsDestination.Overview },
                             icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
                             label = { Text(t.label) },
                         )

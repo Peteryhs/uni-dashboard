@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +23,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,7 +54,7 @@ import java.util.Locale
 
 /** The saved dining summary and menus. Ranking and parsing happen on the server; this only renders them. */
 @Composable
-fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState) {
+fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState, onStatus: (() -> Unit)? = null) {
     val uri = LocalUriHandler.current
     val foodCard = snapshot.bundle?.card("food")
     val food = foodCard?.payload<Food>()
@@ -74,6 +72,7 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
                 }
             }
         },
+        onStatus = onStatus,
     ) {
         if (food == null || foodCard == null) {
             item { EmptyNote("No menu loaded yet.") }
@@ -204,7 +203,7 @@ private fun OutletCard(outlet: Outlet, ranked: RankedOutlet?, isTop: Boolean) {
             ) {
                 stationGroups(outlet.dishes).forEachIndexed { index, (station, dishes) ->
                     if (index > 0) HorizontalDivider(Modifier.padding(vertical = Spacing.xs), color = MaterialTheme.colorScheme.outlineVariant)
-                    if (station.isNotBlank()) StationHeader(station, dishes.size)
+                    if (station.isNotBlank()) StationHeader(station)
                     dishes.forEach { d -> DishRow(d, ranked?.highlights?.firstOrNull { diningNameMatches(it.dish, d.dish) }) }
                 }
             }
@@ -212,18 +211,16 @@ private fun OutletCard(outlet: Outlet, ranked: RankedOutlet?, isTop: Boolean) {
     }
 }
 
-/** Icon, "THE CARVERY", count: the counter inside the hall, so the list reads like the room does. */
+/** A quiet landmark for the counter inside the hall, distinct from the highlighted dishes. */
 @Composable
-private fun StationHeader(station: String, count: Int) {
+private fun StationHeader(station: String) {
     Row(
         Modifier.fillMaxWidth().padding(top = Spacing.s, bottom = Spacing.xs).semantics(mergeDescendants = true) { heading() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
-        Icon(stationIcon(station), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-        Text(station.uppercase(Locale.CANADA), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-        Text("$count", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.semantics { contentDescription = "$count dishes" })
+        Icon(stationIcon(station), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        Text(station, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
     }
 }
 
@@ -238,23 +235,34 @@ private fun DishRow(d: Dish, highlight: Highlight?) {
         if (highlight == null) Spacer(Modifier.width(4.dp))
         else Box(Modifier.width(4.dp).height(36.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            Text(
-                d.dish,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (highlight == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                fontWeight = if (highlight == null) FontWeight.Normal else FontWeight.SemiBold,
-            )
-            if (d.diet.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    d.diet.forEach { tag ->
-                        val (short, label) = dietTag(tag)
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                            shape = MaterialTheme.shapes.extraSmall,
-                            modifier = Modifier.semantics { contentDescription = label },
-                        ) {
-                            Text(short, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Text(
+                    d.dish,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (highlight == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                    fontWeight = if (highlight == null) FontWeight.Normal else FontWeight.SemiBold,
+                )
+                if (d.diet.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        d.diet.forEach { tag ->
+                            val (_, label) = dietTag(tag)
+                            val icon = dietIcon(tag)
+                            if (icon != null) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            } else {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.semantics { contentDescription = label },
+                                )
+                            }
                         }
                     }
                 }

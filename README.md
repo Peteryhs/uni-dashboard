@@ -90,6 +90,10 @@ The backend also serves an explainable, clock-aware daily feed at `GET /v1/recom
 reviewed syllabus imports and cross-device completion/snooze state. See
 [Daily guidance backend](docs/DAILY-GUIDANCE.md) for the endpoints, priorities, limits and simulations.
 
+Settings → Status consolidates backend reachability, source freshness, failures, and runtime information.
+The Recommendations settings view (How it works on Android Today) explains ranking and deferred suggestions.
+See [Service status](docs/SERVICE-STATUS.md) for the shared monitoring policy.
+
 The client is Vite + React + Tailwind v4 + shadcn/ui. It imports the age ladder and the
 skip-unknown-card rule from `packages/contract` rather than restating them, so the web and Android
 clients cannot drift from the server.

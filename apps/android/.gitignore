@@ -1,4 +1,5 @@
 .gradle/
+.gradle-work/
 .kotlin/
 build/
 local.properties
