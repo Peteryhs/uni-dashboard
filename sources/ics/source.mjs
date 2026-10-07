@@ -41,6 +41,7 @@ export function makeIcsSource({
   cadenceMs: sourceCadenceMs = cadenceMs,
   rateLimitMinMs = 30 * 60 * 1000,
   rateLimitMaxMs = 48 * 60 * 60 * 1000,
+  optional = false,
 }) {
   return {
     id,
@@ -50,6 +51,9 @@ export function makeIcsSource({
     rateLimitMinMs,
     rateLimitMaxMs,
     needsSecret: true,
+    get optional() {
+      return typeof optional === 'function' ? Boolean(optional()) : Boolean(optional);
+    },
     envVar,
     tz,
     windowDays,
@@ -230,6 +234,7 @@ export const portalIcs = makeIcsSource({
   cadenceMs: 6 * 60 * 60 * 1000,
   rateLimitMinMs: 12 * 60 * 60 * 1000,
   rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,
+  optional: () => Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
 });
 export const googleCalendarIcs = makeIcsSource({
   id: 'google-calendar-ics',
@@ -238,5 +243,6 @@ export const googleCalendarIcs = makeIcsSource({
   cadenceMs: 6 * 60 * 60 * 1000,
   rateLimitMinMs: 12 * 60 * 60 * 1000,
   rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,
+  optional: true,
 });
 export const learnIcs = makeIcsSource({ id: 'uw-learn-ics', role: 'learn', envVar: 'LEARN_ICS_URL' });

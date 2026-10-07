@@ -286,7 +286,7 @@ async function handleFetch(request, env, ctx) {
     const [last, jobs, snapshots] = [await store.lastRunPerSource(), await store.jobs(), await store.snapshotCount()];
     return json({
       now: Date.now(),
-      sources: readiness(SOURCES).map((r) => {
+      sources: readiness(enabledSources(SOURCES)).map((r) => {
         const run = last.find((l) => l.source_id === r.id);
         const job = jobs.find((j) => j.source_id === r.id);
         return {

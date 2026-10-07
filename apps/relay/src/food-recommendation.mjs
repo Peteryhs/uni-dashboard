@@ -1,6 +1,7 @@
 /** Persistent dining recommendation shared by the Worker, local relay, and clients. */
 import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
+import { todayInToronto } from '#sources/food/source.mjs';
 
 const PROFILE_KEY = 'FOOD_AI_PROFILE_JSON';
 const RESULT_KEY = 'FOOD_AI_RECOMMENDATION_JSON';
@@ -58,7 +59,14 @@ export async function saveFoodProfile(store, input) {
     await store.setSetting(PROFILE_KEY, next);
     // Keep the last successful result visible while the new profile is re-ranked.
     const saved = parseJson(await store.getSetting(RESULT_KEY), null);
-    if (saved) await store.setSetting(RESULT_KEY, JSON.stringify({ ...saved, status: 'pending', stale: Boolean(saved.recommendation), updated_at: Date.now() }));
+    if (saved) {
+      const stalePayload = JSON.stringify({ ...saved, status: 'pending', stale: Boolean(saved.recommendation), updated_at: Date.now() });
+      await store.setSetting(RESULT_KEY, stalePayload);
+      if (saved.service_date) {
+        const dateSaved = parseJson(await store.getSetting(`${RESULT_KEY}:${saved.service_date}`), null);
+        if (dateSaved) await store.setSetting(`${RESULT_KEY}:${saved.service_date}`, stalePayload);
+      }
+    }
   }
   return profile;
 }
@@ -87,11 +95,18 @@ export async function persistManualFoodRecommendation(store, {
   const savedProfile = cleanFoodProfile(rawSavedProfile);
   if (JSON.stringify(savedProfile) !== JSON.stringify(requestedProfile) || savedProfile.selectedAiModel !== model) return false;
 
+  const today = todayInToronto(now);
+  const targetDate = serviceDate > today ? serviceDate : today;
   const latest = await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)',
+    params: [targetDate],
+    limit: 1,
+  });
+  const fallback = latest.length ? latest : await store.rows('menu_item', {
     where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0)',
     limit: 1,
   });
-  if (latest[0]?.service_date !== serviceDate) return false;
+  if (fallback[0]?.service_date && fallback[0].service_date !== serviceDate && fallback[0].service_date > serviceDate) return false;
   const currentMenu = await store.rows('menu_item', {
     where: 'service_date = ?',
     params: [serviceDate],
@@ -102,19 +117,35 @@ export async function persistManualFoodRecommendation(store, {
 
   const previous = parseJson(await store.getSetting(RESULT_KEY), null);
   if (previous?.signature === signature && previous.status === 'ready' && Number.isFinite(startedAt) && previous.updated_at > startedAt) return false;
-  await store.setSetting(RESULT_KEY, JSON.stringify({
+  const payload = JSON.stringify({
     signature,
     service_date: serviceDate,
     status: 'ready',
     recommendation,
     stale: false,
     updated_at: now,
-  }));
+  });
+  if (serviceDate !== today) {
+    await store.setSetting(`${RESULT_KEY}:${serviceDate}`, payload, now);
+  }
+  const currentMain = parseJson(await store.getSetting(RESULT_KEY), null);
+  if (serviceDate === today || !currentMain || currentMain.service_date !== today) {
+    await store.setSetting(RESULT_KEY, payload, now);
+  }
   return true;
 }
 
 export async function getFoodRecommendation(store, serviceDate = '') {
-  const result = parseJson(await store.getSetting(RESULT_KEY), null);
+  let result = null;
+  if (serviceDate) {
+    result = parseJson(await store.getSetting(`${RESULT_KEY}:${serviceDate}`), null);
+  }
+  if (!result) {
+    const main = parseJson(await store.getSetting(RESULT_KEY), null);
+    if (!serviceDate || main?.service_date === serviceDate) {
+      result = main;
+    }
+  }
   if (!result) return { status: 'pending', recommendation: null };
   if (serviceDate && result.service_date !== serviceDate) return { status: 'pending', recommendation: null };
   const recommendation = result.recommendation?.service_date === result.service_date ? result.recommendation : null;
@@ -137,19 +168,32 @@ export async function markManualFoodRanking(store, { jobId, serviceDate, now = D
   const signature = foodRecommendationSignature(serviceDate, profile, menuItems);
   const previous = parseJson(await store.getSetting(RESULT_KEY), null);
   const recommendation = previous?.recommendation?.service_date === serviceDate ? previous.recommendation : null;
-  await store.setSetting(RESULT_KEY, JSON.stringify({
+  const payload = JSON.stringify({
     signature, service_date: serviceDate, status: 'processing', manual_job_id: jobId,
     ...(recommendation ? { recommendation, stale: true } : {}), updated_at: now,
-  }), now);
+  });
+  const today = todayInToronto(now);
+  if (serviceDate !== today) {
+    await store.setSetting(`${RESULT_KEY}:${serviceDate}`, payload, now);
+  }
+  const currentMain = parseJson(await store.getSetting(RESULT_KEY), null);
+  if (serviceDate === today || !currentMain || currentMain.service_date !== today) {
+    await store.setSetting(RESULT_KEY, payload, now);
+  }
 }
 
-export async function failManualFoodRanking(store, { jobId, error, now = Date.now() }) {
-  const current = parseJson(await store.getSetting(RESULT_KEY), null);
-  if (current?.status !== 'processing' || current.manual_job_id !== jobId) return;
-  await store.setSetting(RESULT_KEY, JSON.stringify({
-    ...current, status: 'failed', error,
-    stale: Boolean(current.recommendation), updated_at: now,
-  }), now);
+export async function failManualFoodRanking(store, { jobId, serviceDate = '', error, now = Date.now() }) {
+  const keys = [RESULT_KEY];
+  if (serviceDate) keys.unshift(`${RESULT_KEY}:${serviceDate}`);
+  for (const key of keys) {
+    const current = parseJson(await store.getSetting(key), null);
+    if (current?.status === 'processing' && current.manual_job_id === jobId) {
+      await store.setSetting(key, JSON.stringify({
+        ...current, status: 'failed', error,
+        stale: Boolean(current.recommendation), updated_at: now,
+      }), now);
+    }
+  }
 }
 
 /** Keep cron rankings and user-triggered rankings on separate daily attempt budgets. */
@@ -184,16 +228,25 @@ export async function claimFoodAiRun(store, now = Date.now(), source = 'manual')
 
 /** Cron and local poll call this after fetching; it never needs a page view. */
 export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.now(), force = false } = {}) {
-  const latest = await store.rows('menu_item', { where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0)', limit: 1 });
-  if (!latest.length) return { status: 'pending', reason: 'no menu' };
-  const serviceDate = latest[0].service_date;
+  const todayToronto = todayInToronto(now);
+  const rows = await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)',
+    params: [todayToronto],
+    limit: 1,
+  });
+  const fallback = rows.length ? rows : await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0)',
+    limit: 1,
+  });
+  if (!fallback.length) return { status: 'pending', reason: 'no menu' };
+  const serviceDate = fallback[0].service_date;
   const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
   const profile = cleanFoodProfile(parseJson(await store.getSetting(PROFILE_KEY), {}));
   const signature = foodRecommendationSignature(serviceDate, profile, menuItems);
   const previous = parseJson(await store.getSetting(RESULT_KEY), null);
   const sameSignature = previous?.signature === signature;
   const today = new Date(now).toISOString().slice(0, 10);
-  const priorFailures = sameSignature ? previous.failure_count || 0 : 0;
+  const priorFailures = sameSignature ? previous?.failure_count || 0 : 0;
   const keepRecommendation = previous?.recommendation?.service_date === serviceDate ? previous.recommendation : null;
   if (!force && sameSignature) {
     if (previous.status === 'ready') return { status: 'ready', cached: true };
@@ -223,9 +276,9 @@ export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.n
       service_date: serviceDate,
       status: 'attempt_limited',
       limit_reason: 'automatic_attempt_cap',
-      error: sameSignature ? previous.error || '' : '',
+      error: sameSignature ? previous?.error || '' : '',
       failure_count: priorFailures,
-      failure_day: sameSignature ? previous.failure_day || '' : '',
+      failure_day: sameSignature ? previous?.failure_day || '' : '',
       limit_day: today,
       updated_at: now,
     }));
@@ -243,7 +296,7 @@ export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.n
     const recommendation = await rankDailyMenu({ menuItems, serviceDate, tasteProfile: profile, model: profile.selectedAiModel, cfEnv, force: true, now, beforeAiCall: aiBudgetGuard(store) });
     // A newer menu/profile may have arrived while the model ran. Never replace its result.
     const current = parseJson(await store.getSetting(RESULT_KEY), null);
-    if (current?.signature === signature && !(current.status === 'ready' && current.updated_at > now)) {
+    if (!current || (current?.signature === signature && !(current.status === 'ready' && current.updated_at > now))) {
       await store.setSetting(RESULT_KEY, JSON.stringify({ signature, service_date: serviceDate, status: 'ready', recommendation, stale: false, updated_at: Date.now() }));
     }
     return { status: 'ready', recommendation };
@@ -254,19 +307,21 @@ export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.n
     const failureCount = priorFailures + Number(!sharedBudgetExhausted);
     const attemptLimited = !sharedBudgetExhausted && failureCount >= MAX_FAILURE_ATTEMPTS;
     const failureStatus = sharedBudgetExhausted ? 'budget_limited' : attemptLimited ? 'attempt_limited' : 'failed';
-    if (current?.signature === signature && current.status !== 'ready') await store.setSetting(RESULT_KEY, JSON.stringify({
-      ...(keepRecommendation ? { recommendation: keepRecommendation, stale: true } : {}),
-      signature,
-      service_date: serviceDate,
-      status: failureStatus,
-      limit_reason: sharedBudgetExhausted ? 'shared_ai_budget' : attemptLimited ? 'repeated_failures' : '',
-      error: message,
-      error_diagnostic: error?.diagnostic || null,
-      failure_count: failureCount,
-      failure_day: today,
-      limit_day: sharedBudgetExhausted || attemptLimited ? today : '',
-      updated_at: Date.now(),
-    }));
+    if (!current || (current?.signature === signature && current.status !== 'ready')) {
+      await store.setSetting(RESULT_KEY, JSON.stringify({
+        ...(keepRecommendation ? { recommendation: keepRecommendation, stale: true } : {}),
+        signature,
+        service_date: serviceDate,
+        status: failureStatus,
+        limit_reason: sharedBudgetExhausted ? 'shared_ai_budget' : attemptLimited ? 'repeated_failures' : '',
+        error: message,
+        error_diagnostic: error?.diagnostic || null,
+        failure_count: failureCount,
+        failure_day: today,
+        limit_day: sharedBudgetExhausted || attemptLimited ? today : '',
+        updated_at: Date.now(),
+      }));
+    }
     return { status: failureStatus, error: message, diagnostic: error?.diagnostic || null };
   }
 }

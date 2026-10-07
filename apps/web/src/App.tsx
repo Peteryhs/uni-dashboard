@@ -171,50 +171,61 @@ function AnimatedUndoToast({
   onUndo,
   onDismiss,
   actionLabel = 'Hidden',
+  durationMs = 5000,
 }: {
   lastHidden: { id: string; title: string } | null;
   onUndo: (id: string) => void;
   onDismiss: () => void;
   actionLabel?: string;
+  durationMs?: number;
 }) {
   const [closing, setClosing] = useState(false);
   const [activeItem, setActiveItem] = useState(lastHidden);
-  const timerRef = useRef<number | null>(null);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  const exitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (lastHidden) {
-      setActiveItem(lastHidden);
-      setClosing(false);
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => {
+    if (!lastHidden) {
+      if (activeItem && !closing) {
         setClosing(true);
-        timerRef.current = window.setTimeout(() => {
+        exitTimerRef.current = window.setTimeout(() => {
           setActiveItem(null);
           setClosing(false);
-          onDismiss();
         }, 180);
-      }, 7800);
+      }
       return () => {
-        if (timerRef.current) window.clearTimeout(timerRef.current);
-      };
-    } else if (activeItem && !closing) {
-      setClosing(true);
-      timerRef.current = window.setTimeout(() => {
-        setActiveItem(null);
-        setClosing(false);
-      }, 180);
-      return () => {
-        if (timerRef.current) window.clearTimeout(timerRef.current);
+        if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current);
       };
     }
-  }, [lastHidden, activeItem, closing, onDismiss]);
+
+    setActiveItem(lastHidden);
+    setClosing(false);
+
+    const autoDismissTimer = window.setTimeout(() => {
+      setClosing(true);
+      exitTimerRef.current = window.setTimeout(() => {
+        setActiveItem(null);
+        setClosing(false);
+        onDismissRef.current();
+      }, 180);
+    }, durationMs);
+
+    return () => {
+      window.clearTimeout(autoDismissTimer);
+      if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current);
+    };
+  }, [lastHidden, durationMs]);
 
   if (!activeItem) return null;
 
   const handleUndo = () => {
+    if (!activeItem) return;
+    const itemToUndo = activeItem;
+    if (exitTimerRef.current) window.clearTimeout(exitTimerRef.current);
     setClosing(true);
-    window.setTimeout(() => {
-      onUndo(activeItem.id);
+    exitTimerRef.current = window.setTimeout(() => {
+      onUndo(itemToUndo.id);
       setActiveItem(null);
       setClosing(false);
     }, 180);
@@ -530,6 +541,7 @@ function MenuSection() {
     try {
       const result = await triggerPoll('uw-food-daily-menu');
       await queryClient.invalidateQueries({ queryKey: ['posted-menu'] });
+      await queryClient.invalidateQueries({ queryKey: ['food-recommendation'] });
       const issue = result.receipts.find(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty' && receipt.outcome !== 'skipped');
       if (issue) throw new Error(refreshIssue(issue.source_id, issue.error, issue.outcome));
       const viewError = queryClient.getQueryState(['posted-menu', selectedDay])?.error;
@@ -814,6 +826,7 @@ export default function App() {
         </BlurFade>
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
+      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} ${recs.data.warnings.length === 1 ? 'source warning needs' : 'source warnings need'} attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       <AnimatedUndoToast
         lastHidden={lastHiddenRec}
         actionLabel={lastHiddenRec?.action === 'done' ? 'Completed' : 'Dismissed'}
@@ -829,7 +842,6 @@ export default function App() {
         onDismiss={() => setLastHiddenRec(null)}
       />
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
-      {recs.data?.warnings && recs.data.warnings.length > 0 && <BlurFade as="div" className="warning-strip" duration={0.4} offset={8} blur="4px"><BlurFadeDisclosure summary={`${recs.data.warnings.length} ${recs.data.warnings.length === 1 ? 'source warning needs' : 'source warnings need'} attention`}><ul>{recs.data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul></BlurFadeDisclosure></BlurFade>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}
     </section>
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />

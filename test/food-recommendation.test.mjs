@@ -330,3 +330,88 @@ test('ranking attempt usage records manual and automatic sources separately', as
     manual_count: 1,
   });
 });
+
+test('rolling multi-day menus allow ranking today when tomorrow is published, and preserve both', async () => {
+  const store = makeStore();
+  const today = '2026-10-06';
+  const tomorrow = '2026-10-07';
+  const now = Date.parse(`${today}T12:00:00Z`);
+
+  const todayMenu = [{ service_date: today, external_id: 'dish-today', outlet: 'Cafe', dish: 'Soup', diet: [], allergens: [] }];
+  const tomorrowMenu = [{ service_date: tomorrow, external_id: 'dish-tomorrow', outlet: 'Cafe', dish: 'Stew', diet: [], allergens: [] }];
+  const allMenus = [...todayMenu, ...tomorrowMenu];
+
+  store.rows = async (_shape, options) => {
+    if (options?.where?.includes('service_date = ?')) {
+      const date = options.params[0];
+      return allMenus.filter(item => item.service_date === date);
+    }
+    if (options?.where?.includes('service_date <= ?')) {
+      const target = options.params[0];
+      const valid = allMenus.filter(item => item.service_date <= target);
+      const maxDate = valid.reduce((max, item) => item.service_date > max ? item.service_date : max, '');
+      return valid.filter(item => item.service_date === maxDate);
+    }
+    if (options?.where?.includes('MAX(service_date)')) {
+      return [{ service_date: tomorrow }];
+    }
+    return allMenus;
+  };
+
+  const profile = await saveFoodProfile(store, { bio: 'soup fan' });
+  const cfEnv = { AI: { run: async () => ({ response: JSON.stringify({
+    headline: 'Today soup is great.',
+    top_outlet: 'Cafe',
+    ranked_outlets: [{ outlet: 'Cafe', rank: 1, match_score: 90, verdict: 'Fits soup fan.', highlights: [] }],
+    tip: '',
+  }) }) } };
+
+  // 1. Automatic sync targets today, even though tomorrow exists in the DB
+  const syncResult = await syncFoodRecommendation(store, { cfEnv, now });
+  assert.equal(syncResult.status, 'ready');
+  const todaySaved = await getFoodRecommendation(store, today);
+  assert.equal(todaySaved.status, 'ready');
+  assert.equal(todaySaved.recommendation.service_date, today);
+
+  // 2. Manual ranking for tomorrow persists successfully
+  const tomorrowRecommendation = {
+    service_date: tomorrow,
+    model: profile.selectedAiModel,
+    headline: 'Tomorrow stew is great.',
+    top_outlet: 'Cafe',
+    ranked_outlets: [{ outlet: 'Cafe', rank: 1, match_score: 90, verdict: 'Fits profile.', highlights: [] }],
+    tip: '',
+    generated_at: now,
+  };
+  assert.equal(await persistManualFoodRecommendation(store, {
+    recommendation: tomorrowRecommendation,
+    tasteProfile: profile,
+    model: profile.selectedAiModel,
+    requestedDate: tomorrow,
+    serviceDate: tomorrow,
+    menuItems: tomorrowMenu,
+    now,
+  }), true);
+
+  // 3. Both today and tomorrow can be read independently without overwrite
+  const tomorrowSaved = await getFoodRecommendation(store, tomorrow);
+  assert.equal(tomorrowSaved.status, 'ready');
+  assert.equal(tomorrowSaved.recommendation.service_date, tomorrow);
+  assert.equal(tomorrowSaved.recommendation.headline, 'Tomorrow stew is great.');
+
+  const todayRechecked = await getFoodRecommendation(store, today);
+  assert.equal(todayRechecked.status, 'ready');
+  assert.equal(todayRechecked.recommendation.service_date, today);
+  assert.equal(todayRechecked.recommendation.headline, 'Today soup is great.');
+
+  // 4. Older superseded date cannot replace the active recommendation
+  assert.equal(await persistManualFoodRecommendation(store, {
+    recommendation: { ...tomorrowRecommendation, service_date: '2026-10-05' },
+    tasteProfile: profile,
+    model: profile.selectedAiModel,
+    requestedDate: '2026-10-05',
+    serviceDate: '2026-10-05',
+    menuItems: todayMenu,
+    now,
+  }), false);
+});

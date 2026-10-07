@@ -188,6 +188,7 @@
 .calendar-clear { margin: 12px 0; color: #9199a3; font-size: 12px; }
 .calendar-notice { margin: 0; padding: 10px 18px; border-top: 1px solid #484c53; color: #e6cc97; font-size: 12px; }
 .undo-toast { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 16px 16px; padding: 10px 13px; border: 1px solid #686e77; border-radius: 8px; background: #393e45; color: #e5e9ed; font-size: 12px; }
+.today-content .undo-toast { margin: 10px 0 0; }
 .undo-toast.is-closing { animation: detail-exit 180ms ease-in both; pointer-events: none; }
 .undo-toast button { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .menu-status { margin: -4px 0 12px; color: #bac1ca; font-size: 13px; }

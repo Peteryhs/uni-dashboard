@@ -6,7 +6,7 @@ import { ageState } from '../../../../packages/contract/src/cards.mjs';
  * parses may leave old rows in place.
  */
 export function sourceCondition(source, now = Date.now()) {
-  if (!source.ready) return 'blocked';
+  if (!source.ready) return source.optional ? 'unknown' : 'blocked';
   const run = source.last_run;
   if (!run) return 'unknown';
   if (source.job?.circuit === 'open') return 'failing';

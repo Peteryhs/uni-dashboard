@@ -2,6 +2,7 @@
 import { rankDailyMenu, parseOfficeHoursWithAi } from './ai.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
 import { buildPreviewOccurrences } from '#sources/office-hours/source.mjs';
+import { todayInToronto } from '#sources/food/source.mjs';
 import { normalizeCourse } from './course-library.mjs';
 import { previewSyllabus } from './syllabus.mjs';
 import { claimFoodAiRun, cleanFoodProfile, failManualFoodRanking, getFoodProfile, markManualFoodRanking, persistManualFoodRecommendation, saveFoodProfile } from './food-recommendation.mjs';
@@ -71,8 +72,21 @@ export async function queueAiJob(store, { kind, scope, input, now = Date.now() }
 
 async function runFoodRanking(store, job, cfEnv) {
   const serviceDate = job.scope;
-  const latest = await store.rows('menu_item', { where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0)', limit: 1 });
-  if (latest[0]?.service_date !== serviceDate) throw new Error('The menu date changed. Refresh dining and rank again.');
+  const now = Date.now();
+  const today = todayInToronto(now);
+  const targetDate = serviceDate > today ? serviceDate : today;
+  const latest = await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)',
+    params: [targetDate],
+    limit: 1,
+  });
+  const fallback = latest.length ? latest : await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0)',
+    limit: 1,
+  });
+  if (fallback[0]?.service_date && fallback[0].service_date !== serviceDate && fallback[0].service_date > serviceDate) {
+    throw new Error('The menu date changed. Refresh dining and rank again.');
+  }
   const menuItems = await store.rows('menu_item', { where: 'service_date = ?', params: [serviceDate], limit: 500 });
   if (!menuItems.length) throw new Error('No dining menu items are available for this date.');
   const saved = await getFoodProfile(store) || await saveFoodProfile(store, {});
@@ -115,7 +129,7 @@ export async function processAiJob(store, job, { cfEnv = null } = {}) {
     outcome = { ...job, status: 'ready', result, updated_at: Date.now() };
   } catch (error) {
     outcome = { ...job, status: 'failed', error: error instanceof Error ? error.message : String(error), updated_at: Date.now() };
-    if (job.kind === 'food') await failManualFoodRanking(store, { jobId: job.id, error: outcome.error, now: outcome.updated_at });
+    if (job.kind === 'food') await failManualFoodRanking(store, { jobId: job.id, serviceDate: job.scope, error: outcome.error, now: outcome.updated_at });
   }
   delete outcome.input;
   const currentRaw = await store.getSetting(key);

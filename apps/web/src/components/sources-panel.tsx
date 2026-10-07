@@ -180,14 +180,18 @@ function SourceRow({ source, now }: { source: SourceHealth; now: number }) {
       </div>
 
       {/* Actionable unblock line */}
-      {!source.ready && source.env_var && (
+      {!source.ready && source.env_var && !source.optional && (
         <div className="mt-2 rounded-lg bg-amber/10 border border-amber/20 p-2 text-xs text-amber-foreground">
           <div className="flex items-start gap-1.5">
             <KeyRound className="mt-0.5 size-3.5 shrink-0" />
             <div>
               <p className="font-medium">Missing credential</p>
               <p className="mt-0.5 text-zinc-300 text-xs">
-                Copy URL from Portal/LEARN and set <code className="font-mono font-semibold text-amber-foreground">{source.env_var}</code> in your environment, then restart.
+                {source.env_var === 'GOOGLE_CALENDAR_ICS_URL'
+                  ? 'Copy secret iCal URL from Google Calendar settings, then save in Settings → Credentials.'
+                  : source.env_var === 'LEARN_ICS_URL'
+                    ? 'Copy calendar feed URL from Waterloo LEARN and save in Settings → Credentials.'
+                    : 'Copy URL from Waterloo Portal, then save in Settings → Credentials.'}
               </p>
             </div>
           </div>

@@ -432,6 +432,7 @@ export interface SourceHealth {
   shape: string;
   cadence_ms: number;
   needs_secret: boolean;
+  optional?: boolean;
   env_var: string | null;
   ready: boolean;
   blocked_by: string;

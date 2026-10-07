@@ -39,3 +39,7 @@ test('a recent failed attempt does not hide a source issue and missing credentia
   }
   assert.equal(sourceCondition(source({ ready: false }), now), 'blocked');
 });
+
+test('unconfigured optional sources do not become blocked', () => {
+  assert.equal(sourceCondition(source({ ready: false, optional: true }), now), 'unknown');
+});

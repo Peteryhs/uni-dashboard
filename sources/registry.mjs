@@ -11,7 +11,12 @@ export const SOURCES = [food, portalIcs, googleCalendarIcs, learnIcs, status, us
 export { userOfficeHours, portalIcs, googleCalendarIcs, learnIcs };
 
 export function enabledSources(sources = SOURCES) {
-  return sources.filter((s) => !s.disabled);
+  return sources.filter((s) => {
+    if (s.disabled) return false;
+    const url = typeof s.url === 'function' ? s.url() : s.url;
+    if (s.optional && !url) return false;
+    return true;
+  });
 }
 
 export function sourceById(id, sources = SOURCES) {
@@ -55,6 +60,7 @@ export function readiness(sources = SOURCES) {
       shape: s.shape ?? s.shape,
       cadence_ms: s.cadenceMs,
       needs_secret: Boolean(s.needsSecret),
+      optional: Boolean(s.optional),
       env_var: s.envVar ?? null,
       ready,
       blocked_by: ready ? '' : `set ${s.envVar}`,
