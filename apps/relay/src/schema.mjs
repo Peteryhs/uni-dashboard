@@ -215,8 +215,55 @@ function upsertSql(shape, rowCount = null) {
  * How long the run receipt log is kept. source_run is an audit trail, not a history: left to grow
  * it turns the "latest run per source" query into a full table scan on every dashboard load, which
  * is a rows-read cost against a daily free-tier budget.
+ *
+ * Retention bounds the table, but it does not make the lookup cheap. Measured on a table holding a
+ * 7 day window of receipts (11,123 rows, of which 10,080 are the 60 s status source): the grouped
+ * form below walks 11,122 rows to return 6, because SQLite cannot skip ahead through
+ * `MAX(id) ... GROUP BY source_id` even with `idx_source_run_source_id` present. One dashboard read
+ * asked for that answer seven times and every cron tick asked once, so the scan - not the polling
+ * cadence - is what spent the free tier's 5M rows read per day.
  */
 const RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The exhaustive receipt queries: correct, and a full scan of source_run. */
+const RECEIPTS_PER_SOURCE = {
+  latest: `SELECT r.* FROM source_run r
+    JOIN (SELECT source_id, MAX(id) AS id FROM source_run GROUP BY source_id) m ON m.id = r.id`,
+  successful: `SELECT r.* FROM source_run r
+    JOIN (SELECT source_id, MAX(id) AS id FROM source_run WHERE outcome IN ('ok', 'empty')
+      GROUP BY source_id) m ON m.id = r.id`,
+};
+
+/** Above this many sources the statement would approach D1's 100 bound-parameter limit. */
+const MAX_LOOKUP_SOURCES = 40;
+
+/**
+ * The source ids a caller named, or null for "no list given".
+ *
+ * An unusable list falls back to null rather than to an empty result: every caller reads no rows as
+ * "this source has never run", which would quietly degrade a healthy source to an empty card.
+ */
+function lookupIds(sourceIds) {
+  if (!Array.isArray(sourceIds)) return null;
+  const ids = [...new Set(sourceIds.filter((id) => typeof id === 'string' && id))];
+  if (!ids.length || ids.length > MAX_LOOKUP_SOURCES) return null;
+  return ids;
+}
+
+/**
+ * Latest receipt per named source, through `idx_source_run_source_id (source_id, id DESC)`: one
+ * index seek per source, six rows read instead of eleven thousand, and one statement, so the 50
+ * queries per invocation budget is unchanged. Returns null when no usable list was given, and the
+ * caller runs the exhaustive query instead.
+ */
+function receiptLookup(sourceIds, { successful = false } = {}) {
+  const ids = lookupIds(sourceIds);
+  if (!ids) return null;
+  const perSource = successful
+    ? `SELECT MAX(id) AS id FROM source_run WHERE source_id = ? AND outcome IN ('ok', 'empty')`
+    : 'SELECT MAX(id) AS id FROM source_run WHERE source_id = ?';
+  return { sql: `SELECT * FROM source_run WHERE id IN (${ids.map(() => perSource).join(' UNION ALL ')})`, params: ids };
+}
 
 const SHAPE_COLUMNS = SHAPES;
 
@@ -228,4 +275,4 @@ const SHAPE_COLUMNS = SHAPES;
  */
 const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage', 'calendar_change'];
 
-export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, TABLES, INDEXES, CHUNK };
+export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, RECEIPTS_PER_SOURCE, receiptLookup, lookupIds, MAX_LOOKUP_SOURCES, TABLES, INDEXES, CHUNK };

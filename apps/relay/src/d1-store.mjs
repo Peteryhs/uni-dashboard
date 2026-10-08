@@ -11,7 +11,8 @@
  *
  * The pure parts (shapes, DDL, row converters, batch size) come from `schema.mjs`.
  */
-import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, INDEXES, CHUNK } from './schema.mjs';
+import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, INDEXES, CHUNK,
+  RECEIPTS_PER_SOURCE, receiptLookup } from './schema.mjs';
 import { CHANGE_RETENTION_MS } from './calendar-changes.mjs';
 import { nextJobResult } from './retry.mjs';
 
@@ -40,6 +41,11 @@ function hideLeaseFields(row) {
     Object.defineProperty(row, key, { value, enumerable: false, configurable: true, writable: true });
   }
   return row;
+}
+
+/** Both receipt readers share the row shape, the meta parsing and the lookup fallback. */
+function parseRuns(res) {
+  return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
 }
 
 export class D1Store {
@@ -193,20 +199,29 @@ export class D1Store {
     return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
-  async lastRunPerSource() {
-    const res = await this.db
-      .prepare(
-        `SELECT r.* FROM source_run r
-         JOIN (SELECT source_id, MAX(id) AS id FROM source_run GROUP BY source_id) m ON m.id = r.id`,
-      )
-      .all();
-    return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  /**
+   * Latest receipt per source.
+   *
+   * Named sources are looked up through `idx_source_run_source_id (source_id, id DESC)`: one index
+   * seek each, so a dashboard read that asks about six sources reads six rows instead of scanning
+   * the ten thousand receipts in the retention window. `receiptLookup` returns null when the caller
+   * named nothing usable, and the exhaustive query runs instead - correct, and it is what the CLI
+   * and the tests use where no one is billed per row read.
+   */
+  async lastRunPerSource(sourceIds = null) {
+    const lookup = receiptLookup(sourceIds);
+    const res = lookup
+      ? await this.db.prepare(lookup.sql).bind(...lookup.params).all()
+      : await this.db.prepare(RECEIPTS_PER_SOURCE.latest).all();
+    return parseRuns(res);
   }
 
-  async lastSuccessfulRunPerSource() {
-    const res = await this.db.prepare(`SELECT r.* FROM source_run r
-      JOIN (SELECT source_id, MAX(id) AS id FROM source_run WHERE outcome IN ('ok', 'empty') GROUP BY source_id) m ON m.id = r.id`).all();
-    return (res.results || []).map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  async lastSuccessfulRunPerSource(sourceIds = null) {
+    const lookup = receiptLookup(sourceIds, { successful: true });
+    const res = lookup
+      ? await this.db.prepare(lookup.sql).bind(...lookup.params).all()
+      : await this.db.prepare(RECEIPTS_PER_SOURCE.successful).all();
+    return parseRuns(res);
   }
 
   async lastSuccessfulRun(sourceId) {

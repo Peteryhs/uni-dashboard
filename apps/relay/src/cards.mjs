@@ -40,7 +40,7 @@ function sourceHealth(store, sourceId, cadenceMs, now) {
   if (!store || typeof store.lastRunPerSource !== 'function') {
     return { ok: true, state: 'empty' };
   }
-  return maybePromise(store.lastRunPerSource(), (runs) => {
+  return maybePromise(store.lastRunPerSource([sourceId]), (runs) => {
     const lastRun = (runs || []).find((r) => r.source_id === sourceId);
     if (!lastRun) {
       return { ok: true, state: 'empty' };
@@ -112,7 +112,7 @@ export async function nextCommitmentCard(store, { now = Date.now(), useWeather =
   const next = schedule[0] ?? deadlines[0];
 
   if (!next) {
-    const runs = (await store?.lastRunPerSource?.()) || [];
+    const runs = (await store?.lastRunPerSource?.(['uw-portal-ics', 'google-calendar-ics'])) || [];
     const hasPortal = runs.some((r) => r.source_id === 'uw-portal-ics');
     const hasGoogle = runs.some((r) => r.source_id === 'google-calendar-ics');
 
@@ -516,7 +516,7 @@ export function alertCard(store, { now = Date.now() } = {}) {
         .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
       return maybePromise(store.getSetting(ALERT_SUMMARY_SETTING), (summaryRaw) => maybePromise(store.getSetting(ALERT_DISMISSED_SETTING), (dismissedKey) => maybePromise(
-        store.lastRunPerSource(),
+        store.lastRunPerSource([STATUS_SOURCE]),
         (runs) => {
           const run = (runs || []).find((r) => r.source_id === STATUS_SOURCE) ?? null;
           const checkedAt = run?.finished_at ?? null;

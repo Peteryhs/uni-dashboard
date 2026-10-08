@@ -25,8 +25,9 @@ function withStatus(source, now, runtime) {
 
 /** Shared by local and Worker routes, so the clients see the same status policy. */
 export async function buildHealth(store, { sources, now = Date.now(), runtime } = {}) {
+  const sourceIds = (sources ?? []).map((source) => source.id);
   const [last, jobs, snapshots, successful, weatherRaw] = await Promise.all([
-    store.lastRunPerSource(), store.jobs(), store.snapshotCount(), store.lastSuccessfulRunPerSource(),
+    store.lastRunPerSource(sourceIds), store.jobs(), store.snapshotCount(), store.lastSuccessfulRunPerSource(sourceIds),
     store.getSetting('WEATHER_FORECAST_JSON'),
   ]);
   const available = readiness(sources.filter(source => !source.disabled));

@@ -25,7 +25,7 @@ function sharesGoogleFeed(a, b) {
 
 /** Repair legacy/missing scheduling without overriding provider backoff or an active claim. */
 export async function reconcilePolling(store, sources, now = Date.now()) {
-  const [jobs, runs] = await Promise.all([store.jobs(), store.lastRunPerSource()]);
+  const [jobs, runs] = await Promise.all([store.jobs(), store.lastRunPerSource((sources ?? []).map(source => source.id))]);
   const active = runnableSources(sources);
   const ready = [];
   const repairs = [];

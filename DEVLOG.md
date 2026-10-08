@@ -8,6 +8,35 @@ file claimed a measured number that was never measured.
 Chronological record of architectural changes, technical decisions, benchmarks, and feature milestones.
 
 ---
+
+## 2026-10-08 — the dashboard read that scanned ten thousand receipts, and the free-tier ceiling it hit
+
+The Cloudflare free plan's database meter is **rows read** (5M/day), and it was maxed. The cause was
+not the polling cadence, it was one query: `lastRunPerSource()` aggregated the receipt log with
+`MAX(id) ... GROUP BY source_id`, which SQLite answers with a scan of every row in `source_run` -
+measured 11,122 rows walked to return 6, with `idx_source_run_source_id (source_id, id DESC)` already
+present. One `/v1/dashboard` read asked that question **seven times** (78,363 rows read), and every
+cron tick asked once, so 1,440 ticks alone cost **16.0M rows read a day: 3.2x the whole daily
+allowance**, reached about 7.5 hours into every UTC day. Commit `08c0093` is what made it visible, by
+putting `reconcilePolling()` on the cron path and a `ctx.waitUntil(pollDue(...))` on every
+dashboard-family GET; before that the cron path read only the six-row `job` table.
+
+Fixed by naming the sources: `receiptLookup(sourceIds)` in `schema.mjs` builds **one** statement that
+seeks the index once per named source - 6 rows read instead of 11,122, so the 50 queries per
+invocation budget is unchanged. The callers that know which sources they are asking about pass their
+ids (`cards.mjs`, `health.mjs`, `reconcilePolling`); the exhaustive form stays for the CLI, the Node
+adapter and any caller that names nothing, where no one is billed per row read.
+
+Measured after the fix: a dashboard read drops from 78,363 rows read to a handful, a cron tick from
+11,129 to about 6. Guards added: `test/receipt-lookup.test.mjs` asserts the named lookup's query plan
+contains no `SCAN source_run` while the exhaustive form still does, and that both shapes return the
+same rows; `test/d1-store.test.mjs` asserts the lookup stays one D1 query. 419/419 pass.
+
+Provenance: the 11,123-row table is a local model (7 day retention at real cadences, 10,080 of them
+the 60 s status source), not a reading from the deployed database, and the row costs come from
+`sqlite3_stmt_status(FULLSCAN_STEP)` on that model plus the store adapter's own call counts.
+
+---
 ## 2026-09-26 — every menu poll reads a fresh render, because the page is served from a cache
 
 The dining card showed one hall with a menu and two pinned halls with nothing, while the page a human

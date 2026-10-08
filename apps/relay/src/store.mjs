@@ -14,7 +14,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { SHAPES, SHAPE_COLUMNS, ddl, rowToParams, paramsToRow, upsertSql, CHUNK } from './schema.mjs';
+import { SHAPES, SHAPE_COLUMNS, ddl, rowToParams, paramsToRow, upsertSql, CHUNK,
+  RECEIPTS_PER_SOURCE, receiptLookup } from './schema.mjs';
 import { CHANGE_RETENTION_MS } from './calendar-changes.mjs';
 import { nextJobResult } from './retry.mjs';
 
@@ -149,20 +150,21 @@ export class SqliteStore {
       .map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
-  lastRunPerSource() {
-    return this.db
-      .prepare(
-        `SELECT r.* FROM source_run r
-         JOIN (SELECT source_id, MAX(id) AS id FROM source_run GROUP BY source_id) m ON m.id = r.id`,
-      )
-      .all()
-      .map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  /** Same contract and same optional source list as the D1 adapter, for interface parity. */
+  lastRunPerSource(sourceIds = null) {
+    const lookup = receiptLookup(sourceIds);
+    const rows = lookup
+      ? this.db.prepare(lookup.sql).all(...lookup.params)
+      : this.db.prepare(RECEIPTS_PER_SOURCE.latest).all();
+    return rows.map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
-  lastSuccessfulRunPerSource() {
-    return this.db.prepare(`SELECT r.* FROM source_run r
-      JOIN (SELECT source_id, MAX(id) AS id FROM source_run WHERE outcome IN ('ok', 'empty') GROUP BY source_id) m ON m.id = r.id`)
-      .all().map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
+  lastSuccessfulRunPerSource(sourceIds = null) {
+    const lookup = receiptLookup(sourceIds, { successful: true });
+    const rows = lookup
+      ? this.db.prepare(lookup.sql).all(...lookup.params)
+      : this.db.prepare(RECEIPTS_PER_SOURCE.successful).all();
+    return rows.map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
 
   lastSuccessfulRun(sourceId) {

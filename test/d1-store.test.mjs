@@ -64,6 +64,24 @@ test('latest and successful receipts include sources without a scheduled job', a
   assert.equal((await store.lastSuccessfulRunPerSource()).find(run => run.source_id === 'receipt-only').finished_at, now - MIN);
 });
 
+test('a named receipt lookup costs one D1 query, so the invocation budget is unchanged', async () => {
+  const counter = { prepares: 0 };
+  const store = new D1Store(createMockD1(counter));
+  await store.init();
+  for (const [sourceId, outcome] of [['a', 'ok'], ['a', 'failed'], ['b', 'ok']]) {
+    await store.insertRun({ source_id: sourceId, started_at: now, finished_at: now, outcome });
+  }
+  const before = counter.prepares;
+  const runs = await store.lastRunPerSource(['a', 'b', 'never-ran']);
+  assert.equal(counter.prepares - before, 1, 'one statement for every named source');
+  assert.deepEqual(runs.map((run) => [run.source_id, run.outcome]).sort(), [['a', 'failed'], ['b', 'ok']]);
+
+  const beforeSuccess = counter.prepares;
+  const successes = await store.lastSuccessfulRunPerSource(['a', 'b']);
+  assert.equal(counter.prepares - beforeSuccess, 1);
+  assert.deepEqual(successes.map((run) => [run.source_id, run.outcome]).sort(), [['a', 'ok'], ['b', 'ok']]);
+});
+
 test('D1Store initializes schema and performs row upserts', async () => {
   const mockD1 = createMockD1();
   const store = new D1Store(mockD1);
