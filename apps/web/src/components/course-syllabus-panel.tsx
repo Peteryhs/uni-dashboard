@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { CourseDetailContent } from '@/components/course-detail-content';
 import {
   fetchCourseSyllabus,
@@ -192,7 +193,7 @@ export function CourseSyllabusPanel({
       direction="up"
       inView
     >
-      {loadError && <div className="syllabus-error syllabus-load-error" role="alert"><span>{loadError}</span><Button type="button" variant="outline" size="xs" onClick={() => setReload((value) => value + 1)}>Retry</Button></div>}
+      {loadError && <div className="syllabus-error syllabus-load-error" role="alert"><span>{loadError}</span><RefreshButton label="Reload syllabus" refreshing={loading} onRefresh={() => setReload((value) => value + 1)} showLabel /></div>}
       {loading && <p className="syllabus-state" aria-live="polite">Loading saved syllabus…</p>}
       {!loading && !loadError && saved && <div className="syllabus-saved">
         <div className="syllabus-saved-heading"><div><h4>{saved.title}</h4><span>{saved.entries.length} scheduled entries · Saved {updatedLabel(saved.updated_at)}</span></div></div>

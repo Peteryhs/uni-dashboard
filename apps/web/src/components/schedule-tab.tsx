@@ -12,6 +12,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -771,7 +772,7 @@ export function ScheduleTab() {
         {configError && (
           <div role="alert" className="flex items-center justify-between gap-3 text-xs text-red-200">
             <span>{configError}</span>
-            {!loaded && <Button type="button" variant="ghost" size="sm" disabled={loadingConfig || saving} onClick={() => void loadSavedConfig()}>Retry</Button>}
+            {!loaded && <RefreshButton label="Reload office hours" refreshing={loadingConfig || saving} onRefresh={() => void loadSavedConfig()} showLabel />}
           </div>
         )}
 

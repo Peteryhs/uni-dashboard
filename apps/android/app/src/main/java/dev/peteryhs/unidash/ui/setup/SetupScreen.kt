@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -163,16 +163,16 @@ fun SetupScreen(
                 Button(
                     onClick = { onBrowserSignIn(url) },
                     enabled = browserReady,
-                    modifier = Modifier.fillMaxWidth().height(ButtonDefaults.MediumContainerHeight),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = ButtonDefaults.MediumContainerHeight),
                     contentPadding = ButtonDefaults.contentPaddingFor(ButtonDefaults.MediumContainerHeight),
                 ) {
                     if (browser.busy) {
                         LoadingIndicator(Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
                     } else {
                         Icon(Icons.Outlined.Lock, contentDescription = null)
-                        Spacer(Modifier.size(Spacing.s))
-                        Text("Sign in", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
                     }
+                    Spacer(Modifier.size(Spacing.s))
+                    Text(if (browser.busy) "Signing in…" else "Sign in", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
                 }
                 if (browser.error != null && !browser.busy) {
                     Text(
@@ -233,11 +233,14 @@ fun SetupScreen(
                         Button(
                             onClick = ::connectWithServiceToken,
                             enabled = serviceReady,
-                            modifier = Modifier.fillMaxWidth().height(ButtonDefaults.MediumContainerHeight),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = ButtonDefaults.MediumContainerHeight),
                             contentPadding = ButtonDefaults.contentPaddingFor(ButtonDefaults.MediumContainerHeight),
                         ) {
-                            if (serviceBusy) LoadingIndicator(Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
-                            else Text("Connect with service token", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
+                            if (serviceBusy) {
+                                LoadingIndicator(Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(Modifier.size(Spacing.s))
+                            }
+                            Text(if (serviceBusy) "Connecting…" else "Connect with service token", style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight))
                         }
                     }
                 }

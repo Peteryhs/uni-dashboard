@@ -312,13 +312,14 @@ export async function runSource(source, store, {
   dryRun = false,
   holdLease = false,
   leaseMs = source.pollLeaseMs ?? DEFAULT_LEASE_MS,
+  expectedJob = undefined,
 } = {}) {
   if (dryRun || typeof store.claimSource !== 'function') {
     return runClaimedSource(source, store, { now, date, dryRun, claimToken: null });
   }
   // `now` is the caller's run timestamp (tests and backfills may intentionally use history),
   // while leaseNow is wall clock time so a historical run does not expire before its fetch starts.
-  const claim = await store.claimSource(source.id, { now, leaseMs, leaseNow: Date.now() });
+  const claim = await store.claimSource(source.id, { now, leaseMs, leaseNow: Date.now(), expectedJob });
   if (!claim) return claimReceipt(source, now);
   try {
     return await runClaimedSource(source, store, { now, date, dryRun, claimToken: claim.token });
@@ -326,6 +327,8 @@ export async function runSource(source, store, {
     // A storage/network exception before the scheduler can record the receipt must not leave the
     // lease occupied for its full timeout. The scheduler still owns normal result rescheduling.
     if (holdLease && typeof store.releaseSource === 'function') {
+      Object.defineProperty(error, 'poll_claim_token', { value: claim.token, enumerable: false });
+      Object.defineProperty(error, 'poll_started_at', { value: now, enumerable: false });
       await store.releaseSource(source.id, claim.token, Date.now());
     }
     throw error;

@@ -52,6 +52,13 @@ class RelayApi(
         getParsed("/v1/food/recommendation?date=$date")
     suspend fun health(): Pair<Health, String> = getParsed("/v1/health/sources")
 
+    suspend fun refreshSources(): SourcePollResult {
+        val body = execute("/v1/poll", "POST", "{}")
+        return runCatching { ContractJson.decodeFromString<SourcePollResult>(body) }.getOrElse {
+            throw RelayError.BadResponse("unexpected reply from source refresh")
+        }
+    }
+
     suspend fun recommendationAction(id: String, action: String, until: Long? = null) {
         post("/v1/recommendations/actions", buildJsonObject {
             put("id", id)

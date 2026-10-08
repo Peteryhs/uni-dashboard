@@ -19,6 +19,7 @@ test('a failed update preserves the last successful data age', async t => {
   assert.equal(calendar.condition, 'failing');
   assert.equal(calendar.last_run.at, now);
   assert.equal(calendar.last_success_at, now - 4 * cadence);
+  assert.equal(calendar.freshness, 'stale');
   assert.equal(calendar.age_s, 4 * cadence / 1000);
   assert.equal(health.summary.healthy, 0);
 });
@@ -29,7 +30,9 @@ test('configured but unchecked sources remain unknown and successful empty feeds
   run(store, 'empty', now, 'empty');
   const health = await buildHealth(store, { sources: [source('unchecked'), source('empty')], now });
   assert.equal(health.sources[0].condition, 'unknown');
+  assert.equal(health.sources[0].freshness, 'unknown');
   assert.equal(health.sources[1].condition, 'healthy');
+  assert.equal(health.sources[1].freshness, 'live');
   assert.equal(health.summary.condition, 'unknown');
   assert.equal(health.summary.healthy, 1);
 });
@@ -59,6 +62,7 @@ test('weather reports provider failure without hiding its saved forecast or rese
   const health = await buildHealth(store, { sources: [], now });
   assert.equal(health.sources[0].condition, 'failing');
   assert.equal(health.sources[0].last_success_at, observed);
+  assert.equal(health.sources[0].freshness, 'stale');
   store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: observed, attempted_at: observed, forecast: [{ at: now, temp_c: 14 }] }));
   assert.equal((await buildHealth(store, { sources: [], now })).sources[0].condition, 'stale');
 });
@@ -76,4 +80,84 @@ test('explicit freshness windows can be longer than the normal polling cadence',
   assert.equal(sourceCondition(value, now + 7 * cadence), 'healthy');
   assert.equal(sourceCondition(value, now + 9 * cadence), 'stale');
   assert.equal(sourceCondition(value, now + 13 * cadence), 'dead');
+});
+
+test('health exposes retry and active lease metadata without leaking the claim token', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  const claim = store.claimSource('calendar', { now, leaseNow: now, leaseMs: 60_000 });
+  const health = await buildHealth(store, { sources: [source('calendar')], now, runtime: { polling: 'scheduled' } });
+  const calendar = health.sources[0];
+  assert.equal(calendar.recovery.state, 'refreshing');
+  assert.equal(calendar.job.lease_expires_at, now + 60_000);
+  assert.equal(JSON.stringify(health).includes(claim.token), false);
+  assert.equal(Object.hasOwn(calendar.job, 'lease_token'), false);
+});
+
+test('manual relay status never promises an automatic source or weather retry', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  run(store, 'calendar', now - 7 * cadence);
+  const health = await buildHealth(store, { sources: [source('calendar')], now, runtime: { polling: 'manual' } });
+  assert.equal(health.sources[0].freshness, 'dead');
+  for (const value of health.sources) {
+    assert.equal(value.recovery.state, 'manual');
+    assert.equal(value.recovery.automatic, false);
+    assert.equal(value.recovery.next_attempt_at, null);
+  }
+});
+
+test('weather failure retains the forecast and exposes its actual retry cooldown', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: now - 2 * cadence,
+    attempted_at: now, forecast: [{ at: now, temp_c: 14 }], error: 'provider unavailable' }));
+  const options = { sources: [], now, runtime: { polling: 'scheduled' } };
+  const weather = (await buildHealth(store, options)).sources[0];
+  assert.equal(weather.recovery.state, 'backoff');
+  assert.equal(weather.recovery.next_attempt_at, now + 15 * 60_000);
+  assert.equal(weather.freshness, 'stale');
+  assert.equal((await buildHealth(store, { ...options, now: now + 15 * 60_000 })).sources[0].recovery.state, 'due');
+});
+
+test('a fresh weather forecast explains its scheduled refresh', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: now, attempted_at: now,
+    forecast: [{ at: now, temp_c: 14 }] }));
+  const weather = (await buildHealth(store, { sources: [], now, runtime: { polling: 'scheduled' } })).sources[0];
+  assert.equal(weather.condition, 'healthy');
+  assert.equal(weather.freshness, 'live');
+  assert.equal(weather.recovery.state, 'scheduled');
+  assert.equal(weather.recovery.next_attempt_at, now + 30 * 60_000);
+});
+
+test('missing or corrupt weather is unchecked and queued for automatic recovery', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  for (const raw of [null, '{broken json', JSON.stringify({ observed_at: now, forecast: 'invalid' })]) {
+    if (raw != null) store.setSetting('WEATHER_FORECAST_JSON', raw);
+    const weather = (await buildHealth(store, { sources: [], now, runtime: { polling: 'scheduled' } })).sources[0];
+    assert.equal(weather.condition, 'unknown');
+    assert.equal(weather.freshness, 'unknown');
+    assert.equal(weather.last_success_at, null);
+    assert.equal(weather.recovery.state, 'due');
+  }
+});
+
+test('a storage interruption updates health even when no failure receipt could be saved', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  run(store, 'calendar', now - 60_000);
+  const claim = store.claimSource('calendar', { now, leaseNow: now });
+  store.releaseSource('calendar', claim.token, now);
+  store.recordJobResult('calendar', { startedAt: now, finishedAt: now, outcome: 'failed', cadenceMs: cadence,
+    now, claimToken: claim.token, interrupted: true });
+  const health = await buildHealth(store, { sources: [source('calendar')], now, runtime: { polling: 'scheduled' } });
+  assert.equal(health.sources[0].last_run.outcome, 'ok');
+  assert.equal(health.sources[0].condition, 'failing');
+  assert.equal(health.sources[0].freshness, 'live');
+  assert.equal(health.sources[0].recovery.state, 'backoff');
+  assert.equal(health.summary.condition, 'attention');
+  assert.equal(health.summary.healthy, 0);
 });

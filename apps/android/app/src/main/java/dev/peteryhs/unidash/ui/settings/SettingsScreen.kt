@@ -11,6 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -44,10 +47,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.data.SourceHealth
 import dev.peteryhs.unidash.data.conditionAt
+import dev.peteryhs.unidash.data.freshnessAt
+import dev.peteryhs.unidash.data.recoveryTextAt
 import dev.peteryhs.unidash.data.summaryAt
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.MainViewModel
+import dev.peteryhs.unidash.ui.RefreshControl
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
@@ -78,6 +84,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val uri = LocalUriHandler.current
     val browser by vm.browserState.collectAsStateWithLifecycle()
+    val automaticTracking by vm.automaticTracking.collectAsStateWithLifecycle()
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     var guideOpen by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = destination != SettingsDestination.Overview) {
@@ -90,9 +97,18 @@ fun SettingsScreen(
 
     var notificationsOn by remember { mutableStateOf(true) }
     var exactAlarms by remember { mutableStateOf(true) }
+    var promotedNotifications by remember { mutableStateOf(true) }
+    val promotionIntent = remember(context) {
+        if (Build.VERSION.SDK_INT >= 36) Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .takeIf { it.resolveActivity(context.packageManager) != null }
+        else null
+    }
     LifecycleResumeEffect(Unit) {
         notificationsOn = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
         exactAlarms = Build.VERSION.SDK_INT < 31 || context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+        promotedNotifications = Build.VERSION.SDK_INT < 36 ||
+            context.getSystemService(android.app.NotificationManager::class.java).canPostPromotedNotifications()
         onPauseOrDispose {}
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -106,7 +122,8 @@ fun SettingsScreen(
         snapshot = snapshot,
         now = now,
         snackbar = snackbar,
-        refreshing = if (destination == SettingsDestination.Status) snapshot.healthRefreshing else snapshot.refreshing,
+        refreshing = if (destination == SettingsDestination.Status) snapshot.healthRefreshing || snapshot.sourceRefreshing else snapshot.refreshing,
+        refreshLabel = if (destination == SettingsDestination.Status) "Refresh sources" else "Refresh dashboard",
         navigationIcon = {
             if (destination != SettingsDestination.Overview) {
                 IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
@@ -116,7 +133,7 @@ fun SettingsScreen(
         },
         onStatus = if (destination == SettingsDestination.Status) null else onStatus,
         showConnectionBanner = destination != SettingsDestination.Status,
-        onRefresh = if (destination == SettingsDestination.Status) vm::refreshHealth else vm::refresh,
+        onRefresh = if (destination == SettingsDestination.Status) vm::refreshSources else vm::refresh,
     ) {
         when (destination) {
             SettingsDestination.Overview -> settingsOverview(snapshot, now, onDestination)
@@ -128,6 +145,11 @@ fun SettingsScreen(
             SettingsDestination.Notifications -> notificationsSettings(
                 notificationsOn = notificationsOn,
                 exactAlarms = exactAlarms,
+                automaticTracking = automaticTracking,
+                onAutomaticTracking = vm::setAutomaticTracking,
+                onPromotedNotifications = promotionIntent?.takeIf { !promotedNotifications }?.let { intent ->
+                    { context.startActivity(intent) }
+                },
                 onNotifications = {
                     if (!notificationsOn && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                     else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
@@ -136,7 +158,7 @@ fun SettingsScreen(
                     context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}")))
                 },
             )
-            SettingsDestination.Status -> statusSettings(snapshot, now)
+            SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
             SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
         }
     }
@@ -261,10 +283,30 @@ private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
 private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings(
     notificationsOn: Boolean,
     exactAlarms: Boolean,
+    automaticTracking: Boolean,
+    onAutomaticTracking: (Boolean) -> Unit,
+    onPromotedNotifications: (() -> Unit)?,
     onNotifications: () -> Unit,
     onExactAlarms: () -> Unit,
 ) {
     item { SectionHeader("Notifications") }
+    item {
+        ListItem(
+            headlineContent = { Text("Live class updates") },
+            supportingContent = {
+                Text("Follow classes with the room and countdown. Expand for the next three activities. Ends automatically; unpin to hide this occurrence.")
+            },
+            trailingContent = { Switch(checked = automaticTracking, onCheckedChange = null) },
+            modifier = Modifier.toggleable(value = automaticTracking, role = Role.Switch, onValueChange = onAutomaticTracking),
+        )
+    }
+    if (automaticTracking && onPromotedNotifications != null) item {
+        ListItem(
+            headlineContent = { Text("Status-bar live updates") },
+            supportingContent = { Text("Allow the countdown to appear in the status bar. Class updates still appear as regular notifications while this is off.") },
+            trailingContent = { TextButton(onClick = onPromotedNotifications) { Text("Allow") } },
+        )
+    }
     item {
         ListItem(
             headlineContent = { Text("Reminders and alerts") },
@@ -283,7 +325,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapshot: Snapshot, now: Long) {
+private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapshot: Snapshot, now: Long, onRefreshSources: () -> Unit) {
     val health = snapshot.health
     val summary = health?.summaryAt(now)
     val title = when {
@@ -355,6 +397,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
     }
 
     item { SectionHeader("Sources") }
+    item {
+        Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            RefreshControl(label = "Refresh sources", refreshing = snapshot.healthRefreshing || snapshot.sourceRefreshing,
+                onRefresh = onRefreshSources, showLabel = true)
+            snapshot.sourceRefreshResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
     if (health == null) {
         item {
             EmptyNote(
@@ -370,7 +419,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
     }
     item {
         Text(
-            "Optional and shared feeds are not counted in the monitored total.",
+            "Ageing means an expected update is due. Stale means more than three update intervals without success; out of date means more than six. Weather uses its own freshness window. Saved data stays available while recovery runs. Optional and shared feeds are not counted in the monitored total.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
@@ -394,8 +443,11 @@ private fun HealthSourceRow(source: SourceHealth, now: Long) {
         else -> "Unchecked" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     val lastRun = source.lastRun
+    val interrupted = source.job?.lastOutcome in setOf("failed", "implausible") && source.job?.lastFinishedAt?.let {
+        lastRun?.at == null || it > lastRun.at || (it == lastRun.at && lastRun.outcome in setOf("ok", "empty"))
+    } == true
     val lastSuccessAt = source.lastSuccessAt ?: lastRun?.takeIf { it.outcome in setOf("ok", "empty") }?.at
-    val hasCheckDetails = condition == "failing" || condition == "partial" || !lastRun?.error.isNullOrBlank()
+    val hasCheckDetails = condition != "healthy" || !lastRun?.error.isNullOrBlank() || source.recovery?.state == "backoff"
     var checkDetailsExpanded by rememberSaveable(source.id) { mutableStateOf(false) }
     val details = buildList {
         if (excluded) {
@@ -408,18 +460,25 @@ private fun HealthSourceRow(source: SourceHealth, now: Long) {
             )
         } else {
             lastSuccessAt?.let { add("Updated ${ageAgo(it, now)}") } ?: add("No successful update")
+            when (source.freshnessAt(now)) {
+                "ageing" -> add("Expected update is due")
+                "stale" -> add("Saved data is stale")
+                "dead" -> add("Saved data is out of date")
+            }
             if (condition == "blocked") add("Add feed in Connections")
             if (condition == "failing") {
-                lastRun?.at?.let { add("Attempt ${ageAgo(it, now)}") }
-                lastRun?.error?.takeIf { it.isNotBlank() }?.let { add(it) }
+                (if (interrupted) source.job?.lastFinishedAt else lastRun?.at)?.let { add("Attempt ${ageAgo(it, now)}") }
+                if (interrupted) add("Update interrupted; saved data retained")
+                else lastRun?.error?.takeIf { it.isNotBlank() }?.let { add(it) }
             }
             if (condition == "partial") add("Some events were skipped")
         }
     }.joinToString(" · ")
     val savedCheckDetails = buildList {
         lastSuccessAt?.let { add("Last successful update ${Format.dayTime(it)}") }
+        if (interrupted) source.job?.lastFinishedAt?.let { add("Update interrupted ${Format.dayTime(it)} before saving a receipt") }
         lastRun?.let { run ->
-            run.at?.let { add("Last attempt ${Format.dayTime(it)}") }
+            run.at?.let { add("Last saved attempt ${Format.dayTime(it)}") }
             run.outcome.takeIf { it.isNotBlank() }?.let { add("Result: $it") }
             add("Rows returned: ${run.rows}")
             run.error?.takeIf { it.isNotBlank() }?.let { add("Error: $it") }
@@ -436,7 +495,13 @@ private fun HealthSourceRow(source: SourceHealth, now: Long) {
                     maxLines = if (checkDetailsExpanded) Int.MAX_VALUE else 2,
                     overflow = if (checkDetailsExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
                 )
+                if (!excluded) source.recoveryTextAt(now)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (checkDetailsExpanded) {
+                    source.recovery?.reason?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     savedCheckDetails.forEach { detail ->
                         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

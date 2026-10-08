@@ -457,6 +457,14 @@ export interface SourceHealth {
   last_success_at?: number | null;
   stale_after_ms?: number;
   dead_after_ms?: number;
+  freshness?: 'live' | 'ageing' | 'stale' | 'dead' | 'unknown';
+  recovery?: {
+    state: 'inactive' | 'blocked' | 'manual' | 'refreshing' | 'backoff' | 'scheduled' | 'due' | 'unknown';
+    action: 'none' | 'configure' | 'refresh' | 'wait' | 'retry';
+    next_attempt_at: number | null;
+    automatic: boolean;
+    reason: string;
+  };
   role?: string;
   shape: string;
   cadence_ms: number;
@@ -475,7 +483,7 @@ export interface SourceHealth {
     meta?: Record<string, unknown>;
   } | null;
   age_s: number | null;
-  job: { next_due_at: number; circuit: string; failures: number } | null;
+  job: { next_due_at: number; circuit: string; failures: number; last_outcome?: string | null; last_finished_at?: number | null; last_started_at?: number | null; lease_expires_at?: number | null } | null;
 }
 
 export interface HealthResponse {

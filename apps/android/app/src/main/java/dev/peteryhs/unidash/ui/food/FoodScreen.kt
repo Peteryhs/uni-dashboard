@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -235,38 +234,7 @@ private fun DishRow(d: Dish, highlight: Highlight?) {
         if (highlight == null) Spacer(Modifier.width(4.dp))
         else Box(Modifier.width(4.dp).height(36.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                Text(
-                    d.dish,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (highlight == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                    fontWeight = if (highlight == null) FontWeight.Normal else FontWeight.SemiBold,
-                )
-                if (d.diet.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        d.diet.forEach { tag ->
-                            val (_, label) = dietTag(tag)
-                            val icon = dietIcon(tag)
-                            if (icon != null) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = label,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            } else {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.semantics { contentDescription = label },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            DietaryDishTitle(d.dish, d.diet, highlighted = highlight != null)
             highlight?.why?.takeIf { it.isNotBlank() }?.let { why ->
                 Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }

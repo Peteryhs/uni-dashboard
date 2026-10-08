@@ -60,6 +60,17 @@ class RelayApiTest {
     }
 
     @Test
+    fun `source refresh posts to the polling endpoint and reads deferred results`() = runTest {
+        server.enqueue(json("""{"receipts":[{"source_id":"schedule","outcome":"ok"},{"source_id":"status","outcome":"skipped","error":"retry later"}],"deferred":["menu"]}"""))
+        val result = api.refreshSources()
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/v1/poll", request.path)
+        assertEquals(listOf("ok", "skipped"), result.receipts.map { it.outcome })
+        assertEquals(listOf("menu"), result.deferred)
+    }
+
+    @Test
     fun `refusals map to errors the UI can act on`() = runTest {
         suspend fun failure(response: MockResponse): Throwable {
             server.enqueue(response)

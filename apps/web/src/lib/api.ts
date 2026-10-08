@@ -215,6 +215,7 @@ export async function fetchHealthz(signal?: AbortSignal): Promise<HealthzRespons
 export interface PollResult {
   receipts: Array<{ source_id: string; outcome: string; error?: string }>;
   deferred?: string[];
+  weather?: { status: string; cached?: boolean };
 }
 
 /** Ask the relay to poll now and report which sources completed. */

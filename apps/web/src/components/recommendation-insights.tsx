@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { ChangeBlocks } from '@/components/change-blocks';
 import { useSlidingIndicator } from '@/hooks/use-sliding-indicator';
 import type { RecommendationCandidateDiagnostic, RecommendationResponse } from '@/lib/contract';
@@ -83,7 +84,7 @@ export function RecommendationInsights({
     : `${candidates.length} shown · detailed decision history is not available`;
 
   if (!response && pending) return <section className="recommendation-insights" aria-busy="true"><p className="recommendation-insights-state">Loading the current ranking…</p></section>;
-  if (!response && error) return <section className="recommendation-insights" role="alert"><p className="recommendation-insights-state">The current ranking could not be loaded.</p>{onRetry && <button className="section-control" onClick={onRetry}>Try again</button>}</section>;
+  if (!response && error) return <section className="recommendation-insights" role="alert"><p className="recommendation-insights-state">The current ranking could not be loaded.</p>{onRetry && <RefreshButton label="Reload recommendations" refreshing={pending} onRefresh={onRetry} showLabel />}</section>;
   if (!response) return <section className="recommendation-insights"><p className="recommendation-insights-state">The current ranking is unavailable.</p></section>;
 
   return <section className="recommendation-insights" aria-label="Recommendation ranking">

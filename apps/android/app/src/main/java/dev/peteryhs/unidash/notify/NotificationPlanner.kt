@@ -16,11 +16,17 @@ enum class Channel(val id: String, val label: String, val description: String) {
     Alerts("alerts", "Campus alerts", "Campus and IT outages as they are reported"),
     Changes("schedule_changes", "Schedule changes", "Changed times, unusual rooms and tutorial work"),
     Account("account", "Connection", "When the app can no longer reach your dashboard"),
-    Persistent("persistent", "Uni Dashboard", "The dashboard status notification"),
+    Persistent("persistent", "Activity tracking", "Countdown and progress for imminent or active classes, exams and office hours"),
 }
 
 /** One notification to fire at a set time. `key` is stable across syncs, so it can be replaced or cancelled. */
-data class Reminder(val key: String, val fireAt: Long, val channel: Channel, val title: String, val text: String)
+data class Reminder(
+    val key: String, val fireAt: Long, val channel: Channel, val title: String, val text: String,
+    val expiresAt: Long = Long.MAX_VALUE,
+    val eventId: String = "", val occurrenceId: String = "",
+    val eventStartsAt: Long = 0, val eventEndsAt: Long = 0,
+    val notificationKey: String = key,
+)
 
 /**
  * Pure planning, no Android types, so it is unit tested directly. The sync calls this with the
@@ -34,16 +40,29 @@ object NotificationPlanner {
     const val SCHEDULE_CHANGE_NOTICE_MS = 24 * 3_600_000L
     const val DEADLINE_CHANGE_NOTICE_MS = 72 * 3_600_000L
     const val TUTORIAL_WORK_NOTICE_MS = 72 * 3_600_000L
+    const val ALARM_LATE_TOLERANCE_MS = 10 * 60_000L
+    const val MAX_CALENDAR_AGE_MS = 24 * 3_600_000L
+    const val CLOCK_SKEW_MS = 5 * 60_000L
 
     private val timeFormat = DateTimeFormatter.ofPattern("h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
     private val dayTimeFormat = DateTimeFormatter.ofPattern("EEE h:mm a", Locale.CANADA).withZone(CAMPUS_ZONE)
 
     fun plan(calendar: Calendar?, now: Long): List<Reminder> {
-        if (calendar == null) return emptyList()
+        return freshReminders(calendar, now)
+            .filter { it.fireAt > now && it.fireAt <= now + HORIZON_MS }
+            .sortedBy { it.fireAt }
+    }
+
+    /** Disk-cached Live flags do not prove that a schedule has been checked recently. */
+    fun calendarIsFresh(calendar: Calendar?, now: Long): Boolean = calendar != null &&
+        calendar.generatedAt >= now - MAX_CALENDAR_AGE_MS && calendar.generatedAt <= now + CLOCK_SKEW_MS
+
+    private fun freshReminders(calendar: Calendar?, now: Long): List<Reminder> {
+        if (!calendarIsFresh(calendar, now) || calendar == null) return emptyList()
         val events = calendar.days.flatMap { it.events }.distinctBy { it.occurrenceId }
         val roomAlerts = calendar.alerts.filter { it.kind in setOf("room", "unusual_room") }.associateBy { it.eventId }
         val tutorialAlerts = calendar.alerts.filter { it.kind == "tutorial_work" }.associateBy { it.eventId }
-        return events.filter { it.attendance != "replaced" && it.state in setOf(CardState.Live, CardState.Ageing) }.flatMap { event ->
+        return events.filter { it.attendance !in setOf("replaced", "cancelled", "canceled") && it.state in setOf(CardState.Live, CardState.Ageing) }.flatMap { event ->
             remindersFor(event).map { reminder ->
                 // Terse on purpose: a lock screen shows one line. "E7 2409 → RCH 101", "?" when unconfirmed.
                 val roomAlert = roomAlerts[event.id]
@@ -54,8 +73,25 @@ object NotificationPlanner {
                 reminder.copy(text = base + room + tutorial)
             }
         }
-            .filter { it.fireAt > now && it.fireAt <= now + HORIZON_MS }
-            .sortedBy { it.fireAt }
+    }
+
+    /** Re-resolve from current evidence: an old alarm never resurrects a moved or removed event. */
+    fun resolveReminder(calendar: Calendar?, key: String, fireAt: Long, now: Long): Reminder? {
+        val current = freshReminders(calendar, now).firstOrNull { it.key == key && it.fireAt == fireAt } ?: return null
+        if (now < fireAt || now - fireAt > ALARM_LATE_TOLERANCE_MS || now >= current.expiresAt) return null
+        if (current.channel == Channel.Classes && now >= current.eventStartsAt) return null
+        return current
+    }
+
+    /** Unlike alarms, an already delivered reminder remains relevant until its event expires. */
+    fun reconcilePosted(calendar: Calendar?, posted: List<Reminder>, now: Long): List<Reminder> {
+        val current = freshReminders(calendar, now).associateBy { it.key }
+        return posted.mapNotNull { old ->
+            current[old.key]?.takeIf { latest ->
+                latest.fireAt == old.fireAt && latest.eventStartsAt == old.eventStartsAt &&
+                    latest.eventEndsAt == old.eventEndsAt && latest.fireAt <= now && now < latest.expiresAt
+            }
+        }.sortedByDescending { it.fireAt }.distinctBy { it.notificationKey }
     }
 
     /** Only upcoming, fresh evidence triggers a push. The stable IDs survive ordinary syncs. */
@@ -97,6 +133,9 @@ object NotificationPlanner {
                 title = e.title,
                 text = listOf("${timeFormat.format(Instant.ofEpochMilli(e.startsAt))}", e.location.ifBlank { null })
                     .filterNotNull().joinToString(" · "),
+                expiresAt = e.endsAt.takeIf { it > e.startsAt } ?: e.startsAt,
+                eventId = e.id, occurrenceId = e.occurrenceId, eventStartsAt = e.startsAt, eventEndsAt = e.endsAt,
+                notificationKey = "next-class",
             ),
         )
         e.category == "deadline" && e.phase != "opens" -> DEADLINE_LEADS_MS.map { lead ->
@@ -106,6 +145,9 @@ object NotificationPlanner {
                 channel = Channel.Deadlines,
                 title = e.title,
                 text = "Due ${dayTimeFormat.format(Instant.ofEpochMilli(e.startsAt))}" + (e.course?.let { " · $it" } ?: ""),
+                expiresAt = e.startsAt,
+                eventId = e.id, occurrenceId = e.occurrenceId, eventStartsAt = e.startsAt, eventEndsAt = e.endsAt,
+                notificationKey = "deadline:${e.occurrenceId}",
             )
         }
         else -> emptyList()

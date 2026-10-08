@@ -659,7 +659,7 @@ function CoursesSection({ data, pending, error, onManageCourse }: { data?: Calen
 export default function App() {
   const queryClient = useQueryClient();
   const now = useNow(30_000);
-  const { cards, offline, error: dashboardError, refetch } = useDashboard();
+  const { cards, offline, error: dashboardError, refetch, isFetching: dashboardFetching } = useDashboard();
   const { preferences, setDietaryFilter, setOnlyFavorites, toggleFavoriteDish, updateTasteProfile, resetPreferences } = usePreferences();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusRequest, setStatusRequest] = useState(0);
@@ -826,10 +826,10 @@ export default function App() {
       </div>}
       {!signInRequired && connectionError instanceof RelayError && <div className="state-panel" role="alert">
         {connectionError.message}{' '}
-        <button type="button" className="inline-link" onClick={() => { void Promise.all([refetch(), recs.refetch(), calendar.refetch(), setup.refetch()]); }}>Try again</button>
+        <RefreshButton label="Reload dashboard" refreshing={dashboardFetching || recs.isFetching || calendar.isFetching || setup.isFetching} onRefresh={() => { void Promise.all([refetch(), recs.refetch(), calendar.refetch(), setup.refetch()]); }} showLabel />
       </div>}
       {recs.isPending && <BlurFade as="div" className="state-panel hero-loading" duration={0.42} offset={10} blur="5px" aria-busy="true">Finding your next move…</BlurFade>}
-      {recs.isError && !recs.data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Recommendations are unavailable. <button className="inline-link" onClick={() => void recs.refetch()}>Try again</button></BlurFade>}
+      {recs.isError && !recs.data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Recommendations are unavailable. <RefreshButton label="Reload recommendations" refreshing={recs.isFetching} onRefresh={() => void recs.refetch()} showLabel /></BlurFade>}
       {recs.data && !featured && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">{recs.data.headline}.</BlurFade>}
       {featured && <div className="recommendation-grid">
         <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
@@ -874,13 +874,13 @@ export default function App() {
     guideRequest={guideRequest}
     statusRequest={statusRequest}
     recommendations={recs.data}
-    recommendationsPending={recs.isPending}
+    recommendationsPending={recs.isPending || recs.isFetching}
     recommendationsError={recs.isError}
     onRetryRecommendations={() => void recs.refetch()}
     hideTrigger
     preferences={preferences}
     courseData={settingsCalendar.data}
-    courseDataPending={settingsCalendar.isPending}
+    courseDataPending={settingsCalendar.isPending || settingsCalendar.isFetching}
     courseDataError={settingsCalendar.isError}
     focusCourse={settingsCourse}
     onRetryCourseData={() => { void settingsCalendar.refetch(); }}

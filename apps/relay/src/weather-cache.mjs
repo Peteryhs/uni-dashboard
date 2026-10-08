@@ -9,9 +9,13 @@ function parse(raw) {
   try { return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
 
+function validForecast(saved) {
+  return Array.isArray(saved?.forecast) && saved.forecast.length > 0 && Number.isFinite(saved.observed_at);
+}
+
 export async function getCachedWeather(store, { now = Date.now() } = {}) {
   const saved = parse(await store.getSetting(KEY));
-  if (!saved?.forecast?.length || !Number.isFinite(saved.observed_at)) return null;
+  if (!validForecast(saved)) return null;
   const age = now - saved.observed_at;
   return { observed_at: saved.observed_at, forecast: saved.forecast,
     state: age <= REFRESH_MS ? 'live' : age <= 2 * REFRESH_MS ? 'ageing' : age <= 6 * REFRESH_MS ? 'stale' : 'dead',
@@ -20,7 +24,8 @@ export async function getCachedWeather(store, { now = Date.now() } = {}) {
 
 export async function syncWeather(store, { now = Date.now(), fetchForecast = hourlyForecast } = {}) {
   const previous = parse(await store.getSetting(KEY));
-  if (previous?.observed_at && now - previous.observed_at < REFRESH_MS) return { status: 'ready', cached: true };
+  // A timestamp alone is not usable data: a missing/corrupt forecast must be repaired.
+  if (validForecast(previous) && now - previous.observed_at < REFRESH_MS) return { status: 'ready', cached: true };
   if (previous?.attempted_at && now - previous.attempted_at < RETRY_MS) return { status: 'deferred', cached: true };
   // Persist the retry lease before network I/O, including failure and overlapping cron runs.
   await store.setSetting(KEY, JSON.stringify({ ...previous, attempted_at: now }));

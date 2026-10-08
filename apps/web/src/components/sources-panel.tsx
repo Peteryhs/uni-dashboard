@@ -6,6 +6,7 @@ import type { SourceCondition } from '@/lib/source-status.mjs';
 import type { SourceHealth } from '@/lib/contract';
 import { triggerPoll } from '@/lib/api';
 import { shortAge } from '@/lib/time';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import './sources-panel.css';
 
 const LABELS: Record<SourceCondition, string> = {
@@ -103,10 +104,13 @@ export function SourcesPanel({ onManageConnections }: { onManageConnections?: ()
     try {
       const result = await triggerPoll();
       await Promise.all(['health', 'dashboard', 'recommendations', 'full-calendar', 'posted-menu', 'setup-status'].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
-      const failures = result.receipts.filter(receipt => !['ok', 'empty'].includes(receipt.outcome));
-      setRefreshResult(failures.length
-        ? `${failures.length} ${failures.length === 1 ? 'source did' : 'sources did'} not update. Open a row’s details for the reason.`
-        : 'Source refresh finished.');
+      const failures = result.receipts.filter(receipt => !['ok', 'empty', 'skipped'].includes(receipt.outcome));
+      const failureCount = failures.length + (result.weather?.status === 'failed' ? 1 : 0);
+      const waiting = new Set([...(result.deferred ?? []), ...result.receipts.filter(receipt => receipt.outcome === 'skipped').map(receipt => receipt.source_id)]).size + (result.weather?.status === 'deferred' ? 1 : 0);
+      setRefreshResult(failureCount
+        ? `${failureCount} ${failureCount === 1 ? 'source did' : 'sources did'} not update. Open a row’s details for the reason.`
+        : waiting ? `Refresh requested. ${waiting} ${waiting === 1 ? 'source is' : 'sources are'} waiting for a safe retry.`
+          : result.receipts.length || (result.weather?.status === 'ready' && !result.weather.cached) ? 'Source refresh finished.' : 'No updates are due. See the next check time below.');
     } catch {
       setRefreshResult('Could not refresh sources. Check the backend connection and try again.');
     } finally {
@@ -136,19 +140,18 @@ export function SourcesPanel({ onManageConnections }: { onManageConnections?: ()
         <h3>{title}</h3>
         <p>{subtitle}</p>
       </div>
-      <button type="button" className="section-control" onClick={() => void refreshSources()} disabled={refreshing}>
-        {refreshing ? 'Refreshing…' : 'Refresh sources'}
-      </button>
+      <RefreshButton label="Refresh sources" refreshing={refreshing} onRefresh={() => void refreshSources()} />
     </div>
 
     {refreshResult && <p className="service-status-result" role="status">{refreshResult}</p>}
-    {health.isError && !health.data && <button type="button" className="section-control" onClick={() => void health.refetch()} disabled={health.isFetching}>Check backend again</button>}
+    {health.isError && !health.data && <RefreshButton label="Check backend again" refreshing={health.isFetching} onRefresh={() => void health.refetch()} showLabel />}
 
     {sources.length > 0 && <>
       <ul className="service-status-list">
         {sources.map(source => <SourceRow key={source.id} source={source} now={now} onManageConnections={onManageConnections} />)}
       </ul>
       {inactiveCount > 0 && <p className="service-status-note">Shared and unused feeds are listed here but excluded from the monitored total.</p>}
+      <p className="service-status-note">Ageing means an expected update is due. Stale means more than three update intervals without success; not updating means more than six. Weather uses its own freshness window. Saved data stays available during recovery.</p>
     </>}
 
     {health.data && <>
@@ -176,16 +179,22 @@ function SourceRow({ source, now, onManageConnections }: { source: SourceHealth;
   const successAt = lastSuccess(source);
   const status = rowLabel(source, monitored, condition);
   const age = rowAge(source, monitored, successAt, now);
+  const dataAge = successAt == null ? null : now - successAt;
+  const freshnessNote = dataAge == null ? '' : dataAge > (source.dead_after_ms ?? 6 * source.cadence_ms) ? ' · saved data out of date'
+    : dataAge > (source.stale_after_ms ?? 3 * source.cadence_ms) ? ' · saved data stale'
+      : dataAge > source.cadence_ms ? ' · expected update due' : '';
   const statusKey = monitored ? condition : source.ready ? 'shared' : 'unused';
   const staleAfter = source.stale_after_ms ?? 3 * source.cadence_ms;
   const deadAfter = source.dead_after_ms ?? 6 * source.cadence_ms;
   const skippedEvents = Number(source.last_run?.meta?.skipped_events ?? 0);
+  const jobFinished = source.job?.last_finished_at;
+  const interrupted = ['failed', 'implausible'].includes(source.job?.last_outcome ?? '') && jobFinished != null && (!source.last_run || jobFinished > source.last_run.at || (jobFinished === source.last_run.at && ['ok', 'empty'].includes(source.last_run.outcome)));
   const detailNeeded = monitored && condition !== 'healthy';
   const summaryLabel = `${sourceName(source)}. ${status}. ${age}.${detailNeeded ? ` ${detailsLabel(condition)}.` : ''}`;
   const summaryContent = <>
     <strong className="service-source-name">{sourceName(source)}</strong>
     <span className={`service-source-state is-${statusKey}`}>{status}</span>
-    <span className="service-source-age">{age}</span>
+    <span className="service-source-age">{age}{freshnessNote}</span>
     <span className="service-source-detail-hint" aria-hidden="true">{detailNeeded ? 'Details' : ''}</span>
   </>;
 
@@ -193,6 +202,10 @@ function SourceRow({ source, now, onManageConnections }: { source: SourceHealth;
     {detailNeeded ? <details className="service-source-details">
       <summary className="service-source-summary" aria-label={summaryLabel}>{summaryContent}</summary>
       <div className="service-source-detail-copy">
+        {source.recovery && <>
+          <p>{source.recovery.reason}</p>
+          {source.recovery.next_attempt_at != null && <p>{source.recovery.next_attempt_at <= now ? 'Recovery check due' : 'Next recovery check'}: {new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short' }).format(source.recovery.next_attempt_at)}.</p>}
+        </>}
         {condition === 'blocked' && <>
           <p>{source.env_var ? `Connection required: ${source.env_var}.` : 'A required connection is missing.'}</p>
           {onManageConnections && <button type="button" className="service-status-open-connections" onClick={onManageConnections}>Open Connections</button>}
@@ -200,10 +213,11 @@ function SourceRow({ source, now, onManageConnections }: { source: SourceHealth;
         {(condition === 'stale' || condition === 'dead') && <p>Expected every {durationMs(source.cadence_ms)}. Marked stale after {durationMs(staleAfter)} and not updating after {durationMs(deadAfter)} without a successful update.</p>}
         {condition === 'partial' && <p>{skippedEvents > 0 ? `${skippedEvents} calendar ${skippedEvents === 1 ? 'entry was' : 'entries were'} skipped while reading the feed.` : 'Some calendar events could not be read.'}</p>}
         {condition === 'unknown' && !source.last_run && <p>No successful check is available yet.</p>}
-        {source.last_run && <p>Last attempt {shortAge(source.last_run.at, now)} ago · {outcomeLabel(source.last_run.outcome)}{source.last_run.http_status != null ? ` · HTTP ${source.last_run.http_status}` : ''}</p>}
+        {interrupted && <p>Latest update was interrupted before its receipt could be saved. Saved data has been retained.</p>}
+        {source.last_run && <p>{interrupted ? 'Last saved attempt' : 'Last attempt'} {shortAge(source.last_run.at, now)} ago · {outcomeLabel(source.last_run.outcome)}{source.last_run.http_status != null ? ` · HTTP ${source.last_run.http_status}` : ''}</p>}
         {source.last_run?.error && <p className="service-source-error">{source.last_run.error}</p>}
         {source.job?.circuit === 'open' && <p>Automatic retries are backing off after {source.job.failures} consecutive failures.</p>}
-        {source.job && <p>{source.job.next_due_at < now ? 'Retry due since' : 'Next retry due'}: {nextAttempt(source)}.</p>}
+        {source.job && !source.recovery && <p>{source.job.next_due_at < now ? 'Retry due since' : 'Next retry due'}: {nextAttempt(source)}.</p>}
       </div>
     </details> : <div className="service-source-summary">{summaryContent}</div>}
   </li>;

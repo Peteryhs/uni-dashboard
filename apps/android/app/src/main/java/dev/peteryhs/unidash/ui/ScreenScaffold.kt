@@ -60,6 +60,7 @@ fun ScreenScaffold(
     onStatus: (() -> Unit)? = null,
     showConnectionBanner: Boolean = true,
     refreshing: Boolean = snapshot.refreshing,
+    refreshLabel: String = "Refresh",
     content: LazyListScope.() -> Unit,
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -85,6 +86,7 @@ fun ScreenScaffold(
                     subtitle = subtitle?.let { { Text(it) } },
                     actions = {
                         actions()
+                        RefreshControl(label = refreshLabel, refreshing = refreshing, onRefresh = onRefresh)
                         onStatus?.let { StatusAction(snapshot, now, onClick = it) }
                     },
                     navigationIcon = navigationIcon,

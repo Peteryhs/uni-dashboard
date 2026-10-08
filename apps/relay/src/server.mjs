@@ -14,6 +14,7 @@ import http from 'node:http';
 import { isCrossSiteWrite } from './access.mjs';
 import { assertSafeLocalBind, isLoopbackHost } from './local-auth.mjs';
 import { SqliteStore } from './store.mjs';
+import { pollSource, reconcilePolling } from './polling.mjs';
 import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
@@ -58,47 +59,8 @@ export function createServer({
     polling = true;
     const receipts = [];
     try {
-      const jobs = store.jobs();
-      const due = dedupeGoogleSources(jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
-        .map((j) => sourceById(j.source_id, sources))
-        .filter(Boolean)
-        .filter((s) => !s.needsSecret || (typeof s.url === 'function' ? s.url() : s.url)));
-      for (const source of due) {
-        const startedAt = Date.now();
-        const receipt = await runSource(source, store, { now: startedAt, holdLease: true });
-        receipts.push(receipt);
-        let job = { next_due_at: Date.now(), circuit: 'closed' };
-        if (receipt.claim_token) {
-          try {
-            job = store.recordJobResult(source.id, {
-              startedAt,
-              finishedAt: receipt.finished_at,
-              outcome: receipt.outcome,
-              httpStatus: receipt.http_status,
-              retryAfterMs: receipt.retry_after_ms,
-              cadenceMs: source.cadenceMs,
-              rateLimitMinMs: source.rateLimitMinMs,
-              rateLimitMaxMs: source.rateLimitMaxMs,
-              now: Date.now(),
-              claimToken: receipt.claim_token,
-            });
-          } finally {
-            store.releaseSource(source.id, receipt.claim_token, Date.now());
-          }
-        }
-        log(
-          `[poll] ${source.id} -> ${receipt.outcome} rows=${receipt.rows_written}` +
-            `${receipt.tombstones ? ` tombstones=${receipt.tombstones}` : ''}` +
-            `${receipt.error ? ` error="${receipt.error}"` : ''} next_in=${Math.round((job.next_due_at - Date.now()) / 1000)}s circuit=${job.circuit}`,
-        );
-      }
-      // sources that are still unscheduled get scheduled on first pass
-      for (const source of enabledSources(sources)) {
-        if (!jobs.find((j) => j.source_id === source.id)) {
-          const ready = !source.needsSecret || (typeof source.url === 'function' ? source.url() : source.url);
-          store.scheduleJob(source.id, ready ? Date.now() : Date.now() + 6 * 60 * 60 * 1000);
-        }
-      }
+      const { ready, jobs } = await reconcilePolling(store, sources, now);
+      for (const source of ready) receipts.push(await pollSource(store, source, { jobs, log }));
       // Same retention sweep as the Worker cron: receipts are an audit trail, not a history.
       const pruned = await store.pruneRuns(now - RUN_RETENTION_MS);
       if (pruned) log(`[poll] pruned ${pruned} run receipts older than ${Math.round(RUN_RETENTION_MS / 86_400_000)}d`);
@@ -180,6 +142,9 @@ export function createServer({
         const weather = await getCachedWeather(store, { now: evaluatedAt });
         const feed = await buildRecommendations(store, { now: selectedAt, freshnessNow: evaluatedAt, section: filters.section, group: filters.group, weather });
         return send(200, { ...feed, preview: { selected_at: selectedAt, evaluated_at: evaluatedAt, uses_current_saved_data: true } });
+      }
+      if (automaticPolling && req.method === 'GET' && ['/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/recommendations', '/v1/menu', '/v1/weather/current'].includes(url.pathname)) {
+        void pollDue().catch(error => log(`[poll] read recovery: ${error.message}`));
       }
       if (isGuidanceRoute(url.pathname)) {
         const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store, startAiJob });
@@ -264,33 +229,14 @@ export function createServer({
       }
       if (url.pathname === '/v1/poll' && req.method === 'POST') {
         const id = url.searchParams.get('source');
-        const targets = id
-          ? [sourceById(id, sources)].filter(Boolean)
-          : dedupeGoogleSources(enabledSources(sources));
+        if (id === 'open-meteo') return send(200, { receipts: [], weather: await syncWeather(store) });
+        if (id && !sourceById(id, sources)) return send(404, { error: 'unknown source' });
+        const targets = id ? [sourceById(id, sources)] : dedupeGoogleSources(enabledSources(sources));
+        const jobs = store.jobs();
         const receipts = [];
-        for (const s of targets) {
-          const r = await runSource(s, store, { now: Date.now(), holdLease: true });
-          if (r.claim_token) {
-            try {
-              store.recordJobResult(s.id, {
-                startedAt: r.started_at,
-                finishedAt: r.finished_at,
-                outcome: r.outcome,
-                httpStatus: r.http_status,
-                retryAfterMs: r.retry_after_ms,
-                cadenceMs: s.cadenceMs,
-                rateLimitMinMs: s.rateLimitMinMs,
-                rateLimitMaxMs: s.rateLimitMaxMs,
-                now: Date.now(),
-                claimToken: r.claim_token,
-              });
-            } finally {
-              store.releaseSource(s.id, r.claim_token, Date.now());
-            }
-          }
-          receipts.push(r);
-        }
-        return send(200, { receipts });
+        for (const source of targets) receipts.push(await pollSource(store, source, { manual: true, jobs, sources, log }));
+        const weather = id ? undefined : await syncWeather(store);
+        return send(200, { receipts, weather });
       }
 
       if (url.pathname === '/v1/ai/models' && req.method === 'GET') {

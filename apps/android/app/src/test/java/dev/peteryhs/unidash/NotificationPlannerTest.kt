@@ -21,7 +21,7 @@ class NotificationPlannerTest {
     @Test
     fun `a class gets one reminder ten minutes before it starts`() {
         val now = firstClass.startsAt - 3_600_000
-        val plan = NotificationPlanner.plan(calendar, now)
+        val plan = NotificationPlanner.plan(calendar.copy(generatedAt = now), now)
         val r = plan.single { it.key == "start:${firstClass.occurrenceId}" }
         assertEquals(firstClass.startsAt - NotificationPlanner.CLASS_LEAD_MS, r.fireAt)
         assertEquals(Channel.Classes, r.channel)
@@ -31,7 +31,7 @@ class NotificationPlannerTest {
     @Test
     fun `nothing is scheduled in the past or beyond the horizon`() {
         val now = firstClass.startsAt - 5 * 60_000 // inside the lead: that reminder has passed
-        val plan = NotificationPlanner.plan(calendar, now)
+        val plan = NotificationPlanner.plan(calendar.copy(generatedAt = now), now)
         assertTrue(plan.none { it.key == "start:${firstClass.occurrenceId}" })
         assertTrue(plan.all { it.fireAt > now && it.fireAt <= now + NotificationPlanner.HORIZON_MS })
         assertEquals("sorted by fire time", plan.sortedBy { it.fireAt }, plan)
@@ -40,7 +40,8 @@ class NotificationPlannerTest {
     @Test
     fun `deadlines get a day-before and two-hours-before reminder, opening dates get none`() {
         val deadline = events.first { it.category == "deadline" }
-        val plan = NotificationPlanner.plan(calendar, deadline.startsAt - 30 * 3_600_000L)
+        val now = deadline.startsAt - 30 * 3_600_000L
+        val plan = NotificationPlanner.plan(calendar.copy(generatedAt = now), now)
         val keys = plan.filter { it.channel == Channel.Deadlines && it.key.endsWith(deadline.occurrenceId) }.map { it.key }.toSet()
         assertEquals(setOf("due:24h:${deadline.occurrenceId}", "due:2h:${deadline.occurrenceId}"), keys)
         events.filter { it.category == "opens" }.forEach { o -> assertTrue(plan.none { it.key.endsWith(o.occurrenceId) }) }
@@ -49,8 +50,9 @@ class NotificationPlannerTest {
     @Test
     fun `keys are stable across syncs so reminders are replaced, not duplicated`() {
         val now = firstClass.startsAt - 3_600_000
-        assertEquals(NotificationPlanner.plan(calendar, now).map { it.key }, NotificationPlanner.plan(calendar, now + 1).map { it.key })
-        assertEquals(NotificationPlanner.plan(calendar, now).size, NotificationPlanner.plan(calendar, now).map { it.key }.toSet().size)
+        val fresh = calendar.copy(generatedAt = now)
+        assertEquals(NotificationPlanner.plan(fresh, now).map { it.key }, NotificationPlanner.plan(fresh, now + 1).map { it.key })
+        assertEquals(NotificationPlanner.plan(fresh, now).size, NotificationPlanner.plan(fresh, now).map { it.key }.toSet().size)
     }
 
     @Test

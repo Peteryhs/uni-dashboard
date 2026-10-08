@@ -12,7 +12,7 @@
   gap: 16px;
 }
 
-.service-status-heading > div { min-width: 0; }
+.service-status-heading > div { flex: 1; min-width: 0; }
 .service-status-heading h3 { margin: 0; color: #f5f6f7; font-size: 16px; font-weight: 600; line-height: 1.35; }
 .service-status-heading p,
 .service-status-note,
@@ -23,7 +23,7 @@
   line-height: 1.5;
 }
 
-.service-status-heading > .section-control { flex: none; }
+.service-status-heading > :is(.section-control, .top-refresh) { flex: none; }
 .service-status-list { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; }
 
 .service-source {

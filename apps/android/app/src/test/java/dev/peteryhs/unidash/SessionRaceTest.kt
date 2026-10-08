@@ -71,6 +71,47 @@ class SessionRaceTest {
     }
 
     @Test
+    fun `explicit source refresh updates upstream before reading health`() = runTest {
+        server.enqueue(json("""{"receipts":[{"outcome":"ok"},{"outcome":"skipped"}],"deferred":["menu"]}"""))
+        server.enqueue(json(fixture("health_sources.json")))
+        val repo = DashboardRepository(tmp.newFolder("source-refresh"), apiFor = { api })
+        assertTrue(repo.refreshHealth(updateSources = true).isSuccess)
+        assertEquals("/v1/poll", server.takeRequest().path)
+        assertEquals("/v1/health/sources", server.takeRequest().path)
+        assertEquals("Refresh requested. 2 sources are waiting for a safe retry.", repo.snapshot.value.sourceRefreshResult)
+        assertFalse(repo.snapshot.value.sourceRefreshing)
+        assertFalse(repo.snapshot.value.healthRefreshing)
+    }
+
+    @Test
+    fun `duplicate source refresh is suppressed while a poll is in progress`() = runTest {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val polls = AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                "/v1/poll" -> {
+                    polls.incrementAndGet()
+                    started.countDown()
+                    release.await(10, TimeUnit.SECONDS)
+                    json("""{"receipts":[{"outcome":"ok"}]}""")
+                }
+                else -> json(fixture("health_sources.json"))
+            }
+        }
+        val repo = DashboardRepository(tmp.newFolder("dedup-refresh"), apiFor = { api })
+        val first = async(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) { repo.refreshHealth(updateSources = true) }
+        assertTrue(started.await(10, TimeUnit.SECONDS))
+        assertTrue(repo.snapshot.value.sourceRefreshing)
+        assertTrue(repo.refreshHealth(updateSources = true).isFailure)
+        assertTrue(repo.snapshot.value.sourceRefreshing)
+        release.countDown()
+        assertTrue(first.await().isSuccess)
+        assertEquals(1, polls.get())
+        assertFalse(repo.snapshot.value.sourceRefreshing)
+    }
+
+    @Test
     fun `health refresh works independently and keeps last known status after failure`() = runTest {
         var healthFails = false
         server.dispatcher = object : Dispatcher() {

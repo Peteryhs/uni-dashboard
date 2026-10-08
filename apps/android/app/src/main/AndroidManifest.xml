@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- Class reminders fire at a set minute; without this they may drift by several minutes. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -48,6 +49,10 @@
 
         <receiver
             android:name=".notify.ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".notify.TrackingReceiver"
             android:exported="false" />
 
         <receiver

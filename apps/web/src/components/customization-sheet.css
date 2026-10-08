@@ -72,6 +72,7 @@
 
 .settings-sheet svg { display: none !important; }
 .settings-sheet .settings-close svg { display: block !important; }
+.settings-sheet .top-refresh > svg { display: block !important; }
 
 .settings-close {
   position: absolute;

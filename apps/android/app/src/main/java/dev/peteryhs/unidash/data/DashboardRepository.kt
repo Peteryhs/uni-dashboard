@@ -37,6 +37,8 @@ data class Snapshot(
     /** A live health check is deliberately not restored from disk as an all-clear. */
     val health: Health? = null,
     val healthError: RelayError? = null,
+    val sourceRefreshResult: String? = null,
+    val sourceRefreshing: Boolean = false,
 ) {
     val hasData: Boolean get() = bundle != null || recommendations != null || calendar != null
 }
@@ -58,6 +60,7 @@ class DashboardRepository(
     private val sessionGeneration = AtomicLong(0L)
     private val sessionInvalidated = AtomicBoolean(false)
     private val activeRefreshJobs = mutableSetOf<Job>()
+    private val sourceRefreshInFlight = AtomicBoolean(false)
 
     init {
         cacheDir.mkdirs()
@@ -136,6 +139,9 @@ class DashboardRepository(
                                 sessionGeneration = generation,
                                 health = health.getOrNull() ?: previousHealth,
                                 healthError = health.exceptionOrNull()?.toRelayError(),
+                                healthRefreshing = _snapshot.value.healthRefreshing,
+                                sourceRefreshResult = _snapshot.value.sourceRefreshResult,
+                                sourceRefreshing = _snapshot.value.sourceRefreshing,
                             )
                             Result.success(_snapshot.value)
                         }
@@ -229,7 +235,7 @@ class DashboardRepository(
     }
 
     /** Fetches source health without depending on the dashboard, recommendations, or calendar. */
-    suspend fun refreshHealth(expectedGeneration: Long? = null): Result<Health> {
+    suspend fun refreshHealth(expectedGeneration: Long? = null, updateSources: Boolean = false): Result<Health> {
         val generation = expectedGeneration ?: sessionGeneration.get()
         if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
 
@@ -238,13 +244,32 @@ class DashboardRepository(
             if (!isSessionCurrentLocked(generation)) return Result.failure(StaleSessionException)
             activeRefreshJobs += job
         }
+        val ownsSourceRefresh = updateSources && sourceRefreshInFlight.compareAndSet(false, true)
         try {
+            if (updateSources && !ownsSourceRefresh) return Result.failure(IllegalStateException("Source refresh is already running"))
             synchronized(sessionLock) {
                 if (!isSessionCurrentLocked(generation)) return Result.failure(StaleSessionException)
-                _snapshot.update { it.copy(healthRefreshing = true) }
+                _snapshot.update { it.copy(healthRefreshing = true, sourceRefreshing = updateSources || it.sourceRefreshing, sourceRefreshResult = if (updateSources) "Refreshing sources…" else it.sourceRefreshResult) }
             }
             val result = try {
                 val api = apiFor() ?: throw RelayError.Unauthorized("not signed in")
+                if (updateSources) {
+                    val poll = api.refreshSources()
+                    val failures = poll.receipts.count { it.outcome !in setOf("ok", "empty", "skipped") } + if (poll.weather?.status == "failed") 1 else 0
+                    val skipped = poll.receipts.filter { it.outcome == "skipped" }
+                    val waiting = (poll.deferred + skipped.map { it.sourceId }.filter { it.isNotBlank() }).toSet().size +
+                        skipped.count { it.sourceId.isBlank() } + if (poll.weather?.status == "deferred") 1 else 0
+                    val message = when {
+                        failures > 0 -> "$failures ${if (failures == 1) "source could" else "sources could"} not update. Check the recovery details below."
+                        waiting > 0 -> "Refresh requested. $waiting ${if (waiting == 1) "source is" else "sources are"} waiting for a safe retry."
+                        poll.receipts.isEmpty() && (poll.weather?.status != "ready" || poll.weather.cached) -> "No updates are due. See the next check time below."
+                        else -> "Source refresh finished."
+                    }
+                    synchronized(sessionLock) {
+                        if (!isSessionCurrentLocked(generation)) return Result.failure(StaleSessionException)
+                        _snapshot.update { it.copy(sourceRefreshResult = message) }
+                    }
+                }
                 Result.success(api.health().first)
             } catch (error: CancellationException) {
                 synchronized(sessionLock) {
@@ -281,6 +306,7 @@ class DashboardRepository(
                             if (it.sessionGeneration == generation) it.copy(
                                 healthError = relayError,
                                 healthRefreshing = false,
+                                sourceRefreshResult = if (updateSources) "Source refresh could not finish. Try again when the backend is reachable." else it.sourceRefreshResult,
                             ) else it
                         }
                         Result.failure(relayError)
@@ -288,6 +314,12 @@ class DashboardRepository(
                 },
             )
         } finally {
+            if (ownsSourceRefresh) {
+                sourceRefreshInFlight.set(false)
+                synchronized(sessionLock) {
+                    if (isSessionCurrentLocked(generation)) _snapshot.update { it.copy(sourceRefreshing = false) }
+                }
+            }
             if (job != null) synchronized(sessionLock) { activeRefreshJobs.remove(job) }
         }
     }

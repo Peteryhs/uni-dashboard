@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CourseSyllabusPanel } from './course-syllabus-panel';
 import { Button } from '@/components/ui/button';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { usePreferences } from '@/lib/preferences-store';
 import { previewCourseImport, saveCourseResources } from '@/lib/api';
 import type { CalendarData, CourseResource } from '@/lib/contract';
@@ -73,7 +74,7 @@ export function CourseSettingsTab({ data, pending, error, focusCourse, onRetry, 
       {pending && !data && <p className="settings-course-state" role="status">Loading courses…</p>}
       {error && !data && <div className="settings-course-state settings-course-state--error" role="alert">
         <span>Courses could not be loaded.</span>
-        <Button type="button" variant="outline" size="sm" onClick={onRetry}>Try again</Button>
+        <RefreshButton label="Reload courses" refreshing={pending} onRefresh={onRetry} showLabel />
       </div>}
       {data && courses.length === 0 && <p className="settings-course-state">No courses appear in the loaded calendar feed. Connect a schedule feed to add course materials here.</p>}
       {courses.length > 0 && <div className="settings-course-rows">

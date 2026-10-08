@@ -13,8 +13,9 @@
  */
 import { D1Store } from './d1-store.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
+import { pollSource, reconcilePolling, deferredReceipt } from './polling.mjs';
 import { runSource } from './runner.mjs';
-import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
+import { SOURCES, sourceById } from '#sources/registry.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 import { buildDashboard } from './cards.mjs';
 import { buildCalendar, calendarOptions } from './calendar.mjs';
@@ -108,11 +109,6 @@ function json(body, status = 200) {
   });
 }
 
-function scheduleFor(source) {
-  const url = typeof source.url === 'function' ? source.url() : source.url;
-  return !source.needsSecret || Boolean(url);
-}
-
 /**
  * Sources polled per invocation. Workers Free allows 50 D1 queries per invocation, and a full poll
  * of all four sources measures 41 on its own, so a tick takes two and leaves the rest due. The cron
@@ -130,51 +126,17 @@ const MAX_SOURCES_PER_TICK = 2;
  */
 export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TICK, sources = SOURCES) {
   const receipts = [];
-  const jobs = await store.jobs();
-  const ready = dedupeGoogleSources(jobs.filter((job) => job.next_due_at <= now).sort((a, b) => a.next_due_at - b.next_due_at)
-    .map((j) => sourceById(j.source_id, sources))
-    .filter(Boolean)
-    .filter(scheduleFor));
+  const { ready, repairs, jobs } = await reconcilePolling(store, sources, now);
   const due = ready.slice(0, cap);
-  const deferred = ready.slice(cap).map((s) => s.id);
-
-  for (const source of due) {
-    const startedAt = Date.now();
-    const receipt = await runSource(source, store, { now: startedAt, holdLease: true });
-    receipts.push(receipt);
-    if (receipt.claim_token) {
-      try {
-        await store.recordJobResult(source.id, {
-          startedAt,
-          finishedAt: receipt.finished_at,
-          outcome: receipt.outcome,
-          httpStatus: receipt.http_status,
-          retryAfterMs: receipt.retry_after_ms,
-          cadenceMs: source.cadenceMs,
-          rateLimitMinMs: source.rateLimitMinMs,
-          rateLimitMaxMs: source.rateLimitMaxMs,
-          now: Date.now(),
-          claimToken: receipt.claim_token,
-        });
-      } finally {
-        await store.releaseSource(source.id, receipt.claim_token, Date.now());
-      }
-    }
-  }
-
-  // Sources that have never run get scheduled on the first pass, so a fresh D1 fills itself.
-  for (const source of enabledSources(sources)) {
-    if (!jobs.find((j) => j.source_id === source.id)) {
-      await store.scheduleJob(source.id, scheduleFor(source) ? Date.now() : Date.now() + 6 * 60 * 60 * 1000);
-    }
-  }
+  const deferred = ready.slice(cap).map(source => source.id);
+  for (const source of due) receipts.push(await pollSource(store, source, { jobs, log: console.error }));
 
   // The receipt log is an audit trail, not a history: prune it every cycle so the
   // latest-run-per-source query cannot become a full scan of a table that only grows.
   const pruned = await store.pruneRuns(now - RUN_RETENTION_MS);
   const prunedSnapshots = await store.pruneSnapshots(now - RUN_RETENTION_MS);
 
-  return { receipts, deferred, pruned, prunedSnapshots };
+  return { receipts, deferred, repairs, pruned, prunedSnapshots };
 }
 
 async function handleFetch(request, env, ctx) {
@@ -227,6 +189,12 @@ async function handleFetch(request, env, ctx) {
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
     else void task.catch((error) => console.error(`[ai-job] ${job.kind} ${error.message}`));
   };
+
+  if (request.method === 'GET' && ['/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/recommendations', '/v1/menu', '/v1/weather/current'].includes(path) && typeof ctx?.waitUntil === 'function') {
+    ctx.waitUntil(pollDue(store, Date.now(), 1)
+      .then(result => result.receipts.length === 0 ? syncWeather(store) : result)
+      .catch(error => console.error(`[poll] read recovery: ${error.message}`)));
+  }
 
   if (isGuidanceRoute(path)) {
     const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob });
@@ -302,37 +270,21 @@ async function handleFetch(request, env, ctx) {
 
   if (path === '/v1/poll' && request.method === 'POST') {
     const id = url.searchParams.get('source');
+    if (id === 'open-meteo') return json({ receipts: [], deferred: [], weather: await syncWeather(store) });
     if (id) {
       const source = sourceById(id, SOURCES);
-      if (!source) return json({ error: `unknown source ${id}` }, 404);
-      const receipt = await runSource(source, store, { now: Date.now(), holdLease: true });
-      if (receipt.claim_token) {
-        try {
-          await store.recordJobResult(source.id, {
-            startedAt: receipt.started_at,
-            finishedAt: receipt.finished_at,
-            outcome: receipt.outcome,
-            httpStatus: receipt.http_status,
-            retryAfterMs: receipt.retry_after_ms,
-            cadenceMs: source.cadenceMs,
-            rateLimitMinMs: source.rateLimitMinMs,
-            rateLimitMaxMs: source.rateLimitMaxMs,
-            now: Date.now(),
-            claimToken: receipt.claim_token,
-          });
-        } finally {
-          await store.releaseSource(source.id, receipt.claim_token, Date.now());
-        }
-      }
-      return json({ receipts: [receipt], deferred: [] });
+      if (!source) return json({ error: 'unknown source' }, 404);
+      const receipt = await pollSource(store, source, { manual: true, log: console.error });
+      return json({ receipts: [receipt], deferred: receipt.meta?.poll_claim === 'deferred' ? [source.id] : [] });
     }
     // A manual poll obeys the same query budget as the cron, because the cap is a platform limit
     // (50 D1 queries per invocation on Free) and not a property of the scheduled path. Poll one
     // source at a time with ?source=<id> when everything needs to run right now.
     const { receipts, deferred, pruned } = await pollDue(store, Date.now());
+    const weather = receipts.length < MAX_SOURCES_PER_TICK ? await syncWeather(store) : { status: 'deferred' };
     // A two-source poll can nearly exhaust D1's per-invocation query budget. The next minute
     // normally has only status due, so perform the AI cache check on that lighter tick.
-    return json({ receipts, deferred, pruned });
+    return json({ receipts: [...receipts, ...deferred.map(id => deferredReceipt({ id }, 'queued for the next polling tick'))], deferred, pruned, weather });
   }
 
   if (path === '/v1/ai/models' && request.method === 'GET') {
@@ -545,7 +497,10 @@ async function handleFetch(request, env, ctx) {
       const changed = stored.some((s) => !s.cleared);
       let polled = [];
       if (changed) {
-        const { receipts } = await pollDue(store, Date.now(), 1);
+        const changedSources = SOURCES.filter(source => feedsToSchedule.has(source.id) ||
+          (['uw-portal-ics', 'google-calendar-ics'].includes(source.id) &&
+            [...feedsToSchedule].some(id => ['uw-portal-ics', 'google-calendar-ics'].includes(id))));
+        const { receipts } = await pollDue(store, Date.now(), 1, changedSources);
         polled = receipts.map((r) => `${r.source_id}:${r.outcome}`);
       }
 

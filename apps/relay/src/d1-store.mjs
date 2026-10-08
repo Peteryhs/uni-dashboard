@@ -13,6 +13,7 @@
  */
 import { SHAPES, ddlStatements, rowToParams, paramsToRow, upsertSql, TABLES, INDEXES, CHUNK } from './schema.mjs';
 import { CHANGE_RETENTION_MS } from './calendar-changes.mjs';
+import { nextJobResult } from './retry.mjs';
 
 /** Web Crypto sha256, hex encoded. Same value the Node adapter produces for the same bytes. */
 async function sha256Hex(text) {
@@ -181,7 +182,7 @@ export class D1Store {
         run.rows_written ?? 0,
         run.error ?? '',
         run.body_sha256 ?? '',
-        JSON.stringify(run.meta ?? {}),
+        JSON.stringify({ ...run.meta, ...(run.retry_after_ms > 0 ? { retry_after_ms: run.retry_after_ms } : {}) }),
       )
       .run();
     return true;
@@ -282,8 +283,12 @@ export class D1Store {
   }
 
   /** Atomically claim a source so cron, manual requests and separate Worker invocations serialize. */
-  async claimSource(sourceId, { now = Date.now(), leaseMs = 2 * 60_000, leaseNow = now } = {}) {
+  async claimSource(sourceId, { now = Date.now(), leaseMs = 2 * 60_000, leaseNow = now, expectedJob = undefined } = {}) {
     const token = crypto.randomUUID();
+    const fence = expectedJob === undefined ? '' : expectedJob === null ? ' AND 0' :
+      ' AND job.next_due_at IS ? AND job.last_started_at IS ? AND job.last_finished_at IS ? AND job.lease_token IS ?';
+    const generation = expectedJob ? [expectedJob.next_due_at, expectedJob.last_started_at ?? null,
+      expectedJob.last_finished_at ?? null, expectedJob.lease_token ?? null] : [];
     const row = await this.db.prepare(`
       INSERT INTO job (source_id, next_due_at, last_started_at, lease_token, lease_expires_at)
       VALUES (?, ?, ?, ?, ?)
@@ -291,9 +296,9 @@ export class D1Store {
         last_started_at=excluded.last_started_at,
         lease_token=excluded.lease_token,
         lease_expires_at=excluded.lease_expires_at
-      WHERE job.lease_token IS NULL OR job.lease_expires_at IS NULL OR job.lease_expires_at <= ?
+      WHERE (job.lease_token IS NULL OR job.lease_expires_at IS NULL OR job.lease_expires_at <= ?)${fence}
       RETURNING lease_token, last_started_at, lease_expires_at
-    `).bind(sourceId, now, now, token, leaseNow + Math.max(1, leaseMs), leaseNow).first();
+    `).bind(sourceId, now, now, token, leaseNow + Math.max(1, leaseMs), leaseNow, ...generation).first();
     return row ? { token: row.lease_token, startedAt: row.last_started_at, expiresAt: row.lease_expires_at } : null;
   }
 
@@ -433,7 +438,7 @@ export class D1Store {
       rows.length,
       receipt.error ?? '',
       receipt.body_sha256 ?? '',
-      JSON.stringify(receipt.meta ?? {}),
+      JSON.stringify({ ...receipt.meta, ...(receipt.retry_after_ms > 0 ? { retry_after_ms: receipt.retry_after_ms } : {}) }),
       sourceId,
       leaseToken,
       leaseNow,
@@ -458,50 +463,54 @@ export class D1Store {
       .run();
   }
 
+  async repairJob(sourceId, nextDueAt, { expectedNextDueAt = null, expectedStartedAt = null,
+    expectedFinishedAt = null, now = Date.now() } = {}) {
+    const result = expectedNextDueAt == null
+      ? await this.db.prepare('INSERT INTO job (source_id, next_due_at) VALUES (?,?) ON CONFLICT DO NOTHING')
+        .bind(sourceId, nextDueAt).run()
+      : await this.db.prepare(`UPDATE job SET next_due_at=? WHERE source_id=? AND next_due_at=?
+          AND last_started_at IS ? AND last_finished_at IS ?
+          AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`)
+        .bind(nextDueAt, sourceId, expectedNextDueAt, expectedStartedAt, expectedFinishedAt, now).run();
+    return (result?.meta?.changes ?? 0) > 0;
+  }
+
   async recordJobResult(sourceId, {
     startedAt,
     finishedAt,
     outcome,
     httpStatus = null,
     retryAfterMs = 0,
+    meta = {},
+    minimumRefreshMs = 0,
     cadenceMs,
     rateLimitMinMs = 30 * 60_000,
     rateLimitMaxMs = 48 * 60 * 60_000,
     now,
     claimToken = null,
+    interrupted = false,
   }) {
     const prev = await this.db.prepare('SELECT * FROM job WHERE source_id=?').bind(sourceId).first();
     if (!claimToken && prev?.lease_token && (prev.lease_expires_at ?? 0) > now) {
       return { applied: false, failures: prev.consecutive_failures ?? 0, circuit: prev.circuit_state ?? 'closed', next_due_at: prev.next_due_at ?? null };
     }
-    if (claimToken && (!prev || prev.lease_token !== claimToken || prev.last_started_at !== startedAt || (prev.lease_expires_at ?? 0) <= now)) {
+    if (claimToken && (!prev || prev.lease_token !== claimToken || prev.last_started_at !== startedAt || (!interrupted && (prev.lease_expires_at ?? 0) <= now))) {
       return { applied: false, failures: prev?.consecutive_failures ?? 0, circuit: prev?.circuit_state ?? 'closed', next_due_at: prev?.next_due_at ?? null };
     }
-    const failures = ['ok', 'empty', 'skipped'].includes(outcome)
-      ? 0
-      : (prev?.consecutive_failures ?? 0) + 1;
-    const circuit = failures >= 5 ? 'open' : 'closed';
-    const backoff = httpStatus === 429
-      ? Math.max(
-        retryAfterMs || 0,
-        Math.min(rateLimitMaxMs, Math.max(cadenceMs, rateLimitMinMs) * 2 ** Math.max(0, failures - 1)),
-      )
-      : Math.min(15 * 60 * 1000, 1000 * 2 ** Math.max(0, failures - 1));
-    const nextInterval = (outcome === 'empty' || outcome === 'skipped')
-      ? Math.min(cadenceMs, 30 * 60_000)
-      : cadenceMs;
-    const next = circuit === 'open' || failures > 0
-      ? now + backoff + Math.floor(Math.random() * 1000)
-      : now + nextInterval;
+    const policy = nextJobResult(prev, { outcome, meta, httpStatus, retryAfterMs, cadenceMs,
+      minimumRefreshMs, rateLimitMinMs, rateLimitMaxMs, now });
+    const { failures, circuit, next_due_at: next } = policy;
+    outcome = policy.outcome;
     if (claimToken) {
       const result = await this.db.prepare(`
         UPDATE job SET next_due_at=?, last_started_at=?, last_finished_at=?, last_outcome=?,
           consecutive_failures=?, circuit_state=?
-        WHERE source_id=? AND lease_token=? AND last_started_at=? AND lease_expires_at > ?
-      `).bind(next, startedAt, finishedAt, outcome, failures, circuit, sourceId, claimToken, startedAt, now).run();
+        WHERE source_id=? AND lease_token=? AND last_started_at=?
+          AND ((?=0 AND lease_expires_at > ?) OR (?=1 AND lease_expires_at <= ?))
+      `).bind(next, startedAt, finishedAt, outcome, failures, circuit, sourceId, claimToken, startedAt, Number(interrupted), now, Number(interrupted), now).run();
       return { applied: (result?.meta?.changes ?? 0) > 0, failures, circuit, next_due_at: next };
     }
-    await this.db.prepare(`
+    const result = await this.db.prepare(`
       INSERT INTO job (source_id, next_due_at, last_started_at, last_finished_at, last_outcome, consecutive_failures, circuit_state)
       VALUES (?,?,?,?,?,?,?)
       ON CONFLICT (source_id) DO UPDATE SET
@@ -511,8 +520,9 @@ export class D1Store {
         last_outcome=excluded.last_outcome,
         consecutive_failures=excluded.consecutive_failures,
         circuit_state=excluded.circuit_state
-    `).bind(sourceId, next, startedAt, finishedAt, outcome, failures, circuit).run();
-    return { applied: true, failures, circuit, next_due_at: next };
+      WHERE job.lease_expires_at IS NULL OR job.lease_expires_at <= ?
+    `).bind(sourceId, next, startedAt, finishedAt, outcome, failures, circuit, now).run();
+    return { applied: (result?.meta?.changes ?? 0) > 0, failures, circuit, next_due_at: next };
   }
 
   async jobs() {

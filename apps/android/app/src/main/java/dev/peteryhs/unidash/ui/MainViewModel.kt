@@ -82,6 +82,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val snapshot: StateFlow<Snapshot> = app.repository.snapshot
 
+    private val _automaticTracking = MutableStateFlow(app.notifier.automaticTrackingEnabled)
+    val automaticTracking: StateFlow<Boolean> = _automaticTracking.asStateFlow()
+
+    fun setAutomaticTracking(enabled: Boolean) {
+        app.notifier.setAutomaticTracking(enabled)
+        _automaticTracking.value = app.notifier.automaticTrackingEnabled
+    }
+
     /** One-shot messages for the snackbar. */
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages = _messages.asSharedFlow()
@@ -97,6 +105,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Status is useful even when one of the dashboard feeds is temporarily unavailable. */
     fun refreshHealth() {
         viewModelScope.launch { app.repository.refreshHealth() }
+    }
+
+    fun refreshSources() {
+        val generation = snapshot.value.sessionGeneration
+        viewModelScope.launch {
+            app.repository.refreshHealth(expectedGeneration = generation, updateSources = true).onSuccess {
+                app.repository.refresh(expectedGeneration = generation).onSuccess { snapshot ->
+                    app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
+                }
+            }
+        }
     }
 
     /**
@@ -131,6 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 RelayApi(creds).health()
                 if (attempt != browserAttempt.get()) throw StaleSessionException
                 app.repository.invalidateSession()
+                app.notifier.cancelAll()
                 app.credentialStore.save(creds)
                 app.repository.beginSession()
                 app.scheduleSync()
@@ -291,6 +311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sessionTransition.withLock {
                     if (attempt != browserAttempt.get()) return@withLock
                     app.repository.invalidateSession()
+                    app.notifier.cancelAll()
                     app.credentialStore.save(credentials)
                     app.repository.beginSession()
                     app.scheduleSync()

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { fetchCredentialsStatus, fetchHealth, fetchSetupStatus, triggerPoll, updateCredentials } from '@/lib/api';
@@ -120,7 +121,7 @@ export function SetupGuide({ onExit, onSettings, initialStep }: { onExit: () => 
         {checkingCredentials ? <p className="guide-note">Checking your saved connection…</p> : credentialError ? <>
           <p role="alert" className="guide-error">{credentialError.message}</p>
           <p className="guide-note">Your saved connection could not be checked. You do not need to enter it again.</p>
-          <Button variant="outline" onClick={() => void status.refetch()}>Check connection again</Button>
+          <RefreshButton label="Check connection again" refreshing={status.isFetching} onRefresh={() => void status.refetch()} showLabel />
         </> : <p className="guide-note">Your feed is saved. Continue to the next step, or replace it below.</p>}
       </div>}
 
@@ -217,12 +218,12 @@ export function SetupGuide({ onExit, onSettings, initialStep }: { onExit: () => 
 
       {step === 4 && <>
         <p>Saved connections are kept across redeploys. You can finish the guide with optional steps still outstanding.</p>
-        {status.isError ? <div className="guide-note"><p role="alert">Could not read connection settings. Check your dashboard connection or sign in again.</p><Button variant="outline" onClick={() => void status.refetch()}>Retry connection check</Button></div> : <dl className="guide-review">
+        {status.isError ? <div className="guide-note"><p role="alert">Could not read connection settings. Check your dashboard connection or sign in again.</p><RefreshButton label="Retry connection check" refreshing={status.isFetching} onRefresh={() => void status.refetch()} showLabel /></div> : <dl className="guide-review">
           <div><dt>Schedule feed</dt><dd>{status.isPending ? 'Checking…' : status.data?.portal.configured ? 'Configured' : 'Not configured'}</dd></div>
           <div><dt>LEARN feed</dt><dd>{status.isPending ? 'Checking…' : status.data?.learn.configured ? 'Configured' : 'Not configured'}</dd></div>
           <div><dt>Workers AI (optional)</dt><dd>{status.isPending ? 'Checking…' : status.data?.cloudflare?.configured ? 'Configured' : 'Not configured'}</dd></div>
         </dl>}
-        <Button variant="outline" onClick={() => void sync()} disabled={syncing}>{syncing ? 'Requesting sync…' : 'Sync and check sources'}</Button>
+        <RefreshButton label="Sync and check sources" refreshing={syncing} onRefresh={() => void sync()} showLabel />
         {health.isError && <p role="alert" className="guide-error">Source results unavailable. Retry the sync when the dashboard is reachable.</p>}
         {health.isPending && <p className="guide-note">Reading source results…</p>}
         {health.data && <details className="guide-details" open><summary>Latest source results</summary><dl className="guide-review">{health.data.sources.filter(source => source.needs_secret).map(source => <div key={source.id}><dt>{source.id}</dt><dd>{!source.ready ? 'Needs configuration' : source.last_run ? `${source.last_run.outcome} · ${source.last_run.rows} rows` : 'Configured; no run reported'}</dd></div>)}</dl><p className="guide-note">A configured feed can still fail to load or contain no events. Use Connections for full source health and errors.</p></details>}

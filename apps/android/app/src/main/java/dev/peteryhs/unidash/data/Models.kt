@@ -406,7 +406,37 @@ data class LastRun(
 )
 
 @Serializable
-data class SourceHealthJob(val circuit: String = "")
+data class SourceHealthJob(
+    val circuit: String = "",
+    @SerialName("next_due_at") val nextDueAt: Long? = null,
+    val failures: Int = 0,
+    @SerialName("lease_expires_at") val leaseExpiresAt: Long? = null,
+    @SerialName("last_outcome") val lastOutcome: String? = null,
+    @SerialName("last_finished_at") val lastFinishedAt: Long? = null,
+    @SerialName("last_started_at") val lastStartedAt: Long? = null,
+)
+
+@Serializable
+data class SourceRecovery(
+    val state: String = "unknown",
+    val action: String = "none",
+    @SerialName("next_attempt_at") val nextAttemptAt: Long? = null,
+    val automatic: Boolean = false,
+    val reason: String = "",
+)
+
+@Serializable
+data class SourcePollReceipt(val outcome: String, val error: String = "", @SerialName("source_id") val sourceId: String = "")
+
+@Serializable
+data class SourceWeatherResult(val status: String, val cached: Boolean = false)
+
+@Serializable
+data class SourcePollResult(
+    val receipts: List<SourcePollReceipt> = emptyList(),
+    val deferred: List<String> = emptyList(),
+    val weather: SourceWeatherResult? = null,
+)
 
 @Serializable
 data class SourceHealth(
@@ -424,6 +454,8 @@ data class SourceHealth(
     val job: SourceHealthJob? = null,
     @SerialName("stale_after_ms") val staleAfterMs: Long? = null,
     @SerialName("dead_after_ms") val deadAfterMs: Long? = null,
+    val freshness: String? = null,
+    val recovery: SourceRecovery? = null,
 )
 
 @Serializable

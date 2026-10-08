@@ -8,6 +8,7 @@ import { saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-
 import { clearAiCache } from '../apps/relay/src/ai.mjs';
 import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
 import { clearAccessCache } from '../apps/relay/src/access.mjs';
+import { SOURCES } from '../sources/registry.mjs';
 
 // Credential tests use synthetic feeds. Never let newly scheduled polls reach the network.
 const networkFetch = globalThis.fetch;
@@ -85,6 +86,41 @@ function fakeSource(id, rowCount, cadenceMs = 15 * 60 * 1000) {
       meta: {},
     }),
   };
+}
+
+for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']) {
+  test(`${path} background recovery shares the 50-query budget with a large calendar poll`, async t => {
+    clearEnvSettings();
+    t.after(clearEnvSettings);
+    const { api, db, counter } = createMockD1();
+    t.after(() => db.close());
+    const store = new D1Store(api);
+    await store.init();
+    const now = Date.now();
+    const feed = 'https://calendar.example.test/private-large.ics';
+    await store.setSetting('PORTAL_ICS_URL', feed);
+    await store.setSetting('WEATHER_FORECAST_JSON', JSON.stringify({ observed_at: now, attempted_at: now,
+      forecast: [{ at: now, temp_c: 18, precip_mm: 0, wind_kmh: 8 }] }));
+    for (const source of SOURCES) await store.scheduleJob(source.id, source.id === 'uw-portal-ics' ? now - 1 : now + 24 * 3600_000);
+    const timestamp = at => new Date(at).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    const body = ['BEGIN:VCALENDAR', 'VERSION:2.0', ...Array.from({ length: 80 }, (_, i) => [
+      'BEGIN:VEVENT', `UID:large-${i}`, `DTSTART:${timestamp(now + 24 * 3600_000 + i * 60_000)}`,
+      `DTEND:${timestamp(now + 25 * 3600_000 + i * 60_000)}`, `SUMMARY:Class ${i}`, 'END:VEVENT',
+    ].join('\r\n')), 'END:VCALENDAR'].join('\r\n');
+    const fetched = [];
+    globalThis.fetch = async url => { fetched.push(String(url)); return new Response(body, { headers: { 'content-type': 'text/calendar' } }); };
+    const tasks = [];
+    const before = counter.prepares;
+    const response = await worker.fetch(new Request(`https://dash.test${path}`), { ACCESS_DISABLED: '1', DB: api },
+      { waitUntil(task) { tasks.push(task); } });
+    assert.equal(response.status, 200);
+    await response.json();
+    await Promise.all(tasks);
+    assert.deepEqual(fetched, [feed], 'one due source refreshes after the read, without a duplicate provider fetch');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM timeline_event WHERE source_id='uw-portal-ics'").get().n, 80);
+    assert.ok(counter.prepares - before <= 50, `${path} plus its recovery used ${counter.prepares - before} D1 queries`);
+    t.diagnostic(`${path} read and 80-event recovery: ${counter.prepares - before} D1 queries`);
+  });
 }
 
 const now = Date.UTC(2026, 8, 22, 12);
@@ -394,7 +430,7 @@ test('saved feed settings survive separate Worker requests without environment c
   const health = await (await worker.fetch(new Request('https://dash.test/v1/health/sources'), env, {})).json();
   assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').ready, true);
   assert.equal(health.sources.find((source) => source.id === 'uw-learn-ics').ready, true);
-  assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').condition, 'unknown', 'configured does not mean successfully checked');
+  assert.equal(health.sources.find((source) => source.id === 'uw-portal-ics').condition, 'failing', 'the changed feed is checked immediately and its synthetic 503 is reported');
   assert.equal(health.runtime.target, 'cloudflare');
   assert.equal(health.runtime.uptime_scope, 'isolate', 'instance age must not claim service uptime');
   assert.equal(health.runtime.polling, 'scheduled');
@@ -548,7 +584,7 @@ test('saving changed feeds makes parked jobs due, polls one and leaves the other
   const jobs = await store.jobs();
   assert.ok(jobs.find(job => job.source_id === polledId).next_due_at > Date.now());
   assert.ok(jobs.find(job => job.source_id !== polledId && ['uw-portal-ics', 'uw-learn-ics'].includes(job.source_id)).next_due_at <= Date.now());
-  assert.equal((await pollDue(store)).receipts[0].source_id, polledId === 'uw-portal-ics' ? 'uw-learn-ics' : 'uw-portal-ics');
+  assert.equal((await pollDue(store, Date.now(), 2, SOURCES.filter(source => ['uw-portal-ics', 'google-calendar-ics', 'uw-learn-ics'].includes(source.id)))).receipts[0].source_id, polledId === 'uw-portal-ics' ? 'uw-learn-ics' : 'uw-portal-ics');
   assert.equal(fetched.length, 2);
 });
 
