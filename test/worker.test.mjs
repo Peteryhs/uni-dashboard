@@ -89,7 +89,7 @@ function fakeSource(id, rowCount, cadenceMs = 15 * 60 * 1000) {
 }
 
 for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']) {
-  test(`${path} background recovery shares the 50-query budget with a large calendar poll`, async t => {
+  test(`${path} answers without polling, so a read never pays a poll's CPU`, async t => {
     clearEnvSettings();
     t.after(clearEnvSettings);
     const { api, db, counter } = createMockD1();
@@ -116,10 +116,18 @@ for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']
     assert.equal(response.status, 200);
     await response.json();
     await Promise.all(tasks);
-    assert.deepEqual(fetched, [feed], 'one due source refreshes after the read, without a duplicate provider fetch');
+    // A poll inside the read charged its CPU to the same 10 ms budget and the route 503'd
+    // (exceededCpu) on Workers Free, so the read must leave the due source alone.
+    assert.deepEqual(fetched, [], 'a read must not fetch a source: the cron trigger is the only poller');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM timeline_event WHERE source_id='uw-portal-ics'").get().n, 0,
+      'a due source stays due until a tick picks it up');
+    assert.ok(counter.prepares - before <= 20, `${path} used ${counter.prepares - before} D1 queries`);
+    t.diagnostic(`${path} read alone: ${counter.prepares - before} D1 queries, no fetch`);
+
+    // The same due source is still recovered, by the poller that has its own budget.
+    const { receipts } = await pollDue(store, Date.now(), 1, SOURCES.filter(source => source.id === 'uw-portal-ics'));
+    assert.equal(receipts.length, 1, 'the tick polls the source the read left due');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM timeline_event WHERE source_id='uw-portal-ics'").get().n, 80);
-    assert.ok(counter.prepares - before <= 50, `${path} plus its recovery used ${counter.prepares - before} D1 queries`);
-    t.diagnostic(`${path} read and 80-event recovery: ${counter.prepares - before} D1 queries`);
   });
 }
 

@@ -143,9 +143,9 @@ export function createServer({
         const feed = await buildRecommendations(store, { now: selectedAt, freshnessNow: evaluatedAt, section: filters.section, group: filters.group, weather });
         return send(200, { ...feed, preview: { selected_at: selectedAt, evaluated_at: evaluatedAt, uses_current_saved_data: true } });
       }
-      if (automaticPolling && req.method === 'GET' && ['/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/recommendations', '/v1/menu', '/v1/weather/current'].includes(url.pathname)) {
-        void pollDue().catch(error => log(`[poll] read recovery: ${error.message}`));
-      }
+      // A read never polls: the interval loop below is the poller. Running pollDue() on every
+      // dashboard-family GET put a whole poll's CPU inside the read, which is what pushed the
+      // deployed Worker over its per-invocation CPU budget (503 exceededCpu) and burned rows read.
       if (isGuidanceRoute(url.pathname)) {
         const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store, startAiJob });
         return send(result.status, result.body);

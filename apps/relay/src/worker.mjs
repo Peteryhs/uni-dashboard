@@ -190,11 +190,14 @@ async function handleFetch(request, env, ctx) {
     else void task.catch((error) => console.error(`[ai-job] ${job.kind} ${error.message}`));
   };
 
-  if (request.method === 'GET' && ['/v1/dashboard', '/v1/calendar', '/v1/health/sources', '/v1/recommendations', '/v1/menu', '/v1/weather/current'].includes(path) && typeof ctx?.waitUntil === 'function') {
-    ctx.waitUntil(pollDue(store, Date.now(), 1)
-      .then(result => result.receipts.length === 0 ? syncWeather(store) : result)
-      .catch(error => console.error(`[poll] read recovery: ${error.message}`)));
-  }
+  /**
+   * A read never polls. This block used to run `pollDue(...)` inside `ctx.waitUntil` for every
+   * dashboard-family GET, and on Workers Free that CPU is charged to the same 10 ms the read is
+   * spending: with it the six routes below returned 503 `exceededCpu`, without it they answer in
+   * time. The cron trigger polls every minute in its own invocation with its own budget, and it is
+   * the only poller. Cost of the trade: up to a minute of staleness after opening the app, against
+   * a 503 whenever the read and the poll together crossed the limit.
+   */
 
   if (isGuidanceRoute(path)) {
     const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob });

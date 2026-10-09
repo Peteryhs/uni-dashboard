@@ -9,6 +9,49 @@ Chronological record of architectural changes, technical decisions, benchmarks, 
 
 ---
 
+## 2026-10-09 — the read that polled itself out of its CPU budget
+
+Hours after the five-term fix deployed, the same six routes came back as 503 `outcome: exceededCpu`,
+`cpuTimeMs: 10` - the Workers Free per-invocation CPU limit - while `/v1/setup`, which is not wired to
+a poll, kept answering 200. The pasted log is the proof of the split: at 11:10, with the poll still
+throwing instantly on the compound-SELECT error, `/v1/calendar`, `/v1/dashboard` and
+`/v1/recommendations` were `info` (200s); at 13:38, after the fix, they were the errors.
+
+Cause: `worker.mjs` ran `pollDue(store, Date.now(), 1)` inside `ctx.waitUntil` on every
+dashboard-family GET (added with `08c0093`, labelled `read recovery` in the log). Workers Free charges
+`waitUntil` CPU to the same 10 ms the read is spending, and a poll is not free: fetch, parse, sha256,
+gzip for the snapshot, plus about six D1 round trips. So every read also paid for a poll, and a page
+load fired four to six of them at once. My five-term fix did not create that design, it switched it
+back on - between `56d8f66` and `6afc9f7` the poll died on its first query and cost nothing.
+
+Measured before the change, with a Node/V8 proxy over a synthetic 120-event store (so the scale is
+inflated, the ranking is real): `/v1/setup` 1.0 ms, `/v1/dashboard` 5.4 ms, `/v1/calendar` 22 ms,
+`/v1/recommendations` 31-38 ms CPU, and identical numbers at `5a82c3b`, `08c0093` and `6afc9f7`, so
+the reads themselves are not a regression. The poll's own JS work, measured on the real 20 KB
+`status.uwaterloo.ca` body: gzip 1.8 ms, sha256 0.13 ms, JSON parse 0.12 ms, plus ~6 D1 calls and the
+snapshot write.
+
+Fixed by deleting the read-triggered poll in both targets (`worker.mjs`, `server.mjs`): the cron
+trigger polls every minute in its own invocation with its own budget, and the local relay's interval
+loop is its equivalent. Cost of the trade: up to a minute of staleness after opening the app, against
+a 503 whenever read plus poll crossed the limit. Weather does not depend on it: `syncWeather` is gated
+to a 30-minute refresh with a 15-minute retry lease and the tick calls it too.
+
+Guards: the test that asserted "one due source refreshes after the read" now asserts the opposite - a
+read must not fetch a source, must not write a row, and stays at or under 20 D1 queries - and still
+asserts the tick picks the same source up and writes all 80 events. Read alone costs 14 D1 queries
+(`/v1/recommendations`), 10 (`/v1/calendar`), 10 (`/v1/health/sources`), where the read plus its poll
+used to spend 16. 422/422 pass twice, `web:typecheck` and `web:build` green, and the bench now reports
+the same 10 D1 calls for `/v1/calendar` with and without a `waitUntil` context.
+
+Provenance: the CPU numbers are Node/V8 on this box with synthetic data, not Workers readings, and the
+10 ms cap is the documented Free-tier limit. Not done, and the next headroom if reads ever need it:
+`zonedToEpoch` (`sources/ics/parse.mjs:31`) builds two `Intl.DateTimeFormat` objects on every call and
+is 15-24% of the CPU in `/v1/calendar` and `/v1/recommendations`; one formatter per timezone, reused,
+is the same output for a fraction of the work.
+
+---
+
 ## 2026-10-09 — the receipt lookup that only worked locally: D1 caps a compound SELECT at five terms
 
 The deployed Worker started failing every read with `D1_ERROR: too many terms in compound SELECT`
