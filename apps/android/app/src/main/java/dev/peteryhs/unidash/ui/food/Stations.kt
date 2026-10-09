@@ -81,18 +81,18 @@ private fun ImageVector.Builder.outlinePath(draw: PathBuilder.() -> Unit) {
 private val DIET_VEGETARIAN = dietVector("DietVegetarian") {
     outlinePath {
         moveTo(3f, 21f)
-        cubicTo(5f, 15f, 8f, 10f, 11f, 8f)
-        cubicTo(14f, 6f, 18f, 9f, 16f, 12f)
-        cubicTo(13f, 16f, 7f, 19f, 3f, 21f)
+        curveTo(5f, 15f, 8f, 10f, 11f, 8f)
+        curveTo(14f, 6f, 18f, 9f, 16f, 12f)
+        curveTo(13f, 16f, 7f, 19f, 3f, 21f)
         close()
     }
     outlinePath {
         moveTo(13f, 8f)
-        cubicTo(13f, 5f, 15f, 3f, 19f, 3f)
-        cubicTo(19f, 6f, 17f, 8f, 13f, 8f)
+        curveTo(13f, 5f, 15f, 3f, 19f, 3f)
+        curveTo(19f, 6f, 17f, 8f, 13f, 8f)
         moveTo(14f, 8f)
-        cubicTo(12f, 5f, 10f, 4f, 8f, 5f)
-        cubicTo(9f, 7f, 11f, 8f, 14f, 8f)
+        curveTo(12f, 5f, 10f, 4f, 8f, 5f)
+        curveTo(9f, 7f, 11f, 8f, 14f, 8f)
     }
     outlinePath {
         moveTo(7f, 17f)
@@ -107,11 +107,11 @@ private val DIET_VEGAN = dietVector("DietVegan") {
         moveTo(12f, 21f)
         lineTo(12f, 12f)
         moveTo(12f, 14f)
-        cubicTo(12f, 9f, 8f, 6f, 4f, 7f)
-        cubicTo(4f, 11f, 7f, 14f, 12f, 14f)
+        curveTo(12f, 9f, 8f, 6f, 4f, 7f)
+        curveTo(4f, 11f, 7f, 14f, 12f, 14f)
         moveTo(12f, 10f)
-        cubicTo(12f, 6f, 15f, 3f, 20f, 3f)
-        cubicTo(20f, 7f, 17f, 10f, 12f, 10f)
+        curveTo(12f, 6f, 15f, 3f, 20f, 3f)
+        curveTo(20f, 7f, 17f, 10f, 12f, 10f)
         moveTo(6f, 21f)
         lineTo(18f, 21f)
     }
@@ -120,10 +120,10 @@ private val DIET_VEGAN = dietVector("DietVegan") {
 private val DIET_HALAL = dietVector("DietHalal") {
     outlinePath {
         moveTo(17f, 4f)
-        cubicTo(12f, 5f, 9f, 9f, 10f, 14f)
-        cubicTo(11f, 18f, 15f, 21f, 19f, 19f)
-        cubicTo(15f, 20f, 11f, 17f, 10f, 13f)
-        cubicTo(9f, 9f, 12f, 5f, 17f, 4f)
+        curveTo(12f, 5f, 9f, 9f, 10f, 14f)
+        curveTo(11f, 18f, 15f, 21f, 19f, 19f)
+        curveTo(15f, 20f, 11f, 17f, 10f, 13f)
+        curveTo(9f, 9f, 12f, 5f, 17f, 4f)
     }
     outlinePath {
         moveTo(19f, 3.5f)
@@ -143,14 +143,14 @@ private val DIET_GLUTEN_FREE = dietVector("DietGlutenFree") {
         moveTo(12f, 21f)
         lineTo(12f, 5f)
         moveTo(12f, 9f)
-        cubicTo(9f, 9f, 7f, 7f, 7f, 5f)
-        cubicTo(10f, 5f, 12f, 7f, 12f, 9f)
+        curveTo(9f, 9f, 7f, 7f, 7f, 5f)
+        curveTo(10f, 5f, 12f, 7f, 12f, 9f)
         moveTo(12f, 13f)
-        cubicTo(15f, 13f, 17f, 11f, 17f, 9f)
-        cubicTo(14f, 9f, 12f, 11f, 12f, 13f)
+        curveTo(15f, 13f, 17f, 11f, 17f, 9f)
+        curveTo(14f, 9f, 12f, 11f, 12f, 13f)
         moveTo(12f, 17f)
-        cubicTo(9f, 17f, 7f, 15f, 7f, 13f)
-        cubicTo(10f, 13f, 12f, 15f, 12f, 17f)
+        curveTo(9f, 17f, 7f, 15f, 7f, 13f)
+        curveTo(10f, 13f, 12f, 15f, 12f, 17f)
     }
     outlinePath {
         moveTo(4f, 4f)

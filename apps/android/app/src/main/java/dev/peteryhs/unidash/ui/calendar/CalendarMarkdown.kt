@@ -101,7 +101,7 @@ internal fun CalendarMarkdown(description: String) {
                     style = when (block.headingLevel) {
                         1 -> MaterialTheme.typography.titleMediumEmphasized
                         2 -> MaterialTheme.typography.titleSmallEmphasized
-                        else -> MaterialTheme.typography.labelLarge,
+                        else -> MaterialTheme.typography.labelLarge
                     },
                 )
                 MarkdownKind.Paragraph -> Text(text, style = MaterialTheme.typography.bodyMedium)
