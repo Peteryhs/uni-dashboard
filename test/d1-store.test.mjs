@@ -82,6 +82,18 @@ test('a named receipt lookup costs one D1 query, so the invocation budget is unc
   assert.deepEqual(successes.map((run) => [run.source_id, run.outcome]).sort(), [['a', 'ok'], ['b', 'ok']]);
 });
 
+test('a lookup naming more sources than D1 allows in one statement is split, not failed', async () => {
+  const counter = { prepares: 0 };
+  const store = new D1Store(createMockD1(counter));
+  await store.init();
+  const ids = ['s1', 's2', 's3', 's4', 's5', 's6'];
+  for (const id of ids) await store.insertRun({ source_id: id, started_at: now, finished_at: now, outcome: 'ok' });
+  const before = counter.prepares;
+  const runs = await store.lastRunPerSource(ids);
+  assert.equal(counter.prepares - before, 2, 'six sources are 5 + 1 terms, so two statements');
+  assert.deepEqual(runs.map((run) => run.source_id).sort(), ids);
+});
+
 test('D1Store initializes schema and performs row upserts', async () => {
   const mockD1 = createMockD1();
   const store = new D1Store(mockD1);

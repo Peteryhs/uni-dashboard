@@ -9,6 +9,49 @@ Chronological record of architectural changes, technical decisions, benchmarks, 
 
 ---
 
+## 2026-10-09 — the receipt lookup that only worked locally: D1 caps a compound SELECT at five terms
+
+The deployed Worker started failing every read with `D1_ERROR: too many terms in compound SELECT`
+after `56d8f66` shipped, 188 errors against 36 successes in the pasted log window. The cause was that
+commit's own query, not the polling: `receiptLookup()` chains one `SELECT MAX(id) ... WHERE source_id
+= ?` term per named source with `UNION ALL`, and the registry names **six** sources.
+
+D1 does not run stock SQLite. workerd hardens it (`src/workerd/util/sqlite.c++` calls
+`sqlite3_limit(db, SQLITE_LIMIT_COMPOUND_SELECT, 5)`) and D1's published limits mirror that same block
+(100 bound parameters, 100 KB of SQL, 50-byte LIKE patterns), so six terms is one too many. The local
+adapters are `better-sqlite3` and `node:sqlite`, which keep SQLite's documented 500, so the statement
+prepared cleanly on every box here and 419/419 passed: no local run could catch this.
+
+The blast radius was the whole read path. `/v1/health/sources` threw on its own receipt read, and
+`ctx.waitUntil(pollDue(...))` - attached to `/v1/dashboard`, `/v1/calendar`, `/v1/health/sources`,
+`/v1/recommendations`, `/v1/menu` and `/v1/weather/current` - threw inside `reconcilePolling()` before
+a single source was fetched, so nothing polled, nothing was written, and the cards aged with the data.
+The cron tick died the same way.
+
+Fixed by chunking instead of chaining: `receiptLookup()` returns a **list** of statements, each with at
+most `MAX_COMPOUND_TERMS = 5` terms, and both adapters run every statement in it (the D1 adapter
+through one `receiptRows()` helper, the Node adapter by flat-mapping). Six sources are two statements -
+5 + 1 - still one index seek per source and no scan, at the cost of one extra query per lookup that
+names more than five sources.
+
+Measured on real SQLite with `SQLITE_LIMIT_COMPOUND_SELECT` forced to 5, against the six ids the
+registry actually names: the old single statement (6 terms) errors with the production message, and
+both new statements prepare and run. The same statement is fine at the stock limit of 500, which is
+why the local suite was blind. Writes were never at risk: a 25-row `VALUES` upsert still runs at that
+limit.
+
+Guards: `test/receipt-lookup.test.mjs` asserts no built statement carries more than
+`MAX_COMPOUND_TERMS` terms for lists of 1 to `MAX_LOOKUP_SOURCES` sources, that the statement count is
+`ceil(n/5)`, and that a six-source lookup still returns every source's row; `test/d1-store.test.mjs`
+asserts six named sources cost two D1 queries and return all six rows. 422/422 pass, with
+`web:typecheck` and `web:build` green.
+
+Provenance: the limit comes from workerd's source and D1's published limits page, not from a probe of
+the deployed database (no box here has account access), and the 188/36 split is the pasted Cloudflare
+log.
+
+---
+
 ## 2026-10-08 — the dashboard read that scanned ten thousand receipts, and the free-tier ceiling it hit
 
 The Cloudflare free plan's database meter is **rows read** (5M/day), and it was maxed. The cause was

@@ -234,8 +234,27 @@ const RECEIPTS_PER_SOURCE = {
       GROUP BY source_id) m ON m.id = r.id`,
 };
 
-/** Above this many sources the statement would approach D1's 100 bound-parameter limit. */
+/** Above this many sources a caller names the whole fleet: the lookup spreads over 8 statements. */
 const MAX_LOOKUP_SOURCES = 40;
+
+/**
+ * Terms in one compound SELECT, and it is 5, not SQLite's documented 500.
+ *
+ * D1 does not run stock SQLite: workerd hardens it (`src/workerd/util/sqlite.c++` calls
+ * `sqlite3_limit(db, SQLITE_LIMIT_COMPOUND_SELECT, 5)`) and D1's published limits mirror that same
+ * block (100 bound parameters, 100 KB of SQL, 50-byte LIKE patterns), so production answers a
+ * `UNION ALL` chain of six terms with `too many terms in compound SELECT`. better-sqlite3 and
+ * node:sqlite keep the stock limit of 500, so nothing local can catch it: an over-long statement
+ * has to be impossible to build, not merely untested.
+ */
+const MAX_COMPOUND_TERMS = 5;
+
+/** Split a named source list into the groups one statement each may carry. */
+function lookupChunks(ids) {
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += MAX_COMPOUND_TERMS) chunks.push(ids.slice(i, i + MAX_COMPOUND_TERMS));
+  return chunks;
+}
 
 /**
  * The source ids a caller named, or null for "no list given".
@@ -252,9 +271,13 @@ function lookupIds(sourceIds) {
 
 /**
  * Latest receipt per named source, through `idx_source_run_source_id (source_id, id DESC)`: one
- * index seek per source, six rows read instead of eleven thousand, and one statement, so the 50
- * queries per invocation budget is unchanged. Returns null when no usable list was given, and the
- * caller runs the exhaustive query instead.
+ * index seek per source, six rows read instead of eleven thousand. Returns null when no usable list
+ * was given, and the caller runs the exhaustive query instead.
+ *
+ * Returns a LIST of statements, because the index seeks have to be chained with `UNION ALL` and D1
+ * allows only `MAX_COMPOUND_TERMS` of those: six sources are two statements (5 + 1) and one extra
+ * query, not one statement that fails. Sources above that are still answered by seeks; the cost of
+ * naming more of them is more statements, never a scan.
  */
 function receiptLookup(sourceIds, { successful = false } = {}) {
   const ids = lookupIds(sourceIds);
@@ -262,7 +285,10 @@ function receiptLookup(sourceIds, { successful = false } = {}) {
   const perSource = successful
     ? `SELECT MAX(id) AS id FROM source_run WHERE source_id = ? AND outcome IN ('ok', 'empty')`
     : 'SELECT MAX(id) AS id FROM source_run WHERE source_id = ?';
-  return { sql: `SELECT * FROM source_run WHERE id IN (${ids.map(() => perSource).join(' UNION ALL ')})`, params: ids };
+  return lookupChunks(ids).map((chunk) => ({
+    sql: `SELECT * FROM source_run WHERE id IN (${chunk.map(() => perSource).join(' UNION ALL ')})`,
+    params: chunk,
+  }));
 }
 
 const SHAPE_COLUMNS = SHAPES;
@@ -275,4 +301,4 @@ const SHAPE_COLUMNS = SHAPES;
  */
 const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage', 'calendar_change'];
 
-export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, RECEIPTS_PER_SOURCE, receiptLookup, lookupIds, MAX_LOOKUP_SOURCES, TABLES, INDEXES, CHUNK };
+export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, RECEIPTS_PER_SOURCE, receiptLookup, lookupIds, MAX_LOOKUP_SOURCES, MAX_COMPOUND_TERMS, TABLES, INDEXES, CHUNK };

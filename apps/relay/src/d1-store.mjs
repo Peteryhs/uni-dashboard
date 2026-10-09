@@ -200,6 +200,21 @@ export class D1Store {
   }
 
   /**
+   * Run the named lookup, or the exhaustive query when the caller named nothing usable.
+   *
+   * The lookup is a list of statements because D1 caps a compound SELECT at five terms: naming the
+   * six real sources costs two queries (5 + 1), still an index seek each and no scan.
+   */
+  async receiptRows(lookup, fallbackSql) {
+    if (!lookup) return parseRuns(await this.db.prepare(fallbackSql).all());
+    const rows = [];
+    for (const statement of lookup) {
+      rows.push(...parseRuns(await this.db.prepare(statement.sql).bind(...statement.params).all()));
+    }
+    return rows;
+  }
+
+  /**
    * Latest receipt per source.
    *
    * Named sources are looked up through `idx_source_run_source_id (source_id, id DESC)`: one index
@@ -209,19 +224,11 @@ export class D1Store {
    * and the tests use where no one is billed per row read.
    */
   async lastRunPerSource(sourceIds = null) {
-    const lookup = receiptLookup(sourceIds);
-    const res = lookup
-      ? await this.db.prepare(lookup.sql).bind(...lookup.params).all()
-      : await this.db.prepare(RECEIPTS_PER_SOURCE.latest).all();
-    return parseRuns(res);
+    return this.receiptRows(receiptLookup(sourceIds), RECEIPTS_PER_SOURCE.latest);
   }
 
   async lastSuccessfulRunPerSource(sourceIds = null) {
-    const lookup = receiptLookup(sourceIds, { successful: true });
-    const res = lookup
-      ? await this.db.prepare(lookup.sql).bind(...lookup.params).all()
-      : await this.db.prepare(RECEIPTS_PER_SOURCE.successful).all();
-    return parseRuns(res);
+    return this.receiptRows(receiptLookup(sourceIds, { successful: true }), RECEIPTS_PER_SOURCE.successful);
   }
 
   async lastSuccessfulRun(sourceId) {

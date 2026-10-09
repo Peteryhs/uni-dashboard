@@ -154,7 +154,7 @@ export class SqliteStore {
   lastRunPerSource(sourceIds = null) {
     const lookup = receiptLookup(sourceIds);
     const rows = lookup
-      ? this.db.prepare(lookup.sql).all(...lookup.params)
+      ? lookup.flatMap(({ sql, params }) => this.db.prepare(sql).all(...params))
       : this.db.prepare(RECEIPTS_PER_SOURCE.latest).all();
     return rows.map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
@@ -162,7 +162,7 @@ export class SqliteStore {
   lastSuccessfulRunPerSource(sourceIds = null) {
     const lookup = receiptLookup(sourceIds, { successful: true });
     const rows = lookup
-      ? this.db.prepare(lookup.sql).all(...lookup.params)
+      ? lookup.flatMap(({ sql, params }) => this.db.prepare(sql).all(...params))
       : this.db.prepare(RECEIPTS_PER_SOURCE.successful).all();
     return rows.map((r) => ({ ...r, meta: JSON.parse(r.meta_json || '{}') }));
   }
