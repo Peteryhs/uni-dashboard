@@ -804,10 +804,32 @@ export function CustomizationSheet({
           </TabsContent>
 
           <TabsContent value="status" className="settings-panel pt-0">
-            <SourcesPanel onManageConnections={() => setActiveTab('credentials')} />
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
+              <SourcesPanel onManageConnections={() => setActiveTab('credentials')} />
+            </BlurFade>
           </TabsContent>
           <TabsContent value="recommendations" className="settings-panel pt-0">
-            <RecommendationInsights response={recommendations} pending={recommendationsPending} error={recommendationsError} onRetry={onRetryRecommendations} />
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
+              <RecommendationInsights response={recommendations} pending={recommendationsPending} error={recommendationsError} onRetry={onRetryRecommendations} />
+            </BlurFade>
           </TabsContent>
           <TabsContent value="about" className="settings-panel settings-about pt-0">
             <BlurFade
