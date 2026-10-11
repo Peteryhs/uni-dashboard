@@ -96,7 +96,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refresh() {
         viewModelScope.launch {
-            app.repository.refresh().onSuccess { snapshot ->
+            app.repository.refresh(userInitiated = true).onSuccess { snapshot ->
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
+            }
+        }
+    }
+
+    /** Polling, initial reads, and resume checks keep cached content quiet in the UI. */
+    fun refreshAutomatically() {
+        viewModelScope.launch {
+            app.repository.refresh(skipIfFresh = true).onSuccess { snapshot ->
                 app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
             }
         }
@@ -110,10 +119,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshSources() {
         val generation = snapshot.value.sessionGeneration
         viewModelScope.launch {
-            app.repository.refreshHealth(expectedGeneration = generation, updateSources = true).onSuccess {
-                app.repository.refresh(expectedGeneration = generation).onSuccess { snapshot ->
-                    app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
-                }
+            app.repository.refreshSourcesAndDashboard(expectedGeneration = generation).onSuccess { snapshot ->
+                app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
             }
         }
     }
@@ -124,7 +131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     suspend fun liveLoop() {
         while (true) {
-            app.repository.refresh().onSuccess { snapshot ->
+            app.repository.refresh(skipIfFresh = true).onSuccess { snapshot ->
                 app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
             }
             val hint = snapshot.value.recommendations?.refreshAfterMs ?: 60_000
@@ -155,7 +162,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 app.repository.beginSession()
                 app.scheduleSync()
             }
-            refresh()
+            refreshAutomatically()
             Result.success(Unit)
         } catch (error: CancellationException) {
             throw error
@@ -319,7 +326,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (attempt != browserAttempt.get()) return@launch
                 app.credentialStore.clearPending()
                 _browserState.value = BrowserAuthState()
-                refresh()
+                refreshAutomatically()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -370,35 +377,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun act(item: Recommendation, action: String, until: Long? = null) {
+        val generation = snapshot.value.sessionGeneration
         viewModelScope.launch {
-            app.repository.act(item, action, until)
+            app.repository.act(item, action, until, expectedGeneration = generation)
                 .onSuccess {
-                    _messages.tryEmit(
-                        when (action) {
-                            "done" -> "Marked done"
-                            "dismiss" -> "Dismissed"
-                            else -> "Snoozed"
-                        }
-                    )
+                    val delivered = app.repository.runIfCurrent(generation) {
+                        val latest = app.repository.snapshot.value
+                        app.notifier.reconcileAfterAction(latest, System.currentTimeMillis(), actedItem = item, action = action)
+                        _messages.tryEmit(
+                            when (action) {
+                                "done" -> "Marked done"
+                                "dismiss" -> "Dismissed"
+                                else -> "Snoozed"
+                            }
+                        )
+                    }
+                    if (delivered) {
+                        refreshAfterAcknowledgedAction(generation)
+                    }
                 }
-                .onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
+                .onFailure {
+                    if (it !== StaleSessionException) app.repository.runIfCurrent(generation) { _messages.tryEmit(describe(it)) }
+                }
         }
     }
 
     fun dismissAlert(key: String) {
+        val generation = snapshot.value.sessionGeneration
         viewModelScope.launch {
-            app.repository.dismissAlert(key).onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
+            app.repository.dismissAlert(key, expectedGeneration = generation)
+                .onSuccess {
+                    val delivered = app.repository.runIfCurrent(generation) {
+                        val latest = app.repository.snapshot.value
+                        app.notifier.reconcileAfterAction(latest, System.currentTimeMillis())
+                    }
+                    if (delivered) refreshAfterAcknowledgedAction(generation)
+                }
+                .onFailure {
+                    if (it !== StaleSessionException) app.repository.runIfCurrent(generation) { _messages.tryEmit(describe(it)) }
+                }
         }
     }
 
     fun rankFood(date: String) {
+        val generation = snapshot.value.sessionGeneration
         viewModelScope.launch {
-            app.repository.rankFood(date)
-                .onFailure { if (it !== StaleSessionException) _messages.tryEmit(describe(it)) }
+            app.repository.rankFood(date, expectedGeneration = generation)
+                .onFailure {
+                    if (it !== StaleSessionException) app.repository.runIfCurrent(generation) { _messages.tryEmit(describe(it)) }
+                }
         }
     }
 
     suspend fun health(): Result<Health> = app.repository.health()
+
+    /** Acknowledged actions remain successful while a quiet read updates the cached dashboard. */
+    private suspend fun refreshAfterAcknowledgedAction(generation: Long) {
+        app.repository.refresh(expectedGeneration = generation).onSuccess { refreshed ->
+            app.repository.deliverIfCurrent(refreshed) { app.notifier.onSnapshot(refreshed) }
+        }
+    }
 
     companion object {
         fun describe(e: Throwable): String = when (e) {

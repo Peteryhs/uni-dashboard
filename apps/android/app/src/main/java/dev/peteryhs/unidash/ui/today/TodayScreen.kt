@@ -122,15 +122,17 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
         if (alert != null && alert.count > 0 && !alert.dismissed) {
             item(key = "alert") { AlertCard(alert, alertCard.state, alertCard.observedAt, now, onDismiss = { vm.dismissAlert(alert.key) }) }
         }
-        if (next != null && nextCard.state != CardState.Degraded) {
+        val recommended = recs?.items.orEmpty()
+        val nextIsRecommended = next != null && recommended.any { it.represents(next) }
+        if (next != null && !nextIsRecommended && nextCard.state != CardState.Degraded) {
             item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now) }
-        } else if (next != null) {
+        } else if (next != null && !nextIsRecommended) {
             item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
         }
         recommendations(recs?.headline, recs?.items.orEmpty(), now, vm) {
             showRecommendationExplanation = true
         }
-        if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now)
+        if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now, recommended)
     }
 }
 
@@ -314,8 +316,10 @@ private fun LazyListScope.recommendations(
 
 @Composable
 private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel, modifier: Modifier = Modifier) {
+    val presentation = rec.presentation()
     val uri = LocalUriHandler.current
     val haptics = LocalHapticFeedback.current
+    var expanded by rememberSaveable(rec.id) { mutableStateOf(false) }
     val snooze = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); vm.act(rec, "snooze", now + HOUR) }
     val done = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "done") }
     val dismiss = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "dismiss") }
@@ -345,15 +349,33 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                 }
             },
         ) {
-            Row(Modifier.padding(Spacing.m), horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(rec.title, style = MaterialTheme.typography.titleMedium)
-                    val time = rec.dueAt ?: rec.startsAt
-                    val meta = listOfNotNull(
-                        rec.course,
-                        recTime(rec, now),
-                    ).joinToString(" · ")
-                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.xs, top = Spacing.s, bottom = Spacing.s),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Text(rec.title, style = MaterialTheme.typography.titleMedium)
+                        val meta = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · ")
+                        if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details and actions for ${rec.title}"
+                        },
+                    ) {
+                        Icon(
+                            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = null,
+                        )
+                    }
+                }
+                Column(
+                    Modifier.padding(start = Spacing.m, end = Spacing.m, bottom = if (expanded) Spacing.s else Spacing.m),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
                     // A change is drawn as blocks; its sentence body would only repeat them.
                     rec.change?.let { ChangeBlocks(it, Modifier.padding(vertical = Spacing.xs)) }
                     rec.change?.takeIf { !it.confirmed }?.let {
@@ -363,32 +385,40 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                             color = MaterialTheme.colorScheme.tertiary,
                         )
                     }
-                    val repeatsTime = time != null && rec.timeLabel != null && rec.body.startsWith(rec.timeLabel) && rec.body.length < 48
-                    if (rec.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
-                        Text(rec.body, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    }
+                    RecommendationWarnings(presentation.warnings)
                     rec.eventProgress(now)?.let { EventTimeline(it, Modifier.padding(vertical = Spacing.xs)) }
                     FreshnessLabel(rec.state, null, now)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
-                        if (rec.canComplete) {
-                            FilledTonalButton(onClick = done) {
-                                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                                Text("Done", Modifier.padding(start = Spacing.s))
-                            }
-                            OutlinedButton(onClick = snooze) {
-                                Icon(Icons.Outlined.Snooze, contentDescription = null)
-                                Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
-                            }
-                        } else {
-                            OutlinedButton(onClick = dismiss) {
-                                Icon(Icons.Outlined.Close, contentDescription = null)
-                                Text("Dismiss", Modifier.padding(start = Spacing.s))
-                            }
+                    if (expanded) {
+                        val time = rec.dueAt ?: rec.startsAt
+                        val repeatsTime = (time != null && rec.timeLabel != null && presentation.body.startsWith(rec.timeLabel) && presentation.body.length < 48)
+                            || (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
+                        if (presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
+                            Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
                         }
-                        rec.action?.let { a ->
-                            TextButton(onClick = { uri.openUri(a.url) }) {
-                                Text(a.label)
-                                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                        if (rec.reason.isNotBlank() && rec.reason != presentation.body) {
+                            Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
+                            if (rec.canComplete) {
+                                FilledTonalButton(onClick = done) {
+                                    Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                    Text("Done", Modifier.padding(start = Spacing.s))
+                                }
+                                OutlinedButton(onClick = snooze) {
+                                    Icon(Icons.Outlined.Snooze, contentDescription = null)
+                                    Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
+                                }
+                            } else {
+                                OutlinedButton(onClick = dismiss) {
+                                    Icon(Icons.Outlined.Close, contentDescription = null)
+                                    Text("Dismiss", Modifier.padding(start = Spacing.s))
+                                }
+                            }
+                            rec.action?.let { a ->
+                                TextButton(onClick = { uri.openUri(a.url) }) {
+                                    Text(a.label)
+                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                                }
                             }
                         }
                     }
@@ -418,14 +448,21 @@ private fun SwipeBackground(direction: SwipeToDismissBoxValue, canComplete: Bool
     }
 }
 
-private fun LazyListScope.dueSoon(due: DueSoon, state: CardState, observedAt: Long?, now: Long) {
+private fun LazyListScope.dueSoon(
+    due: DueSoon,
+    state: CardState,
+    observedAt: Long?,
+    now: Long,
+    recommendations: List<Recommendation>,
+) {
+    val items = due.items.filter { item -> item.isDue && recommendations.none { it.represents(item) } }
+    if (items.isEmpty() && due.error.isNullOrBlank()) return
     item(key = "due-header") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SectionHeader("Due · next ${due.windowDays} days", Modifier.weight(1f))
             FreshnessLabel(state, observedAt, now, Modifier.padding(end = Spacing.m, top = Spacing.m))
         }
     }
-    val items = due.items.filter { it.isDue }
     if (items.isEmpty()) item(key = "due-empty") { EmptyNote(due.error ?: "Nothing due this week.") }
     items(items.take(6), key = { "due:${it.key}" }) { item ->
         val uri = LocalUriHandler.current
@@ -471,7 +508,9 @@ private fun kindLabel(kind: String?): String = when (kind) {
 private fun recTime(rec: Recommendation, now: Long): String? {
     if (rec.kind == "change") return rec.startsAt?.let { Format.whenLabel(it, now) }
     rec.dueAt?.let { return "${rec.timeLabel ?: "Due"} ${Format.whenLabel(it, now)}" }
-    val start = rec.startsAt ?: return null
+    val start = rec.startsAt ?: return rec.scheduledDate?.let {
+        "Listed ${LocalDate.parse(it).format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.CANADA))}"
+    }
     val end = rec.endsAt
     return when {
         end != null && end <= now -> "Ended"

@@ -17,14 +17,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -32,19 +33,25 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +66,7 @@ import dev.peteryhs.unidash.ui.FreshnessLabel
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.theme.Spacing
+import kotlinx.coroutines.launch
 
 internal val CALENDAR_SOURCE_NAMES = mapOf(
     "uw-portal-ics" to "Class schedule",
@@ -91,17 +99,38 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
     val calendar = snapshot.calendar
+    val agendaListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
-    ScreenScaffold("Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus) {
+    ScreenScaffold("Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus, listState = agendaListState) {
         item(key = "filters") {
-            Row(Modifier.padding(horizontal = Spacing.m, vertical = Spacing.s), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            SecondaryTabRow(
+                selectedTabIndex = Filter.entries.indexOf(filter),
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
                 Filter.entries.forEach { f ->
-                    FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) })
+                    Tab(
+                        selected = filter == f,
+                        onClick = {
+                            if (filter != f) {
+                                filter = f
+                                expanded = null
+                                scope.launch { agendaListState.scrollToItem(0) }
+                            }
+                        },
+                        text = { Text(f.label, maxLines = 1) },
+                    )
                 }
             }
         }
         if (calendar == null) {
-            item { EmptyNote("No calendar loaded yet.") }
+            item {
+                EmptyNote(when {
+                    snapshot.refreshing -> "Loading your calendar…"
+                    snapshot.error != null -> "Calendar unavailable. Pull to retry."
+                    else -> "No calendar loaded yet. Pull to refresh."
+                })
+            }
             return@ScreenScaffold
         }
         filterWarnedCalendarSources(calendar.sources).forEach { s ->
@@ -124,7 +153,8 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         }
         calendar.days.forEach { day ->
             val events = day.events.filter { filter.categories.isEmpty() || it.category in filter.categories }
-            if (events.isEmpty()) return@forEach
+            val isToday = day.date == campusDay(now).toString()
+            if (events.isEmpty() && !isToday) return@forEach
             shown += events.size
             stickyHeader(key = "day:${day.date}") {
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
@@ -136,20 +166,41 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
                     )
                 }
             }
-            items(events, key = { "ev:${day.date}:${it.occurrenceId}" }) { ev ->
-                EventRow(ev, now, expanded == ev.occurrenceId, onToggle = {
-                    expanded = if (expanded == ev.occurrenceId) null else ev.occurrenceId
-                }, Modifier.animateItem(), calendar.alerts.filter { it.eventId == ev.id })
+            val markerIndex = if (isToday) calendarNowIndex(events, now) else -1
+            events.forEachIndexed { index, ev ->
+                if (index == markerIndex) item(key = "now:${day.date}") { CalendarNowMarker(now) }
+                item(key = "ev:${day.date}:${ev.occurrenceId}") {
+                    EventRow(ev, now, expanded == ev.occurrenceId, onToggle = {
+                        expanded = if (expanded == ev.occurrenceId) null else ev.occurrenceId
+                    }, Modifier.animateItem(), calendar.alerts.filter { it.eventId == ev.id })
+                }
             }
+            if (markerIndex == events.size) item(key = "now:${day.date}") { CalendarNowMarker(now) }
+            if (isToday && events.isEmpty()) item(key = "clear:${day.date}") { EmptyNote("Nothing scheduled today.") }
         }
-        if (shown == 0) item { EmptyNote("Nothing scheduled.") }
+        if (shown == 0 && calendar.days.none { it.date == campusDay(now).toString() }) item { EmptyNote("Nothing scheduled.") }
+    }
+}
+
+@Composable
+private fun CalendarNowMarker(now: Long) {
+    val color = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.l, vertical = Spacing.s)
+            .clearAndSetSemantics { contentDescription = "Current time ${Format.time(now)}" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        Text("Now ${Format.time(now)}", style = MaterialTheme.typography.labelMedium, color = color)
+        Box(Modifier.size(6.dp).background(color, CircleShape))
+        HorizontalDivider(modifier = Modifier.weight(1f), color = color)
     }
 }
 
 @Composable
 private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, alerts: List<CalendarChangeAlert> = emptyList()) {
-    val past = ev.endsAt < now
-    val happening = !ev.allDay && now in ev.startsAt..ev.endsAt
+    val past = ev.hasPassed(now)
+    val happening = !ev.allDay && ev.startsAt <= now && now < ev.endsAt
     val (accent, label) = categoryStyle(ev)
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
@@ -157,7 +208,7 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
         label = "Calendar detail chevron",
     )
     val time = when {
-        ev.allDay -> "All day"
+        ev.allDay -> if (ev.category == "deadline" || ev.category == "exam") "Date only" else "All day"
         ev.category == "deadline" -> "Due ${Format.time(ev.startsAt)}"
         else -> "${Format.time(ev.startsAt)} – ${Format.time(ev.endsAt)}"
     }
@@ -169,10 +220,10 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
         Column {
             ListItem(
                 leadingContent = {
-                    Box(Modifier.width(4.dp).height(40.dp).background(accent, RoundedCornerShape(2.dp)))
+                    Box(Modifier.width(4.dp).height(40.dp).background(if (past) MaterialTheme.colorScheme.outlineVariant else accent, RoundedCornerShape(2.dp)))
                 },
                 overlineContent = {
-                    Text(label, color = if (ev.category == "opens" || ev.category == "event") MaterialTheme.colorScheme.onSurfaceVariant else accent)
+                    Text(label, color = if (past || ev.category == "opens" || ev.category == "event") MaterialTheme.colorScheme.onSurfaceVariant else accent)
                 },
                 headlineContent = { Text(ev.title, maxLines = if (expanded) 4 else 1, overflow = TextOverflow.Ellipsis) },
                 supportingContent = {
@@ -198,7 +249,7 @@ private fun EventRow(ev: CalendarEvent, now: Long, expanded: Boolean, onToggle: 
                     headlineColor = if (past || ev.phase == "opens") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                 ),
                 modifier = Modifier.clickable(role = Role.Button, onClick = onToggle)
-                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+                    .semantics { stateDescription = listOfNotNull(if (past) "Past event" else null, if (expanded) "Expanded" else "Collapsed").joinToString(", ") },
             )
             AnimatedVisibility(
                 visible = expanded,

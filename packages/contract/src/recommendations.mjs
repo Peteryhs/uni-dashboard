@@ -11,6 +11,8 @@ export const RecommendationItem = z.object({
   title: z.string(),
   body: z.string(),
   course: z.string().nullable(),
+  /** The exact calendar event represented by this task, when one exists. */
+  source_event_id: z.string().min(1).nullable().default(null),
   starts_at: EPOCH_MS.nullable(),
   ends_at: EPOCH_MS.nullable(),
   due_at: EPOCH_MS.nullable(),
@@ -27,6 +29,7 @@ export const RecommendationItem = z.object({
   source_label: z.string(),
   state: z.enum(['live', 'ageing', 'stale', 'dead']),
   can_complete: z.boolean(),
+  warnings: z.array(z.enum(['time_unknown', 'coverage_unknown', 'submission_unknown', 'completion_unknown'])).default([]),
   /** Set on `change` items, and on `class` items whose session has a room or tutorial notice. */
   change: ChangeDetail.nullable().default(null),
 });
@@ -48,11 +51,14 @@ export const RecommendationDiagnostics = z.object({
     kind: RecommendationItem.shape.kind,
     title: z.string(),
     course: z.string().nullable(),
+    source_event_id: z.string().min(1).nullable().default(null),
     starts_at: EPOCH_MS.nullable(),
     due_at: EPOCH_MS.nullable(),
     scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
     priority: z.number(),
     status: z.enum(['shown', 'deferred', 'suppressed']),
+    /** Account action, independent of the explanatory prose or feed position. */
+    suppressed_action: z.enum(['done', 'dismiss', 'snooze']).nullable().default(null),
     reason: z.string(),
     eligible_at: EPOCH_MS.nullable(),
     position: z.number().int().positive().nullable(),

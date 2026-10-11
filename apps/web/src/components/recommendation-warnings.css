@@ -1,0 +1,6 @@
+.recommendation-warnings { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; max-width: 100%; vertical-align: middle; }
+.recommendation-warning { display: inline-flex; align-items: center; gap: 5px; color: #d2c8ff; font-size: 11px; font-weight: 560; line-height: 1.5; }
+.recommendation-warning > svg { flex: none; }
+.hero-warnings { margin-top: 10px; }
+.rec-detail-warnings { display: flex; margin-top: 10px; }
+.more-rec-row > .recommendation-warnings, .largest-task-row > .recommendation-warnings { margin-top: 6px; }

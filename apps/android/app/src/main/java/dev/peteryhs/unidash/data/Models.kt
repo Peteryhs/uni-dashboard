@@ -233,6 +233,7 @@ data class Recommendation(
     @SerialName("ends_at") val endsAt: Long? = null,
     @SerialName("due_at") val dueAt: Long? = null,
     @SerialName("time_label") val timeLabel: String? = null,
+    @SerialName("scheduled_date") val scheduledDate: String? = null,
     val effort: String = "unknown",
     val action: RecAction? = null,
     val reason: String = "",
@@ -240,8 +241,11 @@ data class Recommendation(
     @SerialName("source_label") val sourceLabel: String = "",
     val state: CardState = CardState.Live,
     @SerialName("can_complete") val canComplete: Boolean = false,
+    val warnings: List<String> = emptyList(),
     /** Set on schedule changes, and on classes whose session has a room or tutorial notice. */
     val change: ChangeDetail? = null,
+    /** Calendar event that produced this task, when completion can silence its deadline reminder. */
+    @SerialName("source_event_id") val sourceEventId: String? = null,
 )
 
 @Serializable
@@ -284,6 +288,9 @@ data class RecommendationDecision(
     @SerialName("course_penalty") val coursePenalty: Double = 0.0,
     @SerialName("ranking_score") val rankingScore: Double? = null,
     val change: ChangeDetail? = null,
+    @SerialName("source_event_id") val sourceEventId: String? = null,
+    /** The account-wide action currently suppressing this candidate, if any. */
+    @SerialName("suppressed_action") val suppressedAction: String? = null,
 )
 
 @Serializable

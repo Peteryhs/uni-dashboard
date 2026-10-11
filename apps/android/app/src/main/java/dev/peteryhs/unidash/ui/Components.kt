@@ -100,7 +100,9 @@ fun ConnectionBanner(snapshot: Snapshot, now: Long, onStatus: (() -> Unit)? = nu
     val failure = error ?: healthError
     val stale = LocalStaleColors.current
     AnimatedVisibility(
-        visible = warning != null && !snapshot.refreshing,
+        // A quiet background poll should not make a visible warning flicker. Hide it only while
+        // the person has asked for a refresh and the result is in flight.
+        visible = warning != null && !snapshot.manualRefreshing,
         enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
             fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
         exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +

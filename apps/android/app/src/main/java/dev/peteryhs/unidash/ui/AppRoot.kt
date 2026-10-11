@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
 import dev.peteryhs.unidash.ui.setup.hasSeenMobileGuide
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,7 +59,7 @@ import dev.peteryhs.unidash.ui.today.TodayScreen
 enum class Tab(val label: String, val selected: ImageVector, val unselected: ImageVector) {
     Today("Today", Icons.Filled.Today, Icons.Outlined.Today),
     Calendar("Calendar", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth),
-    Food("Food", Icons.Filled.Restaurant, Icons.Outlined.Restaurant),
+    Food("Dining", Icons.Filled.Restaurant, Icons.Outlined.Restaurant),
     Settings("Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
 }
 
@@ -85,6 +86,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
     val baseUrl by vm.baseUrl.collectAsStateWithLifecycle()
     val managedOAuth by vm.managedOAuth.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
+    val tabStateHolder = rememberSaveableStateHolder()
     var settingsDestination by rememberSaveable { mutableStateOf(SettingsDestination.Overview) }
     val snackbar = remember { SnackbarHostState() }
     val now = rememberNow()
@@ -109,16 +111,18 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
             transitionSpec = { fadeIn(enter) togetherWith fadeOut(exit) },
             label = "tab",
         ) { t ->
-            when (t) {
-                Tab.Today -> TodayScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
-                Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
-                Tab.Food -> FoodScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
-                Tab.Settings -> SettingsScreen(
-                    vm, snapshot, now, snackbar, baseUrl, managedOAuth, onReauthenticate,
-                    destination = settingsDestination,
-                    onDestination = { settingsDestination = it },
-                    onStatus = openStatus,
-                )
+            tabStateHolder.SaveableStateProvider(t.name) {
+                when (t) {
+                    Tab.Today -> TodayScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                    Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                    Tab.Food -> FoodScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+                    Tab.Settings -> SettingsScreen(
+                        vm, snapshot, now, snackbar, baseUrl, managedOAuth, onReauthenticate,
+                        destination = settingsDestination,
+                        onDestination = { settingsDestination = it },
+                        onStatus = openStatus,
+                    )
+                }
             }
         }
     }

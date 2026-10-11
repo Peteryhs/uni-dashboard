@@ -30,9 +30,9 @@ function displayTaskTitle(title) {
 function item(kind, key, values) {
   const { revision_seed, ...rest } = values;
   const revision = hash(JSON.stringify(revision_seed || [values.title, values.starts_at, values.ends_at, values.due_at, values.topics, values.readings]));
-  return { id: `rec:${kind}:${hash(key)}:${revision}`, revision, kind, priority: 0, title: '', body: '', course: null,
+  return { id: `rec:${kind}:${hash(key)}:${revision}`, revision, kind, priority: 0, title: '', body: '', course: null, source_event_id: null,
     starts_at: null, ends_at: null, due_at: null, scheduled_date: null, time_label: null, effort: 'unknown', estimated_minutes: null, available_minutes: null,
-    action: null, topics: [], readings: [], reason: '', evidence: '', source_label: '', state: 'live', can_complete: false, change: null, ...rest };
+    action: null, topics: [], readings: [], reason: '', evidence: '', source_label: '', state: 'live', can_complete: false, warnings: [], change: null, ...rest };
 }
 function linkFor(event, course, entry = null) {
   const preferred = /quiz/i.test(event?.title || entry?.title || '') ? ['quiz', 'crowdmark', 'submit', 'module', 'discussion'] : ['crowdmark', 'submit', 'quiz', 'module', 'discussion'];
@@ -80,15 +80,22 @@ function taskItem(event, entry, course, now) {
   const title = displayTaskTitle(sourceTitle) || sourceTitle;
   const effort = effortFor(title, entry?.effort);
   const exam = event?.category === 'exam' || /\b(exam|midterm|final)\b/i.test(title);
-  const ongoingExam = exam && event && event.starts_at <= now && event.ends_at > now;
+  const ongoingExam = exam && due != null && event && event.starts_at <= now && event.ends_at > now;
   const overdue = !ongoingExam && (due != null ? due < now : date < day(now));
   const topics = entry?.topics?.length ? entry.topics : descriptionCoverage(event), readings = entry?.readings || [];
-  const coverage = topics.length ? ` Coverage: ${topics.join('; ')}.` : /quiz|exam|midterm/i.test(title) ? ' Coverage has not been provided; check the course instructions.' : '';
+  const coverage = topics.length ? ` Coverage: ${topics.join('; ')}.` : '';
+  const warnings = [
+    ...(due == null ? ['time_unknown'] : []),
+    ...(!topics.length && (exam || /\bquiz\b/i.test(title)) ? ['coverage_unknown'] : []),
+    ...(overdue ? [exam ? 'completion_unknown' : 'submission_unknown'] : []),
+  ];
   const noExact = !event?.links?.some(link => ['quiz', 'submit', 'crowdmark'].includes(link.kind));
   return item('task', event?.id || `${course?.course}:${entry.id}`, {
+    source_event_id: event?.id || null,
     revision_seed: [sourceTitle, due, date, topics, readings],
     title: ongoingExam ? `Now: ${title}` : overdue ? `Confirm ${exam ? 'assessment' : 'submission'}: ${title}` : title,
-    body: `${ongoingExam ? `Scheduled now until ${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.` : overdue ? `The listed ${exam ? 'assessment' : 'due'} ${due == null ? 'date' : 'time'} has passed; ${exam ? 'completion' : 'submission'} status is unknown.` : due == null ? `Listed for ${date}; no exact time was supplied. Check the course instructions.` : `${exam ? 'Starts' : 'Due'} ${dueText(due, now)}.`}${coverage}`,
+    body: `${ongoingExam ? `Scheduled now until ${displayTime(event.ends_at)}${event.location ? ` · ${event.location}` : ''}.` : overdue ? `The listed ${exam ? 'assessment' : 'due'} ${due == null ? 'date' : 'time'} has passed.` : due == null ? `Listed for ${date}.` : `${exam ? 'Starts' : 'Due'} ${dueText(due, now)}.`}${coverage}`,
+    warnings,
     priority: ongoingExam ? 1200 : taskPriority(rankTime - now, effort, exam), course: event?.course || course?.course || null,
     due_at: exam ? null : due, starts_at: exam ? due : null, ends_at: exam ? event?.ends_at ?? null : null, scheduled_date: date, time_label: due == null ? 'Scheduled' : exam ? 'Starts' : 'Due', effort, estimated_minutes: entry?.estimated_minutes || null, topics, readings,
     action: linkFor(event, course, entry), source_label: event ? `${event.source_label}${entry ? ' + syllabus' : ''}` : 'Syllabus',
@@ -127,9 +134,9 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
   const eventsById = new Map(events.map(event => [event.id, event]));
   const actionDecision = candidate => {
     const saved = actions[candidate.id];
-    if (saved?.action === 'done') return { status: 'suppressed', reason: 'Marked complete on this account.', eligible_at: null };
-    if (saved?.action === 'dismiss') return { status: 'suppressed', reason: 'Dismissed on this account; undo restores it.', eligible_at: null };
-    if (saved?.action === 'snooze' && saved.until > now) return { status: 'suppressed', reason: 'Snoozed on this account until the saved time.', eligible_at: saved.until };
+    if (saved?.action === 'done') return { status: 'suppressed', suppressed_action: 'done', reason: 'Marked complete on this account.', eligible_at: null };
+    if (saved?.action === 'dismiss') return { status: 'suppressed', suppressed_action: 'dismiss', reason: 'Dismissed on this account; undo restores it.', eligible_at: null };
+    if (saved?.action === 'snooze' && saved.until > now) return { status: 'suppressed', suppressed_action: 'snooze', reason: 'Snoozed on this account until the saved time.', eligible_at: saved.until };
     return null;
   };
   const isVisible = candidate => !actionDecision(candidate) && !decisions.has(candidate.id);
@@ -323,8 +330,8 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     const decision = actionDecision(candidate) || decisions.get(candidate.id) || (trace?.position <= POLICY.max_feed_items
       ? { status: 'shown', reason: candidate.reason, eligible_at: null }
       : { status: 'deferred', reason: 'More relevant suggestions fill the daily guidance limit; this item remains available in its source view.', eligible_at: null });
-    return { id: candidate.id, kind: candidate.kind, title: candidate.title, course: candidate.course, starts_at: candidate.starts_at, due_at: candidate.due_at, scheduled_date: candidate.scheduled_date,
-      priority: candidate.priority, ...decision, position: trace?.position ?? null, course_penalty: trace?.course_penalty ?? 0, ranking_score: trace?.ranking_score ?? null, change: candidate.change };
+    return { id: candidate.id, kind: candidate.kind, title: candidate.title, course: candidate.course, source_event_id: candidate.source_event_id, starts_at: candidate.starts_at, due_at: candidate.due_at, scheduled_date: candidate.scheduled_date,
+      priority: candidate.priority, suppressed_action: null, ...decision, position: trace?.position ?? null, course_penalty: trace?.course_penalty ?? 0, ranking_score: trace?.ranking_score ?? null, change: candidate.change };
   });
   const summary = { shown: 0, deferred: 0, suppressed: 0 };
   for (const candidate of diagnosticsCandidates) summary[candidate.status]++;

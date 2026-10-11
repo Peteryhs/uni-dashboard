@@ -84,6 +84,12 @@ Status places each source name, condition, and last successful age together in a
 
 ## Do's and Don'ts
 
+Android uses its native dynamic Material colour scheme, type roles, shapes, and expressive motion rather than the web frontmatter's fixed palette and dimensions. Today, Calendar, Dining, and Settings remain the primary destinations, with a navigation bar on phones and a rail on wider windows. Related calendar views use native secondary tabs. Pull-to-refresh is the only visible dashboard refresh control, with an equivalent accessibility action; automatic updates retain content without showing user-requested progress. Configuration screens do not refresh the dashboard by gesture.
+
+Android recommendation rows keep timing, location, compact uncertainty indicators, and actual activity progress visible. Details and action buttons expand on demand. Do not repeat the same commitment or deadline in several Today sections. Dining gives the restaurant and one concise reason priority; longer reasons and tips use disclosure, and reranking lives in the native overflow menu once a pick exists. Ranking requests show local feedback in the pick area, independent of dashboard refresh.
+
+Notifications follow the same glanceable hierarchy: the actual activity/course, room, and exact time first, then named upcoming commitments and deadlines. A finite activity tracker uses scheduled elapsed progress while underway and a countdown before starting. It ends with the activity or stale evidence and respects dismissal. Schedule changes share a bounded notice that removes changes as they stop being relevant. Avoid generic permanent summaries and accumulated notices that outlive their evidence.
+
 - Lead with the backend ranking rather than a fixed class or food card.
 - Keep AI output blue and label it accurately. Never use sparkle icons.
 - Show the AI-highlighted posted dishes for lunch. Never substitute the first menu rows when a saved AI pick exists.

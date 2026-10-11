@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -122,8 +123,8 @@ fun SettingsScreen(
         snapshot = snapshot,
         now = now,
         snackbar = snackbar,
-        refreshing = if (destination == SettingsDestination.Status) snapshot.healthRefreshing || snapshot.sourceRefreshing else snapshot.refreshing,
-        refreshLabel = if (destination == SettingsDestination.Status) "Refresh sources" else "Refresh dashboard",
+        refreshing = snapshot.manualRefreshing,
+        pullToRefreshEnabled = false,
         navigationIcon = {
             if (destination != SettingsDestination.Overview) {
                 IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
@@ -155,7 +156,10 @@ fun SettingsScreen(
                     else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
                 },
                 onExactAlarms = {
-                    context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}")))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
+                        if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                    }
                 },
             )
             SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
@@ -188,7 +192,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsOverview(
     now: Long,
     onDestination: (SettingsDestination) -> Unit,
 ) {
-    item { SectionHeader("Settings") }
     val rows = listOf(
         Triple(SettingsDestination.Connections, "Dashboard address, sign-in and setup guide", "Connections"),
         Triple(SettingsDestination.Notifications, "Class reminders and app alerts", "Notifications"),
@@ -200,8 +203,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsOverview(
             ListItem(
                 headlineContent = { Text(label) },
                 supportingContent = { Text(detail) },
-                trailingContent = { Text("Open", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) },
-                modifier = Modifier.fillMaxWidth().clickable { onDestination(destination) },
+                trailingContent = { Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onDestination(destination) },
             )
         }
     }
@@ -289,12 +292,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
     onNotifications: () -> Unit,
     onExactAlarms: () -> Unit,
 ) {
-    item { SectionHeader("Notifications") }
     item {
         ListItem(
-            headlineContent = { Text("Live class updates") },
+            headlineContent = { Text("Track imminent or current activity") },
             supportingContent = {
-                Text("Follow classes with the room and countdown. Expand for the next three activities. Ends automatically; unpin to hide this occurrence.")
+                Text("Show upcoming and active classes, exams and office hours with their room and countdown. Unpin to hide until the activity ends.")
             },
             trailingContent = { Switch(checked = automaticTracking, onCheckedChange = null) },
             modifier = Modifier.toggleable(value = automaticTracking, role = Role.Switch, onValueChange = onAutomaticTracking),
@@ -343,7 +345,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
         summary?.warning != null -> summary.warning
         summary?.condition == "healthy" -> "All monitored sources have a recent successful update."
         health == null && snapshot.healthRefreshing -> "Checking source status now. A missing check is unknown, not an all clear."
-        health == null -> "A missing status check is unknown, not an all clear. Pull to refresh to try again."
+        health == null -> "A missing status check is unknown, not an all clear. Use Refresh sources below to try again."
         else -> "Some sources have not been checked successfully yet."
     }
 
@@ -380,50 +382,51 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
         }
     }
 
-    health?.runtime?.let { runtime ->
-        item { SectionHeader("Runtime") }
-        item {
-            ListItem(
-                headlineContent = { Text(if (runtime.target == "cloudflare") "Cloudflare Worker" else "Local relay") },
-                supportingContent = {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        Text("Current instance age ${uptime(runtime.uptimeS)} · ${if (runtime.uptimeScope == "isolate") "since this isolate started" else "since this process started"}")
-                        Text("Polling: ${runtime.polling.replaceFirstChar { it.uppercase() }}")
-                        Text("Instance age does not measure service availability.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-            )
-        }
-    }
-
     item { SectionHeader("Sources") }
     item {
         Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            RefreshControl(label = "Refresh sources", refreshing = snapshot.healthRefreshing || snapshot.sourceRefreshing,
+            RefreshControl(label = "Refresh sources", refreshing = snapshot.manualRefreshing,
                 onRefresh = onRefreshSources, showLabel = true)
             snapshot.sourceRefreshResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
-    if (health == null) {
-        item {
-            EmptyNote(
-                if (snapshot.healthRefreshing) "Checking source status now."
-                else snapshot.healthError?.let(MainViewModel::describe)
-                    ?: "Source details appear after the next status check.",
-            )
-        }
-    } else if (health.sources.isEmpty()) {
+    if (health != null && health.sources.isEmpty()) {
         item { EmptyNote("No source details were returned.") }
     } else {
-        health.sources.forEach { source -> item(key = "health:${source.id}") { HealthSourceRow(source, now) } }
+        health?.sources.orEmpty().forEach { source -> item(key = "health:${source.id}") { HealthSourceRow(source, now) } }
     }
     item {
-        Text(
-            "Ageing means an expected update is due. Stale means more than three update intervals without success; out of date means more than six. Weather uses its own freshness window. Saved data stays available while recovery runs. Optional and shared feeds are not counted in the monitored total.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
-        )
+        var detailsExpanded by rememberSaveable { mutableStateOf(false) }
+        Column(
+            modifier = Modifier.fillMaxWidth().animateContentSize(),
+        ) {
+            ListItem(
+                headlineContent = { Text("How source status works") },
+                supportingContent = { Text("Runtime details and freshness windows") },
+                trailingContent = { Text(if (detailsExpanded) "Hide" else "Details") },
+                modifier = Modifier.clickable(role = Role.Button) { detailsExpanded = !detailsExpanded },
+            )
+            if (detailsExpanded) {
+                health?.runtime?.let { runtime ->
+                    ListItem(
+                        headlineContent = { Text(if (runtime.target == "cloudflare") "Cloudflare Worker" else "Local relay") },
+                        supportingContent = {
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                Text("Current instance age ${uptime(runtime.uptimeS)} · ${if (runtime.uptimeScope == "isolate") "since this isolate started" else "since this process started"}")
+                                Text("Polling: ${runtime.polling.replaceFirstChar { it.uppercase() }}")
+                                Text("Instance age does not measure service availability.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                    )
+                }
+                Text(
+                    "Ageing means an expected update is due. Stale means more than three update intervals without success; out of date means more than six. Weather uses its own freshness window. Saved data stays available while recovery runs. Optional and shared feeds are not counted in the monitored total.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+                )
+            }
+        }
     }
 }
 

@@ -24,6 +24,7 @@ class ScheduleChangesTest {
         assertTrue(NotificationPlanner.changesToShow(calendar(), setOf(change.id), now).isEmpty())
         assertTrue(NotificationPlanner.changesToShow(calendar(alerts = listOf(change.copy(state = CardState.Stale))), emptySet(), now).isEmpty())
         assertTrue(NotificationPlanner.changesToShow(calendar(alerts = listOf(change.copy(endsAt = now - 1))), emptySet(), now).isEmpty())
+        assertTrue(NotificationPlanner.changesToShow(calendar().copy(generatedAt = now - NotificationPlanner.MAX_CALENDAR_AGE_MS - 1), emptySet(), now).isEmpty())
     }
 
     @Test fun `room change notice starts 24 hours before a Friday class`() {
@@ -33,8 +34,10 @@ class ScheduleChangesTest {
         val source = calendar(events = listOf(fridayEvent), alerts = listOf(fridayChange))
 
         assertTrue(NotificationPlanner.changesToShow(source, emptySet(), now).isEmpty())
-        assertTrue(NotificationPlanner.changesToShow(source, emptySet(), fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS - 1).isEmpty())
-        assertEquals(listOf(fridayChange), NotificationPlanner.changesToShow(source, emptySet(), fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS))
+        val beforeWindow = fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS - 1
+        assertTrue(NotificationPlanner.changesToShow(source.copy(generatedAt = beforeWindow), emptySet(), beforeWindow).isEmpty())
+        val inWindow = fridayAt - NotificationPlanner.SCHEDULE_CHANGE_NOTICE_MS
+        assertEquals(listOf(fridayChange), NotificationPlanner.changesToShow(source.copy(generatedAt = inWindow), emptySet(), inWindow))
     }
 
     @Test fun `deadline moved far away still uses its earlier old time for the notice`() {
@@ -53,6 +56,42 @@ class ScheduleChangesTest {
             listOf(deadlineChange),
             NotificationPlanner.changesToShow(calendar(events = listOf(deadlineEvent), alerts = listOf(deadlineChange)), emptySet(), now),
         )
+    }
+
+    @Test fun `schedule change notice expires at the updated event time`() {
+        assertEquals(event.startsAt, NotificationPlanner.changeExpiresAt(change))
+        val movedTime = change.copy(kind = "time", previousAt = now + 30 * 60_000, currentAt = now + 90 * 60_000)
+        assertEquals(movedTime.currentAt, NotificationPlanner.changeExpiresAt(movedTime))
+        val movedDeadline = movedTime.copy(kind = "deadline")
+        assertEquals(movedDeadline.currentAt, NotificationPlanner.changeExpiresAt(movedDeadline))
+        val allDay = change.copy(allDay = true)
+        assertEquals(allDay.endsAt, NotificationPlanner.changeExpiresAt(allDay))
+        assertTrue(NotificationPlanner.changesToShow(
+            calendar().copy(generatedAt = event.startsAt, alerts = listOf(change)), emptySet(), event.startsAt,
+        ).isEmpty())
+    }
+
+    @Test fun `change evidence fingerprint ignores freshness state but detects changed content`() {
+        assertEquals(NotificationPlanner.changeSignature(change),
+            NotificationPlanner.changeSignature(change.copy(state = CardState.Ageing, observedAt = now + 1)))
+        assertTrue(NotificationPlanner.changeSignature(change) != NotificationPlanner.changeSignature(change.copy(location = "E7 2409")))
+    }
+
+    @Test fun `campus alert evidence ignores routine poll timestamps but detects visible changes`() {
+        val alert = dev.peteryhs.unidash.data.Alert(count = 1, summary = "Library access is limited", key = "outage-1",
+            checkedAt = now, notices = listOf(dev.peteryhs.unidash.data.Notice("warning", "Library outage", "Use the west entrance")))
+        assertEquals(NotificationPlanner.alertSignature(alert), NotificationPlanner.alertSignature(alert.copy(checkedAt = now + 60_000)))
+        assertTrue(NotificationPlanner.alertSignature(alert) != NotificationPlanner.alertSignature(alert.copy(summary = "Library access restored")))
+    }
+
+    @Test fun `schedule change selection can expose every currently relevant item for digest reconciliation`() {
+        val changes = (0..4).map { index -> change.copy(
+            id = "change-$index", eventId = "event-$index", startsAt = now + (index + 1) * 60_000L,
+            endsAt = now + 3_600_000L + index * 60_000L,
+        ) }
+        val source = calendar(alerts = changes)
+        assertEquals(3, NotificationPlanner.changesToShow(source, emptySet(), now).size)
+        assertEquals(changes.map { it.id }, NotificationPlanner.changesToShow(source, emptySet(), now, Int.MAX_VALUE).map { it.id })
     }
 
     @Test fun `separate deadline edits from one poll keep their own notifications`() {
@@ -112,5 +151,10 @@ class ScheduleChangesTest {
         assertEquals(2, NotificationPlanner.changesToShow(unusual, emptySet(), now).size)
         val moved = calendar(alerts = listOf(change.copy(kind = "room"), second.copy(kind = "room")))
         assertEquals(1, NotificationPlanner.changesToShow(moved, emptySet(), now).size)
+        val unknownCourse = calendar(alerts = listOf(
+            change.copy(kind = "room", course = null), second.copy(kind = "room", course = null),
+        ))
+        assertEquals("without a known course, two room changes are not proven to be one series",
+            2, NotificationPlanner.changesToShow(unknownCourse, emptySet(), now).size)
     }
 }

@@ -20,8 +20,8 @@ class StationsTest {
             stationGroups(dishes).map { (station, list) -> station to list.map { it.dish } })
     }
 
-    @Test fun `made-without tags read as free-from`() {
-        assertEquals("GF" to "Gluten-free", dietTag("gluten"))
-        assertEquals("DF" to "Dairy-free", dietTag("dairy"))
+    @Test fun `made-without tags preserve the posted dietary claim`() {
+        assertEquals("GF" to "Made without gluten", dietTag("gluten"))
+        assertEquals("DF" to "Made without dairy", dietTag("dairy"))
     }
 }

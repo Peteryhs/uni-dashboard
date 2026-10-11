@@ -3,6 +3,10 @@
 Measured against Cloudflare's own docs on 2026-09-23. Re-check before designing around
 any number here, platform limits move.
 
+The limits were rechecked on 2026-10-11. See [the usage audit](CLOUDFLARE-USAGE.md) for the
+indexed calendar receipt fix, automatic refresh reuse, row-level regression checks, and current
+workload estimates. Historical measurements below describe their original fixtures.
+
 ## Short answer to "do we need a server"
 
 Yes, at minimum one relay, for three reasons:
@@ -173,7 +177,7 @@ Workers Free the account has no payment method and over-limit usage fails instea
 |---|---|---|
 | Worker requests | 100,000/day | 1,440 cron invocations/day plus dashboard and API requests |
 | Static asset requests | free and unlimited | the whole client, so the SPA does not count |
-| CPU per invocation | 10 ms | the food parse measured 0.47 ms; nothing else is heavy |
+| CPU per invocation | 10 ms | saved-data GETs never poll or run AI; local clocks/notification ticks make no requests; live edge CPU still needs account metrics |
 | Cron triggers | 5 per account | 1 trigger, every minute |
 | D1 rows read | 5 million/day | latest source runs use an index; no full receipt scan on dashboard loads |
 | D1 rows written | 100,000/day | roughly 15,000-20,000/day with the current minute status and 15-minute ICS cadences |

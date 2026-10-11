@@ -20,13 +20,17 @@ data class LiveClassState(
     val phase: String,
     val countdownAt: Long,
     val nextUpdateAt: Long,
+    val progressUpdateAt: Long?,
     val progress: Int,
     val expiresAt: Long,
+    val nextText: String?,
     val expandedText: String,
 )
 
 object LiveClassPlanner {
     const val LEAD_MS = NotificationPlanner.CLASS_LEAD_MS
+    /** The system chronometer handles the visible countdown; this only refreshes elapsed progress. */
+    const val PROGRESS_REFRESH_MS = 5 * 60_000L
     private val categories = setOf("class", "exam", "office_hours")
     private val freshStates = setOf(CardState.Live, CardState.Ageing)
 
@@ -36,15 +40,18 @@ object LiveClassPlanner {
             event.title.isNotBlank()
 
     private fun agendaUsable(event: CalendarEvent): Boolean = usable(event) ||
-        (event.category == "deadline" && event.phase != "opens" && !event.allDay &&
+        (event.category == "deadline" && event.phase != "opens" &&
             event.endsAt >= event.startsAt && event.attendance !in setOf("replaced", "cancelled", "canceled") &&
             event.state in freshStates && event.title.isNotBlank())
+
+    private fun agendaAt(event: CalendarEvent): Long =
+        if (event.category == "deadline" && event.allDay && event.endsAt > event.startsAt) event.endsAt else event.startsAt
 
     /** Only actual future commitments; the pinned activity is already shown above this list. */
     fun upcoming(calendar: Calendar?, now: Long, trackedOccurrenceId: String): List<CalendarEvent> {
         if (!NotificationPlanner.calendarIsFresh(calendar, now)) return emptyList()
-        return events(calendar).filter { it.occurrenceId != trackedOccurrenceId && agendaUsable(it) && it.startsAt > now }
-            .sortedWith(compareBy<CalendarEvent> { it.startsAt }.thenBy { it.occurrenceId }).take(3)
+        return events(calendar).filter { it.occurrenceId != trackedOccurrenceId && agendaUsable(it) && agendaAt(it) > now }
+            .sortedWith(compareBy<CalendarEvent> { agendaAt(it) }.thenBy { it.occurrenceId }).take(3)
     }
 
     fun canTrack(event: CalendarEvent, now: Long): Boolean =
@@ -86,29 +93,55 @@ object LiveClassPlanner {
         val expiresAt = minOf(event.endsAt, calendar.generatedAt + NotificationPlanner.MAX_CALENDAR_AGE_MS + 1)
         val progress = if (active) (((now - event.startsAt).toDouble() / (event.endsAt - event.startsAt)) * 100)
             .toInt().coerceIn(0, 100) else 0
-        val text = listOf(if (active) "In progress" else "Starts soon", event.location.takeIf { it.isNotBlank() })
-            .filterNotNull().joinToString(" · ")
+        val displayTitle = event.course?.takeIf { it.isNotBlank() && !event.title.contains(it, ignoreCase = true) }
+            ?.let { "$it · ${event.title}" } ?: event.title
         val next = upcoming(calendar, now, event.occurrenceId)
         val zone = runCatching { ZoneId.of(calendar.timezone) }.getOrDefault(CAMPUS_ZONE)
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val datePattern = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.CANADA)
+        val timePattern = DateTimeFormatter.ofPattern("h:mm a", Locale.CANADA)
+        fun dateLabel(at: java.time.ZonedDateTime): String = when (at.toLocalDate()) {
+            today -> "Today"
+            today.plusDays(1) -> "Tomorrow"
+            else -> at.format(datePattern)
+        }
+        fun scheduledTime(epoch: Long): String {
+            val at = Instant.ofEpochMilli(epoch).atZone(zone)
+            return "${dateLabel(at)} ${at.format(timePattern)}"
+        }
+        val startAt = Instant.ofEpochMilli(event.startsAt).atZone(zone)
+        val endAt = Instant.ofEpochMilli(event.endsAt).atZone(zone)
+        val endLabel = if (startAt.toLocalDate() == endAt.toLocalDate()) endAt.format(timePattern) else scheduledTime(event.endsAt)
+        val bounds = "Starts ${scheduledTime(event.startsAt)} · Ends $endLabel"
+        val activeBounds = if (startAt.toLocalDate() == endAt.toLocalDate()) {
+            "${dateLabel(startAt)} ${startAt.format(DateTimeFormatter.ofPattern("h:mm", Locale.CANADA))}–${endAt.format(timePattern)}"
+        } else "${scheduledTime(event.startsAt)}–${scheduledTime(event.endsAt)}"
+        val text = listOf(if (active) activeBounds else "Starts ${scheduledTime(event.startsAt)}",
+            event.location.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
         val rows = next.map { activity ->
-            val at = Instant.ofEpochMilli(activity.startsAt).atZone(zone)
-            val date = when (at.toLocalDate()) {
-                today -> "Today"
-                today.plusDays(1) -> "Tomorrow"
-                else -> at.format(DateTimeFormatter.ofPattern("EEE, MMM d", Locale.CANADA))
-            }
-            val time = at.format(DateTimeFormatter.ofPattern("h:mm a", Locale.CANADA))
-            val due = if (activity.category == "deadline") "Due " else ""
-            listOf("$due$date $time", activity.title, activity.location.takeIf { it.isNotBlank() })
+            val due = activity.category == "deadline"
+            val at = Instant.ofEpochMilli(if (activity.allDay) activity.startsAt else agendaAt(activity)).atZone(zone)
+            val time = if (activity.allDay) dateLabel(at) else "${dateLabel(at)} ${at.format(timePattern)}"
+            val label = if (due) "Due $time" else "Next $time"
+            val course = activity.course?.takeIf { it.isNotBlank() && !activity.title.contains(it, ignoreCase = true) }
+            listOf(label, activity.title, course, activity.location.takeIf { it.isNotBlank() })
                 .filterNotNull().joinToString(" · ")
         }
-        val expanded = if (rows.isEmpty()) "$text\n\nNo more scheduled activities"
-            else "$text\n\nNext up\n${rows.joinToString("\n")}"
+        val nextText = rows.firstOrNull()
+        val expanded = listOfNotNull(bounds, event.location.takeIf { it.isNotBlank() })
+            .plus(rows)
+            .joinToString("\n")
         val dateBoundary = if (next.isEmpty()) Long.MAX_VALUE else
             today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return LiveClassState(event, event.occurrenceId, event.title, text,
+        val nextAgendaAt = next.firstOrNull()?.let(::agendaAt) ?: Long.MAX_VALUE
+        val progressCandidate = now + PROGRESS_REFRESH_MS
+        // A progress tick is inexact. Keep real event, expiry, and agenda transitions exact.
+        val progressUpdateAt = progressCandidate.takeIf {
+            active && it < boundary && it < expiresAt && it < nextAgendaAt && it < dateBoundary
+        }
+        return LiveClassState(event, event.occurrenceId, displayTitle, text,
             event.startsAt, event.endsAt, if (active) "active" else "upcoming", boundary,
-            minOf(boundary, expiresAt, next.firstOrNull()?.startsAt ?: Long.MAX_VALUE, dateBoundary), progress, expiresAt, expanded)
+            minOf(boundary, expiresAt, nextAgendaAt, dateBoundary, progressUpdateAt ?: Long.MAX_VALUE),
+            progressUpdateAt, progress, expiresAt, nextText, expanded)
     }
 }

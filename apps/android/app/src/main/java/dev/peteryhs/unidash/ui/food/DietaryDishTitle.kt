@@ -31,8 +31,8 @@ import dev.peteryhs.unidash.ui.theme.UniDashTheme
 internal fun DietaryDishTitle(
     name: String,
     diet: List<String>,
-    highlighted: Boolean = false,
     modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
 ) {
     val labelStyle = MaterialTheme.typography.labelSmall.toSpanStyle()
         .copy(color = MaterialTheme.colorScheme.onSurfaceVariant)

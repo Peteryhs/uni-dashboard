@@ -150,20 +150,21 @@ export async function buildCalendar(store, { start, days = 7, section = null, gr
     limit: MAX_EVENTS + 1,
     orderBy: 'starts_at',
   });
-  const lastRuns = await store.lastRunPerSource();
-  const sources = readiness(SOURCES)
-    .filter((source) => source.shape === 'timeline_event')
-    .map((source) => {
-      const run = lastRuns.find((entry) => entry.source_id === source.id);
-      return {
-        id: source.id,
-        optional: Boolean(source.optional),
-        status: !source.ready ? 'unconfigured' :
-          !run ? (source.id === 'user-office-hours' ? 'ok' : 'pending') :
-            ['ok', 'empty'].includes(run.outcome) ? 'ok' : 'failed',
-        last_run_at: run?.finished_at ?? null,
-      };
-    });
+  const calendarSources = readiness(SOURCES).filter((source) => source.shape === 'timeline_event');
+  // A calendar only needs these sources' latest receipts. An exhaustive lookup scans the
+  // retained minute-by-minute status history on every calendar and recommendation read.
+  const lastRuns = await store.lastRunPerSource(calendarSources.map((source) => source.id));
+  const sources = calendarSources.map((source) => {
+    const run = lastRuns.find((entry) => entry.source_id === source.id);
+    return {
+      id: source.id,
+      optional: Boolean(source.optional),
+      status: !source.ready ? 'unconfigured' :
+        !run ? (source.id === 'user-office-hours' ? 'ok' : 'pending') :
+          ['ok', 'empty'].includes(run.outcome) ? 'ok' : 'failed',
+      last_run_at: run?.finished_at ?? null,
+    };
+  });
   const syllabi = includeSyllabus ? await listCourseSyllabi(store) : [];
   const relevantSyllabi = syllabi.filter((document) => document.entries.some((entry) => entry.start_date < end && entry.end_date >= start));
   if (relevantSyllabi.length) sources.push({ id: 'syllabus', status: 'ok', last_run_at: Math.max(...relevantSyllabi.map((document) => document.updated_at)) });

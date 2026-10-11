@@ -20,7 +20,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.ui.theme.Spacing
 
-/** The same refresh affordance in every screen, with a named, disabled in-progress state. */
+/** A visible source-update action for Status, with a named, disabled in-progress state. */
 @Composable
 fun RefreshControl(
     label: String,
@@ -31,8 +31,10 @@ fun RefreshControl(
 ) {
     val accessible = modifier.semantics(mergeDescendants = true) {
         if (!showLabel) contentDescription = label
-        if (refreshing) stateDescription = "Refreshing"
-        liveRegion = LiveRegionMode.Polite
+        if (refreshing) {
+            stateDescription = "Refreshing"
+            liveRegion = LiveRegionMode.Polite
+        }
     }
     val mark: @Composable () -> Unit = {
         if (refreshing) CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)

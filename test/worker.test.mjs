@@ -111,7 +111,11 @@ for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']
     globalThis.fetch = async url => { fetched.push(String(url)); return new Response(body, { headers: { 'content-type': 'text/calendar' } }); };
     const tasks = [];
     const before = counter.prepares;
-    const response = await worker.fetch(new Request(`https://dash.test${path}`), { ACCESS_DISABLED: '1', DB: api },
+    const writesBefore = db.prepare('SELECT total_changes() AS n').get().n;
+    let aiCalls = 0;
+    const response = await worker.fetch(new Request(`https://dash.test${path}`), {
+      ACCESS_DISABLED: '1', DB: api, AI: { run: async () => { aiCalls++; throw new Error('Reads must use saved AI results'); } },
+    },
       { waitUntil(task) { tasks.push(task); } });
     assert.equal(response.status, 200);
     await response.json();
@@ -119,6 +123,9 @@ for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']
     // A poll inside the read charged its CPU to the same 10 ms budget and the route 503'd
     // (exceededCpu) on Workers Free, so the read must leave the due source alone.
     assert.deepEqual(fetched, [], 'a read must not fetch a source: the cron trigger is the only poller');
+    assert.equal(aiCalls, 0, 'warnings, calendar progress and completed-task metadata need no model call');
+    assert.equal(db.prepare('SELECT total_changes() AS n').get().n, writesBefore,
+      'an ordinary saved-data read must not spend the daily database write allowance');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM timeline_event WHERE source_id='uw-portal-ics'").get().n, 0,
       'a due source stays due until a tick picks it up');
     assert.ok(counter.prepares - before <= 20, `${path} used ${counter.prepares - before} D1 queries`);

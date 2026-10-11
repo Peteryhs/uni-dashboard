@@ -166,6 +166,14 @@
 .calendar-time { padding-top: 1px; color: #aeb5bf; font-size: 12px; font-variant-numeric: tabular-nums; }
 .calendar-event-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
 .calendar-event-title strong { color: #f1f3f5; font-size: 14px; font-weight: 560; }
+.calendar-event.is-past > summary .calendar-event-title strong,
+.calendar-event.is-past > summary .calendar-time,
+.calendar-event.is-past > summary .course-tag { color: var(--dash-muted); }
+.calendar-event.is-past > summary .event-tag { color: var(--dash-muted); border-color: var(--dash-line); }
+.calendar-now { display: flex; align-items: center; gap: 10px; min-height: 28px; color: var(--dash-text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.calendar-now > span:first-child { flex: none; }
+.calendar-now-rule { position: relative; flex: 1; height: 1px; background: #b4bbc4; }
+.calendar-now-rule::before { position: absolute; left: 0; top: -2px; width: 5px; height: 5px; border-radius: 50%; background: inherit; content: ''; }
 .course-tag { color: #bfc7d2; font-size: 11px; }
 .calendar-event-detail { margin: 0 16px 6px 86px; padding: 3px 0 6px; }
 .calendar-event-detail > p { margin: 0 0 7px; color: #cbd1d9; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }

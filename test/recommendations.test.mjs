@@ -105,11 +105,13 @@ test('tasks with unknown coverage and date-only assessments do not acquire inven
   const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
   const quiz = feed.tasks.small.find(task => task.course === 'ECE 150');
   assert.deepEqual(quiz.topics, []);
-  assert.match(quiz.body, /Coverage has not been provided/);
+  assert.deepEqual(quiz.warnings, ['coverage_unknown']);
+  assert.doesNotMatch(quiz.body, /Coverage has not been provided|check the course instructions/i);
   const dateOnly = feed.tasks.small.find(task => task.title === 'Quiz 3');
   assert.equal(dateOnly.due_at, null);
   assert.equal(dateOnly.scheduled_date, DATE);
-  assert.match(dateOnly.body, /no exact time/);
+  assert.deepEqual(dateOnly.warnings, ['time_unknown', 'coverage_unknown']);
+  assert.equal(dateOnly.body, `Listed for ${DATE}.`);
   assert.equal(dateOnly.estimated_minutes, null);
   assert.equal(dateOnly.action.label, 'Open course', 'course shortcut is labelled honestly');
 });
@@ -144,6 +146,34 @@ test('completion survives time passing, snooze expires, undo works, and changed 
   store.close();
 });
 
+test('task completion carries exact calendar identity and structured action for notification cleanup', () => {
+  const data = syntheticDay(), now = at(DATE, '08:00');
+  const initial = recommendationsFromData({ ...data, now });
+  const quiz = initial.tasks.small.find(task => task.title.includes('Quiz 2'));
+  assert.equal(quiz.source_event_id, 'quiz');
+
+  for (const action of ['done', 'dismiss', 'snooze']) {
+    const feed = recommendationsFromData({ ...data, now, actions: { [quiz.id]: { action, until: now + 60_000 } } });
+    const decision = feed.diagnostics.candidates.find(candidate => candidate.id === quiz.id);
+    assert.equal(decision.source_event_id, 'quiz');
+    assert.equal(decision.suppressed_action, action);
+    assert.equal(decision.status, 'suppressed');
+  }
+  const restored = recommendationsFromData({ ...data, now, actions: {} }).diagnostics.candidates.find(candidate => candidate.id === quiz.id);
+  assert.equal(restored.source_event_id, 'quiz');
+  assert.equal(restored.suppressed_action, null, 'undo restores the exact task without a lingering completion flag');
+
+  const legacy = structuredClone(initial);
+  for (const item of [...legacy.items, ...legacy.tasks.small, ...legacy.tasks.large]) delete item.source_event_id;
+  for (const decision of legacy.diagnostics.candidates) {
+    delete decision.source_event_id;
+    delete decision.suppressed_action;
+  }
+  const parsed = validateRecommendations(legacy);
+  assert.ok(parsed.items.every(item => item.source_event_id === null));
+  assert.ok(parsed.diagnostics.candidates.every(item => item.source_event_id === null && item.suppressed_action === null));
+});
+
 test('overdue is unconfirmed, stale sources are visible, and yesterday’s menu is never a lunch suggestion', () => {
   const data = syntheticDay();
   data.calendar.sources[0].status = 'failed';
@@ -154,7 +184,8 @@ test('overdue is unconfirmed, stale sources are visible, and yesterday’s menu 
   const feed = recommendationsFromData({ ...data, now: at('2026-09-24', '11:45') });
   const quiz = feed.tasks.small.find(task => task.title.includes('Quiz 2'));
   assert.match(quiz.title, /Confirm submission/);
-  assert.match(quiz.body, /submission status is unknown/);
+  assert.deepEqual(quiz.warnings, ['submission_unknown']);
+  assert.match(quiz.body, /listed due time has passed/);
   assert.equal(quiz.state, 'dead');
   assert.ok(feed.warnings.some(warning => warning.includes('latest sync failed')));
   const freshnessWarnings = feed.warnings.filter(warning => warning.includes('data is old'));
@@ -408,8 +439,15 @@ test('ongoing exams stay ahead of lunch and all-day assessments never acquire mi
   data.syllabi = [];
   const allDay = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).tasks.small.find(task => task.title.includes('Quiz 2'));
   assert.equal(allDay.due_at, null);
-  assert.match(allDay.body, /no exact time/);
+  assert.deepEqual(allDay.warnings, ['time_unknown', 'coverage_unknown']);
+  assert.equal(allDay.body, `Listed for ${DATE}.`);
   assert.ok(!allDay.title.includes('Confirm'));
+  const exam = data.calendar.days[0].events.find(event => event.id === 'exam');
+  exam.all_day = true; exam.starts_at = at(DATE, '00:00'); exam.ends_at = at('2026-09-24', '00:00');
+  const dateOnlyExam = recommendationsFromData({ ...data, now: at(DATE, '11:45') }).tasks.large.find(task => task.title.includes('midterm'));
+  assert.ok(!dateOnlyExam.title.startsWith('Now:'), 'date-only assessments cannot be declared in progress');
+  assert.equal(dateOnlyExam.starts_at, null);
+  assert.deepEqual(dateOnlyExam.warnings, ['time_unknown', 'coverage_unknown']);
 });
 
 test('recommendation engine creates active task for description-derived due date and resolves conflicts', () => {

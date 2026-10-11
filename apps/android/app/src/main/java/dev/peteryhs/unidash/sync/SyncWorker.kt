@@ -15,7 +15,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val app = applicationContext as UniDashApp
         if (app.credentialStore.current() == null) return Result.success()
         val generation = app.repository.currentSessionGeneration()
-        return app.repository.refresh(expectedGeneration = generation).fold(
+        return app.repository.refresh(expectedGeneration = generation, skipIfFresh = true).fold(
             onSuccess = { snapshot ->
                 app.repository.deliverIfCurrent(snapshot) { app.notifier.onSnapshot(snapshot) }
                 Result.success()

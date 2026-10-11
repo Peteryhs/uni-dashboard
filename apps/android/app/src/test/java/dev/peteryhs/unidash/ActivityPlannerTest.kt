@@ -75,6 +75,24 @@ class ActivityPlannerTest {
             reminders.first().fireAt + NotificationPlanner.ALARM_LATE_TOLERANCE_MS + 1) == null)
     }
 
+    @Test fun `done suppresses only the exact deadline event alarm`() {
+        val due = event.copy(id = "portal:done", occurrenceId = "done-task", category = "deadline", endsAt = start)
+        val other = due.copy(id = "portal:other", occurrenceId = "other-task")
+        val exam = due.copy(id = "portal:exam", occurrenceId = "exam-task", category = "exam")
+        val before = start - 30 * 3_600_000
+        val data = calendar(before, due, other, exam)
+        val suppressed = setOf(due.id)
+
+        val plan = NotificationPlanner.plan(data, before, suppressed)
+        check(plan.none { it.eventId == due.id })
+        check(plan.any { it.eventId == other.id && it.channel == dev.peteryhs.unidash.notify.Channel.Deadlines })
+        check(plan.any { it.eventId == exam.id && it.channel == dev.peteryhs.unidash.notify.Channel.Classes })
+
+        val original = NotificationPlanner.plan(data, before).first { it.eventId == due.id }
+        check(NotificationPlanner.resolveReminder(data, original.key, original.fireAt, original.fireAt, suppressed) == null)
+        check(NotificationPlanner.reconcilePosted(data, listOf(original), original.fireAt, suppressed).isEmpty())
+    }
+
     @Test fun `live activity crosses onset start progress and exact expiry boundaries`() {
         val onset = start - LiveClassPlanner.LEAD_MS
         val data = calendar(onset, event)
@@ -85,7 +103,7 @@ class ActivityPlannerTest {
         check(upcoming.nextUpdateAt == start && upcoming.expiresAt == event.endsAt)
         val active = LiveClassPlanner.select(data, start)!!
         check(active.phase == "active" && active.countdownAt == event.endsAt && active.progress == 0)
-        check(LiveClassPlanner.nextBoundary(data, start) == event.endsAt)
+        check(LiveClassPlanner.nextBoundary(data, start) == start + LiveClassPlanner.PROGRESS_REFRESH_MS)
         check(LiveClassPlanner.select(data, start + 1_800_000)!!.progress == 50)
         check(LiveClassPlanner.select(data, event.endsAt) == null)
         check(LiveClassPlanner.nextBoundary(data, event.endsAt) == null)
@@ -165,7 +183,8 @@ class ActivityPlannerTest {
         check(LiveClassPlanner.upcoming(data, start, event.occurrenceId).map { it.occurrenceId } ==
             listOf("first", "second", "third"))
         val expanded = LiveClassPlanner.select(data, start)!!.expandedText
-        check(expanded.startsWith("In progress · MC 4021\n\nNext up\n"))
+        check(expanded.startsWith("Starts Today ") && expanded.contains("Ends ") && expanded.contains("MC 4021"))
+        check(expanded.contains("Next Today "))
         check(expanded.contains("Due ") && !expanded.contains("fourth"))
     }
 
@@ -194,13 +213,64 @@ class ActivityPlannerTest {
         val state = LiveClassPlanner.select(calendar(start, event, next), start)!!
         check(state.expandedText.lines().last().endsWith(next.title))
         check(state.expandedText.lines().count { it.contains(next.title) } == 1)
+        check(state.nextText?.contains(next.title) == true && state.nextText.contains("Next "))
         val moved = next.copy(title = "Changed title", location = "RCH 101", startsAt = next.startsAt + 60_000)
         val repaired = LiveClassPlanner.select(calendar(start, event, moved), start)!!.expandedText
         check(repaired.contains("Changed title · RCH 101") && !repaired.contains(next.title))
-        check(LiveClassPlanner.select(calendar(start, event, next.copy(attendance = "cancelled")), start)!!
-            .expandedText.endsWith("No more scheduled activities"))
+        val withoutNext = LiveClassPlanner.select(calendar(start, event, next.copy(attendance = "cancelled")), start)!!.expandedText
+        check(!withoutNext.contains("Next ") && !withoutNext.contains("Due "))
         check(LiveClassPlanner.upcoming(calendar(start - NotificationPlanner.MAX_CALENDAR_AGE_MS - 1, next),
             start, event.occurrenceId).isEmpty())
+    }
+
+    @Test fun `active progress refreshes every five minutes while countdown uses event end`() {
+        val now = start + 30_000
+        val data = calendar(now, event.copy(course = "MATH 115", title = "Lecture"))
+        val state = LiveClassPlanner.select(data, now)!!
+        check(state.title == "MATH 115 · Lecture")
+        check(state.progress == 0)
+        check(state.countdownAt == event.endsAt)
+        check(state.progressUpdateAt == now + LiveClassPlanner.PROGRESS_REFRESH_MS)
+        check(state.nextUpdateAt == state.progressUpdateAt)
+        check(state.nextText == null)
+        check(state.text.contains("Today ") && state.text.contains("–") && state.text.contains("MC 4021"))
+
+        val later = LiveClassPlanner.select(data, now + LiveClassPlanner.PROGRESS_REFRESH_MS)!!
+        check(later.progress > state.progress && later.progressUpdateAt == now + 2 * LiveClassPlanner.PROGRESS_REFRESH_MS)
+        val nearEnd = LiveClassPlanner.select(data, event.endsAt - 60_000)!!
+        check(nearEnd.progressUpdateAt == null)
+        check(nearEnd.nextUpdateAt == event.endsAt)
+        check(LiveClassPlanner.select(data, event.endsAt) == null)
+    }
+
+    @Test fun `a progress refresh never makes a natural transition inexact`() {
+        val endsInFive = event.endsAt - LiveClassPlanner.PROGRESS_REFRESH_MS
+        val nearEnd = LiveClassPlanner.select(calendar(endsInFive, event), endsInFive)!!
+        check(nearEnd.progressUpdateAt == null && nearEnd.nextUpdateAt == event.endsAt)
+
+        val expiryNow = start + 20 * 60_000
+        val generated = expiryNow + LiveClassPlanner.PROGRESS_REFRESH_MS - NotificationPlanner.MAX_CALENDAR_AGE_MS - 1
+        val expiring = LiveClassPlanner.select(calendar(generated, event), expiryNow)!!
+        check(expiring.progressUpdateAt == null && expiring.nextUpdateAt == expiring.expiresAt)
+
+        val dueAt = start + 25 * 60_000
+        val due = event.copy(id = "due", occurrenceId = "due", category = "deadline", title = "Assignment",
+            startsAt = dueAt, endsAt = dueAt)
+        val agendaNow = start + 20 * 60_000
+        val agenda = LiveClassPlanner.select(calendar(agendaNow, event, due), agendaNow)!!
+        check(agenda.progressUpdateAt == null && agenda.nextUpdateAt == dueAt)
+    }
+
+    @Test fun `before start there is no invented progress and expanded text names scheduled bounds`() {
+        val before = start - 2 * 60_000
+        val data = calendar(before, event.copy(course = "MATH 115", title = "Lecture"))
+        val state = LiveClassPlanner.select(data, before)!!
+        check(state.phase == "upcoming" && state.progress == 0 && state.progressUpdateAt == null)
+        check(state.nextUpdateAt == start)
+        check(state.title == "MATH 115 · Lecture")
+        check(state.nextText == null)
+        check(state.text.startsWith("Starts ") && state.text.contains("MC 4021"))
+        check(state.expandedText.startsWith("Starts ") && state.expandedText.contains("Ends "))
     }
 
     @Test fun `a deadline leaving next up schedules a transition before the active class ends`() {
@@ -209,7 +279,7 @@ class ActivityPlannerTest {
         val data = calendar(start, event, due)
         check(LiveClassPlanner.select(data, start)!!.nextUpdateAt == due.startsAt)
         check(LiveClassPlanner.nextBoundary(data, start) == due.startsAt)
-        check(LiveClassPlanner.select(data, due.startsAt)!!.expandedText.endsWith("No more scheduled activities"))
+        check(!LiveClassPlanner.select(data, due.startsAt)!!.expandedText.contains("Assignment"))
         check(LiveClassPlanner.nextBoundary(data, start, setOf(event.occurrenceId)) == null)
     }
 }

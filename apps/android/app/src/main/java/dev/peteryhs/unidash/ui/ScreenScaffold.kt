@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Warning
@@ -31,10 +32,15 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.peteryhs.unidash.data.Snapshot
@@ -59,20 +65,25 @@ fun ScreenScaffold(
     navigationIcon: @Composable () -> Unit = {},
     onStatus: (() -> Unit)? = null,
     showConnectionBanner: Boolean = true,
-    refreshing: Boolean = snapshot.refreshing,
+    refreshing: Boolean = snapshot.manualRefreshing,
     refreshLabel: String = "Refresh",
+    pullToRefreshEnabled: Boolean = true,
+    listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val pull = rememberPullToRefreshState()
-    val listState = rememberLazyListState()
     val showBanner = showConnectionBanner && (onStatus == null || snapshot.error != null)
     // A collapsed app bar owns the first downward drag. Disable the pull modifier itself until
     // both scroll positions are at rest so it cannot consume that drag before the bar expands.
-    val canRefresh = !refreshing &&
-        scroll.state.collapsedFraction == 0f &&
-        listState.firstVisibleItemIndex == 0 &&
-        listState.firstVisibleItemScrollOffset == 0
+    val atTop by remember(scroll.state, listState) {
+        derivedStateOf {
+            scroll.state.collapsedFraction == 0f &&
+                listState.firstVisibleItemIndex == 0 &&
+                listState.firstVisibleItemScrollOffset == 0
+        }
+    }
+    val canRefresh = pullToRefreshEnabled && !refreshing && atTop
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         // The navigation bar outside this scaffold already consumes the bottom inset.
@@ -86,7 +97,6 @@ fun ScreenScaffold(
                     subtitle = subtitle?.let { { Text(it) } },
                     actions = {
                         actions()
-                        RefreshControl(label = refreshLabel, refreshing = refreshing, onRefresh = onRefresh)
                         onStatus?.let { StatusAction(snapshot, now, onClick = it) }
                     },
                     navigationIcon = navigationIcon,
@@ -102,14 +112,14 @@ fun ScreenScaffold(
     ) { padding ->
         PullToRefreshBox(
             enabled = canRefresh,
-            isRefreshing = refreshing,
+            isRefreshing = pullToRefreshEnabled && refreshing,
             onRefresh = { if (canRefresh) onRefresh() },
             state = pull,
             modifier = Modifier.fillMaxSize().padding(padding),
             indicator = {
                 PullToRefreshDefaults.LoadingIndicator(
                     state = pull,
-                    isRefreshing = refreshing,
+                    isRefreshing = pullToRefreshEnabled && refreshing,
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
             },
@@ -117,7 +127,21 @@ fun ScreenScaffold(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth(),
+                    modifier = Modifier
+                        .widthIn(max = 720.dp)
+                        .fillMaxWidth()
+                        .let { base ->
+                            if (pullToRefreshEnabled) base.semantics {
+                                customActions = listOf(
+                                    CustomAccessibilityAction(refreshLabel) {
+                                        if (refreshing) false else {
+                                            onRefresh()
+                                            true
+                                        }
+                                    },
+                                )
+                            } else base
+                        },
                     contentPadding = PaddingValues(bottom = Spacing.xl),
                     content = content,
                 )

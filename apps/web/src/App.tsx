@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, CloudRain, ExternalLink, History, MapPin, Settings2, Star, Thermometer, TriangleAlert, WifiOff, Wind, X } from 'lucide-react';
 import { ChangeBlocks, alertChange } from '@/components/change-blocks';
+import { RecommendationWarnings } from '@/components/recommendation-warnings';
+import { recommendationPresentation } from '#contract/recommendation-presentation.mjs';
+import { calendarEventPassed, calendarNowIndex } from '#contract/calendar-progress.mjs';
 import { StationIcon } from '@/components/station-icon';
 import { DietaryIcon } from '@/components/dietary-icon';
 import { stationGroups } from '@/lib/menu';
@@ -31,7 +34,8 @@ function heroTitleSize(value: string): number {
   return Math.round(Math.max(28, Math.min(47, 51 - Math.max(0, [...cleanTitle(value)].length - 18) * 0.42)));
 }
 function recommendationBody(item: RecommendationItem): string {
-  return item.kind === 'food' ? item.body.replace(/^AI picks?:\s*/i, '') : item.body;
+  const body = recommendationPresentation(item).body;
+  return item.kind === 'food' ? body.replace(/^AI picks?:\s*/i, '') : body;
 }
 function kindLabel(item: RecommendationItem): string {
   return ({ office_hours: 'Office hours', focus: 'Study window', learning: 'Learning', food: 'Lunch', change: 'Schedule update' } as Record<string, string>)[item.kind] ?? item.kind;
@@ -50,7 +54,7 @@ function timing(item: RecommendationItem, now: number): string {
     return 'Due ' + label + ' at ' + formatTime(item.due_at);
   }
   if (item.starts_at) return 'Starts ' + countdown(item.starts_at, now) + ' at ' + formatTime(item.starts_at);
-  if (item.scheduled_date) return (item.kind === 'task' ? 'Due ' : 'Scheduled ') + formatShortDay(Date.parse(item.scheduled_date + 'T12:00:00Z')) + (item.kind === 'task' ? ' · time not supplied' : '');
+  if (item.scheduled_date) return 'Listed ' + formatShortDay(Date.parse(item.scheduled_date + 'T12:00:00Z'));
   return 'For today';
 }
 function shortTiming(item: RecommendationItem, now: number): string {
@@ -265,6 +269,7 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
     </div>
     {item.change && <ChangeBlocks className="rec-detail-change" change={item.change} showConfidence />}
+    <RecommendationWarnings item={item} className="rec-detail-warnings" />
     {isAiFood(item) ? <p>{recommendationBody(item)}</p> : <CourseDetailContent
       description={item.kind === 'change' && item.change ? '' : recommendationBody(item)} topics={item.topics} readings={item.readings}
     />}
@@ -400,7 +405,8 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
 
   const alertsFor = (event: CalendarEvent) => data?.alerts?.filter(alert => alert.event_id === event.id) ?? [];
   const renderCalendarEvent = (event: CalendarEvent, dayBadge?: string) => (
-    <BlurFadeDisclosure className="calendar-event" key={`${event.id}:${dayBadge ?? ''}`} contentClassName="calendar-event-detail" summary={<>
+    <BlurFadeDisclosure className={'calendar-event' + (calendarEventPassed(event, now) ? ' is-past' : '')} key={`${event.id}:${dayBadge ?? ''}`} contentClassName="calendar-event-detail" summary={<>
+        {calendarEventPassed(event, now) && <span className="sr-only">Past event. </span>}
         <span className="calendar-time">
           {dayBadge && <span className="calendar-day-badge">{dayBadge}</span>}
           {calendarTime(event)}
@@ -431,6 +437,20 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
         </div>
     </BlurFadeDisclosure>
   );
+
+  const nowMarker = <div className="calendar-now" role="separator" aria-label={`Current time ${formatTime(now)}`}>
+    <span>Now {formatTime(now)}</span><span className="calendar-now-rule" aria-hidden />
+  </div>;
+  const renderDayEvents = (events: (CalendarEvent & { dayLabel?: string })[], includesToday: boolean, weekend = false) => {
+    const markerIndex = includesToday ? calendarNowIndex(events, now) : -1;
+    return <>
+      {events.map((event, index) => <Fragment key={event.occurrence_id || event.id}>
+        {index === markerIndex && nowMarker}
+        {renderCalendarEvent(event, weekend ? event.dayLabel : undefined)}
+      </Fragment>)}
+      {markerIndex === events.length && nowMarker}
+    </>;
+  };
 
   return <BlurFade as="section" className="content-section" id="calendar" inView duration={0.45} offset={10} blur="6px" direction="up">
     <div className={'section-head calendar-section-head' + (view === 'full' ? ' is-full' : '')}>
@@ -464,9 +484,9 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
               </div>
               <div className="calendar-events calendar-events--weekend">
                 {row.events.length ? (
-                  row.events.map(event => renderCalendarEvent(event, event.dayLabel))
+                  renderDayEvents(row.events, row.satDate === today || row.sunDate === today, true)
                 ) : (
-                  <p className="calendar-clear calendar-clear--weekend">Nothing scheduled this weekend.</p>
+                  <>{(row.satDate === today || row.sunDate === today) && nowMarker}<p className="calendar-clear calendar-clear--weekend">Nothing scheduled this weekend.</p></>
                 )}
               </div>
             </div>
@@ -480,9 +500,9 @@ function CalendarSection({ data, pending, error, now, page, setPage, nextCommitm
             </div>
             <div className="calendar-events">
               {row.events.length ? (
-                row.events.map(event => renderCalendarEvent(event))
+                renderDayEvents(row.events, row.date === today)
               ) : (
-                <p className={'calendar-clear' + (row.isCompressedWeekend ? ' calendar-clear--weekend' : '')}>Nothing scheduled.</p>
+                <>{row.date === today && nowMarker}<p className={'calendar-clear' + (row.isCompressedWeekend ? ' calendar-clear--weekend' : '')}>Nothing scheduled.</p></>
               )}
             </div>
           </div>
@@ -837,12 +857,13 @@ export default function App() {
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
             <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} showConfidence />}<ChevronRight size={18} /></button>
             {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
+            <RecommendationWarnings item={featured} className="hero-warnings" />
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>
         </BlurFade>
         <BlurFade as="section" className="more-recs" aria-label="More recommendations" duration={0.58} delay={0.14} offset={14} blur="7px"><span className="more-label">More for today</span>
-          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} showConfidence /> : timing(item, now)}</small><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
-          {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small></button>}
+          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} showConfidence /> : timing(item, now)}</small><RecommendationWarnings item={item} /><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
+          {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small><RecommendationWarnings item={largestTask} /></button>}
         </BlurFade>
       </div>}
       {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}

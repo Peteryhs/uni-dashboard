@@ -43,9 +43,12 @@ export interface RecommendationItem {
   source_label: string;
   state: 'live' | 'ageing' | 'stale' | 'dead';
   can_complete: boolean;
+  warnings?: RecommendationWarning[];
   /** Optional because recommendations cached by an older build do not carry it. */
   change?: ChangeDetail | null;
 }
+
+export type RecommendationWarning = 'time_unknown' | 'coverage_unknown' | 'submission_unknown' | 'completion_unknown';
 
 export type ChangeKind = 'room' | 'unusual_room' | 'time' | 'deadline' | 'cancelled' | 'removed' | 'tutorial_work';
 
