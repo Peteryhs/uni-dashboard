@@ -16,17 +16,25 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -40,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -48,10 +57,11 @@ import dev.peteryhs.unidash.data.summaryAt
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import dev.peteryhs.unidash.ui.theme.Spacing
 
+enum class ScreenHeaderSize { Compact, Medium, Large }
+
 /**
- * Every tab has the same frame: a medium flexible app bar that collapses on scroll, one compact
- * source-status action, a feed-error banner when needed, and pull-to-refresh. Content is capped at
- * a readable width on tablets and foldables.
+ * Daily destinations use flexible headings; nested settings keep a compact app bar. Every frame
+ * retains one source-status action, actual connection errors, and user-requested refresh feedback.
  */
 @Composable
 fun ScreenScaffold(
@@ -68,6 +78,7 @@ fun ScreenScaffold(
     refreshing: Boolean = snapshot.manualRefreshing,
     refreshLabel: String = "Refresh",
     pullToRefreshEnabled: Boolean = true,
+    headerSize: ScreenHeaderSize = ScreenHeaderSize.Medium,
     listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
@@ -92,20 +103,39 @@ fun ScreenScaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Column {
-                MediumFlexibleTopAppBar(
-                    title = { Text(title) },
-                    subtitle = subtitle?.let { { Text(it) } },
-                    actions = {
-                        actions()
-                        onStatus?.let { StatusAction(snapshot, now, onClick = it) }
-                    },
-                    navigationIcon = navigationIcon,
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    scrollBehavior = scroll,
+                val titleContent: @Composable () -> Unit = {
+                    Text(title, fontWeight = when (headerSize) {
+                        ScreenHeaderSize.Compact -> MaterialTheme.typography.titleLargeEmphasized.fontWeight
+                        ScreenHeaderSize.Medium -> MaterialTheme.typography.headlineMediumEmphasized.fontWeight
+                        ScreenHeaderSize.Large -> MaterialTheme.typography.displaySmallEmphasized.fontWeight
+                    })
+                }
+                val subtitleContent: (@Composable () -> Unit)? = subtitle?.let { { Text(it) } }
+                val actionContent: @Composable RowScope.() -> Unit = {
+                    actions()
+                    onStatus?.let { StatusAction(snapshot, now, onClick = it) }
+                }
+                val colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
                 )
+                when (headerSize) {
+                    ScreenHeaderSize.Compact -> TopAppBar(
+                        title = titleContent, subtitle = subtitleContent ?: {},
+                        actions = actionContent, navigationIcon = navigationIcon,
+                        colors = colors, scrollBehavior = scroll,
+                    )
+                    ScreenHeaderSize.Medium -> MediumFlexibleTopAppBar(
+                        title = titleContent, subtitle = subtitleContent,
+                        actions = actionContent, navigationIcon = navigationIcon,
+                        colors = colors, scrollBehavior = scroll,
+                    )
+                    ScreenHeaderSize.Large -> LargeFlexibleTopAppBar(
+                        title = titleContent, subtitle = subtitleContent,
+                        actions = actionContent, navigationIcon = navigationIcon,
+                        colors = colors, scrollBehavior = scroll,
+                    )
+                }
                 if (showBanner) ConnectionBanner(snapshot, now, onStatus = null)
             }
         },
@@ -142,7 +172,7 @@ fun ScreenScaffold(
                                 )
                             } else base
                         },
-                    contentPadding = PaddingValues(bottom = Spacing.xl),
+                    contentPadding = PaddingValues(top = Spacing.s, bottom = Spacing.xl),
                     content = content,
                 )
             }
@@ -184,31 +214,45 @@ private fun StatusAction(snapshot: Snapshot, now: Long, onClick: () -> Unit) {
         warning -> stale.container to stale.onContainer
         else -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
     }
-    if (warning) {
-        IconButton(
-            onClick = onClick,
-            modifier = Modifier
-                .padding(end = Spacing.s)
-                .semantics(mergeDescendants = true) { contentDescription = accessibleLabel },
-        ) {
-            BadgedBox(badge = {
-                Badge(containerColor = badgeColors.first, contentColor = badgeColors.second) {
-                    Text(count ?: "?")
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(if (warning) "View source warning" else "View source status") } },
+        state = rememberTooltipState(),
+    ) {
+        if (warning) {
+            BadgedBox(
+                modifier = Modifier.padding(end = Spacing.s),
+                badge = {
+                    Badge(containerColor = badgeColors.first, contentColor = badgeColors.second) {
+                        Text(count ?: "?", modifier = Modifier.clearAndSetSemantics { })
+                    }
+                },
+            ) {
+                FilledTonalIconButton(
+                    onClick = onClick,
+                    shapes = IconButtonDefaults.shapes(),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = badgeColors.first,
+                        contentColor = badgeColors.second,
+                    ),
+                    modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = accessibleLabel },
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Warning,
+                        contentDescription = null,
+                        tint = badgeColors.second,
+                    )
                 }
-            }) {
-                Icon(
-                    imageVector = Icons.Outlined.Warning,
-                    contentDescription = null,
-                    tint = if (checkFailed) MaterialTheme.colorScheme.error else if (unknown) MaterialTheme.colorScheme.tertiary else stale.accent,
-                )
             }
-        }
-    } else {
-        TextButton(
-            onClick = onClick,
-            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = accessibleLabel },
-        ) {
-            Text("View status")
+        } else {
+            FilledTonalIconButton(
+                onClick = onClick,
+                shapes = IconButtonDefaults.shapes(),
+                modifier = Modifier.padding(end = Spacing.s)
+                    .semantics(mergeDescendants = true) { contentDescription = accessibleLabel },
+            ) {
+                Icon(Icons.Outlined.Info, contentDescription = null)
+            }
         }
     }
 }

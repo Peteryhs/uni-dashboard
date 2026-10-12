@@ -32,6 +32,7 @@ import dev.peteryhs.unidash.ui.ChangeBlocks
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.ScreenScaffold
+import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.theme.Spacing
 import kotlin.math.roundToInt
@@ -51,6 +52,7 @@ fun RecommendationExplanationScreen(
     ScreenScaffold(
         title = "How suggestions are chosen",
         subtitle = null,
+        headerSize = ScreenHeaderSize.Compact,
         snapshot = snapshot,
         now = now,
         snackbar = snackbar,
@@ -71,7 +73,7 @@ fun RecommendationExplanationScreen(
             )
         }
         if (warnings.isNotEmpty()) {
-            item {
+            item(key = "explanation:warnings") {
                 var warningsExpanded by rememberSaveable { mutableStateOf(false) }
                 ListItem(
                     headlineContent = { Text("Warnings · ${warnings.size}") },
@@ -104,7 +106,7 @@ fun RecommendationExplanationScreen(
             return@ScreenScaffold
         }
 
-        item {
+        item(key = "explanation:summary") {
             ListItem(
                 headlineContent = { Text("This check") },
                 supportingContent = {
@@ -113,7 +115,7 @@ fun RecommendationExplanationScreen(
             )
         }
 
-        item {
+        item(key = "explanation:timing") {
             var rulesExpanded by rememberSaveable { mutableStateOf(false) }
             ListItem(
                 headlineContent = { Text("Timing rules") },
@@ -161,7 +163,7 @@ fun RecommendationExplanationScreen(
 }
 
 private fun LazyListScope.rankingDisclosure() {
-    item {
+    item(key = "explanation:ranking") {
         var rankingExpanded by rememberSaveable { mutableStateOf(false) }
         ListItem(
             headlineContent = { Text("Ranking") },

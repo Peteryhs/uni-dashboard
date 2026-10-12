@@ -11,6 +11,7 @@ const RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000];
 const MAX_FAILURE_ATTEMPTS = 3;
 const MAX_AUTOMATIC_AI_RANKINGS_PER_DAY = 12;
 const MAX_MANUAL_AI_RANKINGS_PER_DAY = 12;
+const USAGE_CAS_ATTEMPTS = 3;
 
 function parseJson(raw, fallback) {
   try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
@@ -198,33 +199,51 @@ export async function failManualFoodRanking(store, { jobId, serviceDate = '', er
 }
 
 /** Keep cron rankings and user-triggered rankings on separate daily attempt budgets. */
-export async function claimFoodAiRun(store, now = Date.now(), source = 'manual') {
+export async function claimFoodAiRun(store, now = Date.now(), source = 'manual', { maxAttempts = USAGE_CAS_ATTEMPTS } = {}) {
   const date = new Date(now).toISOString().slice(0, 10);
-  const usage = parseJson(await store.getSetting(USAGE_KEY), {});
-  const sameDate = usage.date === date;
-  const count = sameDate ? usage.count || 0 : 0;
   const normalizedSource = source === 'automatic' ? 'automatic' : 'manual';
-  const automaticCount = sameDate && Number.isInteger(usage.automatic_count) ? usage.automatic_count : 0;
-  const manualCount = sameDate && Number.isInteger(usage.manual_count) ? usage.manual_count : 0;
-  const attemptCount = normalizedSource === 'automatic' ? automaticCount : manualCount;
   const attemptLimit = normalizedSource === 'automatic' ? MAX_AUTOMATIC_AI_RANKINGS_PER_DAY : MAX_MANUAL_AI_RANKINGS_PER_DAY;
-  if (attemptCount >= attemptLimit) return false;
+  const retries = Number.isInteger(maxAttempts) ? Math.max(1, Math.min(maxAttempts, USAGE_CAS_ATTEMPTS)) : USAGE_CAS_ATTEMPTS;
+  if (typeof store.compareAndSetSetting !== 'function') {
+    throw new Error('Atomic dining usage limits are unavailable; retry this ranking later.');
+  }
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const previousRaw = await store.getSetting(USAGE_KEY);
+    const usage = parseJson(previousRaw, {});
+    const sameDate = usage.date === date;
+    // A late operation from the previous UTC day must not roll back the newer day's counter.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(usage.date) && usage.date > date) {
+      const error = new Error('Dining usage has advanced to a newer UTC day; refresh and retry this ranking.');
+      error.status = 409;
+      error.retryable = true;
+      throw error;
+    }
+    const count = sameDate ? usage.count || 0 : 0;
+    const automaticCount = sameDate && Number.isInteger(usage.automatic_count) ? usage.automatic_count : 0;
+    const manualCount = sameDate && Number.isInteger(usage.manual_count) ? usage.manual_count : 0;
+    const attemptCount = normalizedSource === 'automatic' ? automaticCount : manualCount;
+    if (attemptCount >= attemptLimit) return false;
 
-  const hasSourceBreakdown = sameDate && typeof usage.automatic_count === 'number' && typeof usage.manual_count === 'number';
-  const legacyUnattributedCount = sameDate
-    ? Number.isInteger(usage.legacy_unattributed_count)
-      ? usage.legacy_unattributed_count
-      : hasSourceBreakdown ? 0 : count
-    : 0;
-  await store.setSetting(USAGE_KEY, JSON.stringify({
-    ...(sameDate ? usage : {}),
-    date,
-    count: count + 1,
-    automatic_count: automaticCount + Number(normalizedSource === 'automatic'),
-    manual_count: manualCount + Number(normalizedSource === 'manual'),
-    ...(legacyUnattributedCount > 0 ? { legacy_unattributed_count: legacyUnattributedCount } : {}),
-  }));
-  return true;
+    const hasSourceBreakdown = sameDate && typeof usage.automatic_count === 'number' && typeof usage.manual_count === 'number';
+    const legacyUnattributedCount = sameDate
+      ? Number.isInteger(usage.legacy_unattributed_count)
+        ? usage.legacy_unattributed_count
+        : hasSourceBreakdown ? 0 : count
+      : 0;
+    const next = JSON.stringify({
+      ...(sameDate ? usage : {}),
+      date,
+      count: count + 1,
+      automatic_count: automaticCount + Number(normalizedSource === 'automatic'),
+      manual_count: manualCount + Number(normalizedSource === 'manual'),
+      ...(legacyUnattributedCount > 0 ? { legacy_unattributed_count: legacyUnattributedCount } : {}),
+    });
+    if (await store.compareAndSetSetting(USAGE_KEY, previousRaw, next, now)) return true;
+  }
+  const error = new Error('Dining usage changed repeatedly; please retry this ranking.');
+  error.status = 409;
+  error.retryable = true;
+  throw error;
 }
 
 /** Cron and local poll call this after fetching; it never needs a page view. */
@@ -270,7 +289,14 @@ export async function syncFoodRecommendation(store, { cfEnv = null, now = Date.n
       return { status: previous.status, error: previous.error || '', cached: true };
     }
   }
-  if (!await claimFoodAiRun(store, now, 'automatic')) {
+  let claimed;
+  try {
+    claimed = await claimFoodAiRun(store, now, 'automatic', { maxAttempts: 1 });
+  } catch (error) {
+    if (error?.retryable) return { status: 'retryable', error: error.message, retryable: true };
+    throw error;
+  }
+  if (!claimed) {
     await store.setSetting(RESULT_KEY, JSON.stringify({
       ...(keepRecommendation ? { recommendation: keepRecommendation, stale: true } : {}),
       signature,

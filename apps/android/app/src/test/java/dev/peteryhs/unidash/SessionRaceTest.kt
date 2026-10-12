@@ -125,6 +125,7 @@ class SessionRaceTest {
         val firstStarted = CountDownLatch(1)
         val releaseFirst = CountDownLatch(1)
         val secondStarted = CountDownLatch(1)
+        val releaseSecond = CountDownLatch(1)
         val healthRequests = AtomicInteger()
         val firstHealth = fixture("health_sources.json").replace("\"now\": 1790536188816", "\"now\": 1799999999999")
         val secondHealth = fixture("health_sources.json").replace("\"now\": 1790536188816", "\"now\": 1800000000000")
@@ -137,24 +138,34 @@ class SessionRaceTest {
                     json(firstHealth)
                 } else {
                     secondStarted.countDown()
+                    releaseSecond.await(10, TimeUnit.SECONDS)
                     json(secondHealth)
                 }
             }
         }
         val repo = DashboardRepository(tmp.newFolder("health-owners"), apiFor = { api })
-        val older = async(Dispatchers.IO) { repo.refreshHealth() }
+        try {
+            val older = async(Dispatchers.IO) { repo.refreshHealth() }
 
-        assertTrue("first health request reached the server", firstStarted.await(10, TimeUnit.SECONDS))
-        val newer = async(Dispatchers.IO) { repo.refreshHealth() }
-        assertTrue("pending health checks keep the status row busy", repo.snapshot.value.healthRefreshing)
-        releaseFirst.countDown()
-        assertTrue("the newer request runs after the older one releases the health lock", secondStarted.await(10, TimeUnit.SECONDS))
-        assertTrue(older.await().isSuccess)
-        assertTrue(repo.snapshot.value.healthRefreshing)
-        assertTrue(newer.await().isSuccess)
+            assertTrue("first health request reached the server", firstStarted.await(10, TimeUnit.SECONDS))
+            // Enter synchronously until the newer request suspends behind the held health mutex;
+            // this makes its refresh owner visible before checking the shared busy state.
+            val newer = async(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) { repo.refreshHealth() }
+            assertTrue("pending health checks keep the status row busy", repo.snapshot.value.healthRefreshing)
+            releaseFirst.countDown()
+            assertTrue("the newer request runs after the older one releases the health lock", secondStarted.await(10, TimeUnit.SECONDS))
+            assertEquals("both ordered health requests reached the server", 2, healthRequests.get())
+            assertTrue(older.await().isSuccess)
+            assertTrue("the second request still owns the busy state while its response is held", repo.snapshot.value.healthRefreshing)
+            releaseSecond.countDown()
+            assertTrue(newer.await().isSuccess)
 
-        assertEquals("the latest request owns the displayed status", 1800000000000, repo.snapshot.value.health?.now)
-        assertFalse("busy clears after every owned health request completes", repo.snapshot.value.healthRefreshing)
+            assertEquals("the latest request owns the displayed status", 1800000000000, repo.snapshot.value.health?.now)
+            assertFalse("busy clears after every owned health request completes", repo.snapshot.value.healthRefreshing)
+        } finally {
+            releaseFirst.countDown()
+            releaseSecond.countDown()
+        }
     }
 
     @Test

@@ -20,10 +20,11 @@ A genuinely serverless build can only cover weather, occupancy, status, and dead
 (and deadlines only by subscribing the phone's calendar app straight to the ICS feed,
 which is free and needs no code).
 
-## Target 1: containers (homelab / a VPS)
+## Target 1: Node relay (local machine or VPS)
 
-`collector` + `api` + `postgres` + `web`, one `compose.yaml`. Runs on podman or Docker.
-Postgres holds canonical rows, history and the raw snapshot archive.
+The implemented target is one Node process serving the API and built web assets, with a local
+SQLite database. Automatic polling is opt-in. No Docker/Podman Compose configuration or Postgres
+adapter is included; those were architecture proposals, not runnable targets.
 
 ## Target 2: Cloudflare (one-click for other people)
 
@@ -31,10 +32,10 @@ Postgres holds canonical rows, history and the raw snapshot archive.
 |---|---|
 | api + relay + static web | one Worker (static assets served from the same Worker) |
 | canonical rows | D1 (SQLite) |
-| last-good bundle | KV |
+| last-good client data | browser storage / native app cache; no KV binding |
 | polling | Cron Triggers |
-| the two token URLs | Worker secrets |
-| login | Cloudflare Access (free plan, per-user identity) |
+| private feed URLs | Worker secrets or authenticated app settings in D1 |
+| login | Cloudflare Access; every allowed identity shares this personal instance |
 
 ### What is actually built now (2026-09-22)
 
@@ -149,15 +150,18 @@ Two platform differences worth knowing, both found by running it rather than rea
   them as one `batch()`. A test asserts `exec()` is never used for the schema.
 - **`env.AI` has no local emulation.** `wrangler dev` wants a remote proxy session for it, which
   needs credentials. Deployed, the binding is what makes the dining advisor free of API keys; the
-  local dev config simply omits it and the AI route fails loudly, which is the intended behaviour
-  when there is no model to call.
+  committed configuration includes this binding, so local Worker development can also require
+  Cloudflare authentication. To develop without inference, use the Node relay without Cloudflare
+  API credentials, or omit the AI binding in a separate local Worker configuration. AI requests
+  report unavailable when there is no model to call.
 
-The Worker bundle resolves no `node:` module at all (checked by grepping the built bundle). That was
-not free: `ai.mjs` reached for `node:fs` to write a dev cache file and `node:crypto` to hash a cache
-key, `store.mjs` needed `node:sqlite`, and the ICS adapter's fixture path imported `node:fs/promises`.
-Node builtins now arrive through `process.getBuiltinModule` where they are optional, the pure schema
-moved to `schema.mjs`, and the fixture import builds its specifier at runtime so no bundler folds it
-back into a static import.
+The Worker uses Cloudflare's supported `node:async_hooks` `AsyncLocalStorage` under `nodejs_compat`
+to keep feed URLs and AI credentials scoped to one invocation. A single immutable snapshot combines
+bindings with the existing D1 settings read; concurrent requests do not mutate shared `process.env`.
+Local Node source configuration continues to read its ordinary environment. See Cloudflare's
+[AsyncLocalStorage documentation](https://developers.cloudflare.com/workers/runtime-apis/nodejs/asynclocalstorage/).
+Node-only SQLite and filesystem paths remain outside the deployed execution path: optional builtins
+use `process.getBuiltinModule`, the pure schema is shared, and fixture imports stay dynamic.
 
 Verified locally on 2026-09-22 against a local D1 and the live feeds: `/healthz`, `/v1/dashboard`,
 `/v1/health/sources`, `/v1/poll`, `/v1/credentials`, `/v1/ai/models`, the SPA fallback, the 404
@@ -218,9 +222,8 @@ and every cron tick, which is where the source adapters read their configuration
 
 Three rules, all enforced in `worker.mjs` and all tested:
 
-- **Validated before storage.** A value ends up in an environment variable, so it is checked first:
-  the feed URLs must be `https` with no whitespace (whitespace would smuggle a second variable), and
-  the tokens must be alphanumeric with `-` and `_`.
+- **Validated before storage.** Adapters receive only accepted values: feed URLs must be `https`
+  without whitespace, and tokens must be alphanumeric with `-` and `_`.
 - **Never echoed back.** `GET /v1/credentials` reports `configured`, where the value came from
   (`saved in the app` or `Worker secret`), and nothing else. A test asserts the saved URL does not
   appear anywhere in the response.
@@ -278,8 +281,10 @@ one-line architectural rule with a 60x cost difference, so write it down and tes
 
 Dual-target is cheap now and expensive later. Concretely:
 
-- **No Node-only APIs in shared code.** Web-standard `fetch`, streams, and text codecs only.
-- **One storage interface, two adapters.** Postgres on containers, D1/SQLite on Workers.
+- **Use APIs supported by both runtimes in shared code.** Web-standard `fetch`, streams and text
+  codecs, plus Cloudflare-supported `AsyncLocalStorage`; Node SQLite and filesystem operations stay
+  in the local adapter or optional development paths.
+- **One storage interface, two adapters.** Node SQLite locally, D1 on Workers.
   Keep dialect features out of the canonical layer: no `jsonb`, no `timestamptz`, no
   Postgres-specific upsert syntax in shared code. Timestamps as ISO strings or epoch ms.
 - **Scheduling cannot depend on Postgres-only features.** The earlier plan used `LISTEN/NOTIFY`
@@ -287,8 +292,9 @@ Dual-target is cheap now and expensive later. Concretely:
   worker that claims due rows; that works on both.
 - **Parser CPU budget.** Single-pass scan, not a DOM tree. Target under 5 ms for the food
   page. That is the difference between a $0 deployment for other people and a $5 one.
-- **Secrets behind one interface.** Worker secrets on Cloudflare, `0600` env file or a podman
-  secret on containers. The collector is the only reader either way.
+- **Backend-only secrets.** Worker secrets or authenticated settings in D1 on Cloudflare;
+  a local `.env` file on Node. App-saved local credentials create/restrict that file to `0600`
+  on POSIX; Windows access follows the directory's ACL. Clients never receive a private feed URL.
 - **Auth is deployment-specific.** Cloudflare Access Managed OAuth provides browser-mediated
   per-user Android sessions; service tokens remain available as an explicit per-device fallback.
 
@@ -297,7 +303,8 @@ Dual-target is cheap now and expensive later. Concretely:
 1. **Cloudflare, one click.** Their own Worker, their own D1, their own two token URLs
    pasted into the setup page. $0 if the parser stays under the CPU budget, $5/month
    otherwise. No server, no Docker, no DNS.
-2. **Containers, one command.** `compose.yaml` on a VPS or homelab box.
+2. **Node relay.** Node 24+, a persistent SQLite file, built web assets, and a process manager on
+   a local machine or VPS. Enable polling only for the instance that owns those source fetches.
 3. **Same repo, one contract.** Shared schemas and parsers, two thin entrypoints.
 
 Rules for other users, non-negotiable: their credentials never touch my deployment, each

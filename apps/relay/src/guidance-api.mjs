@@ -6,6 +6,8 @@ import { aiBudgetGuard, aiBudgetStatus } from './ai-budget.mjs';
 import { processAiJob, publicAiJob, queueAiJob } from './ai-jobs.mjs';
 import { getCachedWeather } from './weather-cache.mjs';
 import { MENU_ROW_LIMIT, menuDish } from './menu.mjs';
+import { ageState } from '#contract/cards.mjs';
+import { cadenceMs as menuCadenceMs } from '#sources/food/source.mjs';
 
 export function isGuidanceRoute(path) {
   return path === '/v1/recommendations' || path === '/v1/recommendations/actions' || path === '/v1/ai/usage' || path === '/v1/menu' || path === '/v1/weather/current' ||
@@ -47,6 +49,9 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
         where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: MENU_ROW_LIMIT,
       });
       const serviceDate = rows[0]?.service_date ?? null;
+      // Freshness belongs to the posted rows, not the time this GET happened to run.
+      const observedAt = rows.length ? Math.min(...rows.map(row => row.observed_at)) : null;
+      const validUntil = rows.length ? Math.min(...rows.map(row => row.valid_until)) : null;
       const status = !serviceDate
         ? 'unavailable'
         : serviceDate === targetDate
@@ -54,6 +59,8 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
           : 'previous';
       return { status: 200, body: {
         requested_date: targetDate, service_date: serviceDate, status,
+        observed_at: observedAt, valid_until: validUntil, cadence_ms: menuCadenceMs,
+        state: ageState(observedAt, menuCadenceMs, now),
         items: rows.map(row => ({ outlet: row.outlet, ...menuDish(row), allergens: row.allergens || [] })),
       } };
     }

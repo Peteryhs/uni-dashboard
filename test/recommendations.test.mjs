@@ -4,6 +4,7 @@ import { recommendationsFromData, buildRecommendations, rankRecommendationItems,
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { validateRecommendations } from '#contract/recommendations.mjs';
 import { at, DATE, syntheticDay } from './helpers/recommendation-day.mjs';
+import { makeCasBarrierStore } from './helpers/cas-barrier-store.mjs';
 
 test('day simulation adapts from class preparation to lunch and evening deadline', () => {
   const data = syntheticDay();
@@ -144,6 +145,40 @@ test('completion survives time passing, snooze expires, undo works, and changed 
   assert.ok(!recommendationsFromData({ ...data, actions, now }).items.some(task => task.id === quiz.id));
   assert.ok(!recommendationsFromData({ ...data, actions, now: now + 86400_000 }).items.some(task => task.id === quiz.id));
   store.close();
+});
+
+test('concurrent recommendation actions preserve unrelated entries, including when undoing', async () => {
+  const data = syntheticDay(), now = at(DATE, '08:00');
+  const feed = recommendationsFromData({ ...data, now });
+  const quiz = feed.tasks.small.find(task => task.title.includes('Quiz 2'));
+  const other = feed.tasks.large[0];
+  assert.ok(quiz && other, 'fixture has a small and a large actionable task');
+  const key = 'RECOMMENDATION_ACTIONS_JSON';
+  const store = makeCasBarrierStore({ key, barrierReads: 2 });
+
+  await Promise.all([
+    saveRecommendationAction(store, { id: quiz.id, action: 'done' }, { now }),
+    saveRecommendationAction(store, { id: other.id, action: 'dismiss' }, { now }),
+  ]);
+  let actions = JSON.parse(store.settings.get(key));
+  assert.equal(actions[quiz.id].action, 'done');
+  assert.equal(actions[other.id].action, 'dismiss');
+
+  await Promise.all([
+    saveRecommendationAction(store, { id: quiz.id, action: 'undo' }, { now }),
+    saveRecommendationAction(store, { id: other.id, action: 'snooze', until: now + 60_000 }, { now }),
+  ]);
+  actions = JSON.parse(store.settings.get(key));
+  assert.equal(actions[quiz.id], undefined);
+  assert.equal(actions[other.id].action, 'snooze');
+});
+
+test('recommendation action CAS contention fails with an explicit retryable conflict', async () => {
+  const store = makeCasBarrierStore({ key: 'RECOMMENDATION_ACTIONS_JSON', barrierReads: 1, alwaysFail: true });
+  await assert.rejects(
+    saveRecommendationAction(store, { id: 'rec:task:course:quiz', action: 'done' }, { now: at(DATE, '08:00') }),
+    error => error.status === 409 && error.retryable === true && /please retry/i.test(error.message),
+  );
 });
 
 test('task completion carries exact calendar identity and structured action for notification cleanup', () => {

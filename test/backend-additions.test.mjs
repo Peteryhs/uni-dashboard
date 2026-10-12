@@ -7,7 +7,8 @@ import { alertCard } from '../apps/relay/src/cards.mjs';
 import { claimFoodAiRun, getFoodRecommendation, saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-recommendation.mjs';
 import { normalizeCourse, previewCourseImport, saveCourseResources } from '../apps/relay/src/course-library.mjs';
 import { buildCalendar } from '../apps/relay/src/calendar.mjs';
-import { dismissAlert, syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
+import { claimAlertAiRun, dismissAlert, syncAlertSummary } from '../apps/relay/src/alert-summary.mjs';
+import { makeCasBarrierStore } from './helpers/cas-barrier-store.mjs';
 
 test('pasted LEARN course home keeps useful shortcuts and drops site chrome', () => {
   const paste = readFileSync(new URL('./learn-home-paste.txt', import.meta.url), 'utf8');
@@ -54,6 +55,42 @@ test('alert summary is generated once, cached, and dismisses until the incident 
   store.upsertRows('notice', [{ ...base, external_id: 'incident:two', title: 'Another outage' }]);
   assert.equal(alertCard(store, { now }).data.dismissed, false);
   store.close();
+});
+
+test('concurrent campus summary claims stop at the daily cap and reset at UTC midnight', async () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const key = 'ALERT_AI_USAGE_JSON';
+  const store = makeCasBarrierStore({
+    key,
+    initial: JSON.stringify({ date: '2026-09-23', count: 7 }),
+    barrierReads: 6,
+  });
+  const claims = await Promise.all(Array.from({ length: 6 }, () => claimAlertAiRun(store, now)));
+  assert.equal(claims.filter(Boolean).length, 1, 'only the eighth daily summary is reserved');
+  assert.deepEqual(JSON.parse(store.settings.get(key)), { date: '2026-09-23', count: 8 });
+  assert.equal(await claimAlertAiRun(store, now + 86_400_000), true);
+  assert.deepEqual(JSON.parse(store.settings.get(key)), { date: '2026-09-24', count: 1 });
+  await assert.rejects(claimAlertAiRun(store, now), error => error.retryable === true);
+  assert.equal(JSON.parse(store.settings.get(key)).date, '2026-09-24', 'a delayed prior-day call cannot roll the counter back');
+});
+
+test('alert summary reports CAS contention as retryable without starting AI work', async () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const key = 'ALERT_AI_USAGE_JSON';
+  const store = makeCasBarrierStore({ key, barrierReads: 1, alwaysFail: true });
+  let casAttempts = 0;
+  const compareAndSet = store.compareAndSetSetting.bind(store);
+  store.compareAndSetSetting = async (...args) => { casAttempts++; return compareAndSet(...args); };
+  store.rows = async () => [{ external_id: 'incident', title: 'Network interruption', severity: 'major', components: ['Wired Network'] }];
+  store.setSetting = async (name, value) => { store.settings.set(name, value); };
+  let aiCalls = 0;
+  const result = await syncAlertSummary(store, { now, cfEnv: { AI: { run: async () => { aiCalls++; return {}; } } } });
+  assert.equal(result.status, 'retryable');
+  assert.equal(result.retryable, true);
+  assert.match(result.error, /retry/i);
+  assert.equal(casAttempts, 1, 'automatic alert work makes one claim attempt on a cron tick');
+  assert.equal(aiCalls, 0);
+  assert.equal(store.settings.has('ALERT_SUMMARY_JSON'), false);
 });
 
 test('menu ranking is persisted by the backend and reruns only when menu or profile changes', async () => {

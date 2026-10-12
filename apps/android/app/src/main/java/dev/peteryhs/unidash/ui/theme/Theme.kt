@@ -36,6 +36,12 @@ private val CyanLight = lightColorScheme(
     secondary = Color(0xFF4A6268), secondaryContainer = Color(0xFFCDE7ED), onSecondaryContainer = Color(0xFF051F23),
     tertiary = Color(0xFF545D7E), tertiaryContainer = Color(0xFFDBE1FF), onTertiaryContainer = Color(0xFF101A37),
     surface = Color(0xFFF5FAFC), onSurface = Color(0xFF171D1E),
+    // Product fallback palette: keep every tonal surface in the same cool neutral family.
+    surfaceBright = Color(0xFFF5FAFC), surfaceDim = Color(0xFFD5DBDE),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFEEF4F6),
+    surfaceContainer = Color(0xFFE8EEF0), surfaceContainerHigh = Color(0xFFE2E8EA),
+    surfaceContainerHighest = Color(0xFFDCE2E4), onSurfaceVariant = Color(0xFF3F484B),
+    outline = Color(0xFF6F797C), outlineVariant = Color(0xFFBEC8CB),
 )
 private val CyanDark = darkColorScheme(
     primary = Color(0xFF83D2E3), onPrimary = Color(0xFF00363E),
@@ -43,6 +49,12 @@ private val CyanDark = darkColorScheme(
     secondary = Color(0xFFB1CBD1), secondaryContainer = Color(0xFF334A50), onSecondaryContainer = Color(0xFFCDE7ED),
     tertiary = Color(0xFFBCC5EB), tertiaryContainer = Color(0xFF3C4665), onTertiaryContainer = Color(0xFFDBE1FF),
     surface = Color(0xFF0E1415), onSurface = Color(0xFFDEE3E5),
+    onSecondary = Color(0xFF1C343A), onTertiary = Color(0xFF27304E),
+    surfaceBright = Color(0xFF343B3D), surfaceDim = Color(0xFF0E1415),
+    surfaceContainerLowest = Color(0xFF090F10), surfaceContainerLow = Color(0xFF171D1E),
+    surfaceContainer = Color(0xFF1B2123), surfaceContainerHigh = Color(0xFF252B2D),
+    surfaceContainerHighest = Color(0xFF303638), onSurfaceVariant = Color(0xFFBEC9CC),
+    outline = Color(0xFF889396), outlineVariant = Color(0xFF3F494C),
 )
 
 /** The 8dp spacing grid. */

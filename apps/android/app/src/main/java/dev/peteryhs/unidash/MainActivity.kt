@@ -1,7 +1,5 @@
 package dev.peteryhs.unidash
 
-import android.Manifest
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,14 +25,6 @@ class MainActivity : ComponentActivity() {
         launchedAuthorizationState = null
         vm.completeBrowserSignIn(result.resultCode, result.data, state)
     }
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            val app = application as UniDashApp
-            val snapshot = app.repository.snapshot.value
-            app.repository.deliverIfCurrent(snapshot) { app.notifier.ensurePersistent(snapshot) }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -63,7 +53,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Ask for notifications once there is something to notify about: after the first sign-in.
+        // Start background sync and restore eligible notifications after sign-in. Notification
+        // permission remains an explicit choice in Settings → Notifications.
         lifecycleScope.launch {
             vm.session.first { it == Session.SignedIn }
             val app = application as UniDashApp
@@ -72,9 +63,6 @@ class MainActivity : ComponentActivity() {
             app.repository.runIfCurrent(generation) {
                 app.scheduleSync()
                 app.repository.deliverIfCurrent(snapshot) { app.notifier.ensurePersistent(snapshot) }
-            }
-            if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) {
-                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
     }

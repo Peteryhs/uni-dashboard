@@ -474,9 +474,10 @@ export function createServer({
 
           // Persist to .env in project root
           try {
-            const { readFileSync, writeFileSync, existsSync } = await import('node:fs');
+            const { readFileSync, writeFileSync, existsSync, chmodSync } = await import('node:fs');
             const { resolve } = await import('node:path');
             const envPath = resolve(process.cwd(), '.env');
+            if (existsSync(envPath) && process.platform !== 'win32') chmodSync(envPath, 0o600);
             let content = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
             const names = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'];
             for (const name of names) {
@@ -488,7 +489,7 @@ export function createServer({
               const value = process.env[name];
               if (value) content = content.trimEnd() + `\n${name}=${value}\n`;
             }
-            writeFileSync(envPath, content.trim() + '\n', 'utf8');
+            writeFileSync(envPath, content.trim() + '\n', { encoding: 'utf8', mode: 0o600 });
           } catch (e) {
             log(`[credentials] warning: could not write .env: ${e.message}`);
           }

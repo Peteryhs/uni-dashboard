@@ -8,7 +8,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test \"test/*.test.mjs\"",
     "sources": "node apps/relay/src/cli.mjs sources",
     "poll": "node apps/relay/src/cli.mjs poll",
     "bundle": "node apps/relay/src/cli.mjs bundle",

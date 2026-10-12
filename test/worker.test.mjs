@@ -8,6 +8,7 @@ import { saveFoodProfile, syncFoodRecommendation } from '../apps/relay/src/food-
 import { clearAiCache } from '../apps/relay/src/ai.mjs';
 import { syncWeather } from '../apps/relay/src/weather-cache.mjs';
 import { clearAccessCache } from '../apps/relay/src/access.mjs';
+import { createRuntimeEnv, getRuntimeEnv, withRuntimeEnv } from '../apps/relay/src/runtime-env.mjs';
 import { SOURCES } from '../sources/registry.mjs';
 
 // Credential tests use synthetic feeds. Never let newly scheduled polls reach the network.
@@ -132,7 +133,9 @@ for (const path of ['/v1/recommendations', '/v1/calendar', '/v1/health/sources']
     t.diagnostic(`${path} read alone: ${counter.prepares - before} D1 queries, no fetch`);
 
     // The same due source is still recovered, by the poller that has its own budget.
-    const { receipts } = await pollDue(store, Date.now(), 1, SOURCES.filter(source => source.id === 'uw-portal-ics'));
+    const settings = await store.settings();
+    const { receipts } = await withRuntimeEnv(createRuntimeEnv({}, settings), () =>
+      pollDue(store, Date.now(), 1, SOURCES.filter(source => source.id === 'uw-portal-ics')));
     assert.equal(receipts.length, 1, 'the tick polls the source the read left due');
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM timeline_event WHERE source_id='uw-portal-ics'").get().n, 80);
   });
@@ -206,8 +209,8 @@ test('a poll preserves future due times instead of rescheduling healthy feeds ev
   assert.equal((await store.jobs()).find((job) => job.source_id === 'slow').next_due_at, slowDue);
 });
 
-test('one large source poll plus new AI and weather work fits the 50-query Worker limit', async () => {
-  const { api, counter } = createMockD1();
+test('one large poll with a food CAS loss keeps other cron work under 50 queries', async () => {
+  const { api, db, counter } = createMockD1();
   const store = new D1Store(api);
   await store.init();
   await store.scheduleJob('large', now - 1);
@@ -215,16 +218,42 @@ test('one large source poll plus new AI and weather work fits the 50-query Worke
     severity: 'major', title: 'Network outage', body: 'Campus wired network is affected.' }]);
   await store.upsertRows('menu_item', [{ source_id: 'uw-food-daily-menu', external_id: 'dish-1', observed_at: now, valid_until: now + 43_200_000,
     service_date: '2026-09-22', outlet: 'Cafe', dish: 'Noodles' }]);
+  let alertAiCalls = 0;
+  let foodAiCalls = 0;
   const env = { AI: { run: async (_model, payload) => {
-    if (payload.messages[0].content.includes('Summarize university service incidents')) return { response: '{"summary":"The campus wired network is affected."}' };
+    if (payload.messages[0].content.includes('Summarize university service incidents')) {
+      alertAiCalls++;
+      return { response: '{"summary":"The campus wired network is affected."}' };
+    }
+    foodAiCalls++;
     return { response: '{"headline":"Try noodles.","top_outlet":"Cafe","ranked_outlets":[{"outlet":"Cafe","rank":1,"match_score":80,"verdict":"A good option.","highlights":[]}],"tip":""}' };
   } } };
+  const compareAndSet = store.compareAndSetSetting.bind(store);
+  let foodCasLost = false;
+  store.compareAndSetSetting = async (name, expected, value, updatedAt) => {
+    if (name === 'FOOD_AI_USAGE_JSON' && !foodCasLost) {
+      foodCasLost = true;
+      // Model a manual request in another Worker invocation. Its write changes the CAS
+      // snapshot but is correctly outside this cron invocation's statement counter.
+      db.prepare('INSERT OR IGNORE INTO setting (name, value, updated_at) VALUES (?,?,?)')
+        .run(name, JSON.stringify({ date: new Date(now).toISOString().slice(0, 10), count: 1, automatic_count: 0, manual_count: 1 }), now);
+    }
+    return compareAndSet(name, expected, value, updatedAt);
+  };
   const before = counter.prepares;
   await pollDue(store, now, 2, [fakeSource('large', 80)]);
-  await syncAlertSummary(store, { cfEnv: env, now });
-  await syncFoodRecommendation(store, { cfEnv: env, now });
-  await syncWeather(store, { now, fetchForecast: async () => new Map([[now, { temp_c: 18, precip_prob: 10 }]]) });
-  assert.ok(counter.prepares - before + 2 <= 50, `a light cron with AI/weather used ${counter.prepares - before} queries plus schema/settings probes`);
+  const alerts = await syncAlertSummary(store, { cfEnv: env, now });
+  const food = await syncFoodRecommendation(store, { cfEnv: env, now });
+  const weather = await syncWeather(store, { now, fetchForecast: async () => new Map([[now, { temp_c: 18, precip_prob: 10 }]]) });
+  assert.equal(alerts.status, 'ready', 'the alert summary still runs on the same tick');
+  assert.equal(food.status, 'retryable', 'food defers after its one-shot CAS loses');
+  assert.equal(weather.status, 'ready', 'weather work is unaffected by the food conflict');
+  assert.equal(alertAiCalls, 1);
+  assert.equal(foodAiCalls, 0, 'the losing food claim does not start AI work');
+  assert.equal(foodCasLost, true);
+  const queries = counter.prepares - before;
+  assert.ok(queries + 2 <= 50, `a light cron with AI/weather used ${queries} queries plus schema/settings probes`);
+  assert.equal(await store.getSetting('FOOD_AI_RECOMMENDATION_JSON'), null, 'the next cron tick can retry without a stale limit marker');
 });
 
 test('scheduled Worker completes a light tick and checks background food AI', async () => {
@@ -376,10 +405,156 @@ test('RELAY_TOKEN no longer gates anything and cannot be saved from the app', as
 
 const SETTING_KEYS = ['PORTAL_ICS_URL', 'GOOGLE_CALENDAR_ICS_URL', 'LEARN_ICS_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'RELAY_TOKEN'];
 
-/** Settings land in process.env, which is shared by the whole test process, so clean up after. */
+/** Clean environment values used by local Node fallback tests. Worker requests no longer mutate them. */
 function clearEnvSettings() {
   for (const k of SETTING_KEYS) delete process.env[k];
 }
+
+test('Worker feed settings stay isolated across overlapping invocations', async (t) => {
+  clearEnvSettings();
+  t.after(clearEnvSettings);
+  const first = createMockD1();
+  const second = createMockD1();
+  t.after(() => first.db.close());
+  t.after(() => second.db.close());
+  const firstStore = new D1Store(first.api);
+  const secondStore = new D1Store(second.api);
+  await Promise.all([firstStore.init(), secondStore.init()]);
+
+  const firstFeed = 'https://first.example.test/feed.ics';
+  const secondFeed = 'https://second.example.test/feed.ics';
+  await Promise.all([
+    firstStore.setSetting('PORTAL_ICS_URL', firstFeed),
+    secondStore.setSetting('PORTAL_ICS_URL', secondFeed),
+  ]);
+
+  let reachedBlockedJobsRead;
+  let releaseBlockedJobsRead;
+  const blockedJobsRead = new Promise((resolve) => { releaseBlockedJobsRead = resolve; });
+  const reachedJobsRead = new Promise((resolve) => { reachedBlockedJobsRead = resolve; });
+  t.after(releaseBlockedJobsRead);
+  let pausedFirstRead = false;
+  const gatedFirstApi = {
+    ...first.api,
+    prepare(sql) {
+      const statement = first.api.prepare(sql);
+      if (sql !== 'SELECT * FROM job ORDER BY source_id') return statement;
+      return {
+        bind(...args) { statement.bind(...args); return this; },
+        async all() {
+          if (!pausedFirstRead) {
+            pausedFirstRead = true;
+            reachedBlockedJobsRead();
+            await blockedJobsRead;
+          }
+          return statement.all();
+        },
+      };
+    },
+  };
+
+  const fetched = [];
+  globalThis.fetch = async (input) => {
+    fetched.push(String(input));
+    return new Response('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n', {
+      headers: { 'content-type': 'text/calendar' },
+    });
+  };
+
+  const request = () => new Request('https://dash.test/v1/poll?source=uw-portal-ics', { method: 'POST' });
+  const firstPending = worker.fetch(request(), {
+    ACCESS_DISABLED: '1', DB: gatedFirstApi, PORTAL_ICS_URL: 'https://first-binding.example.test/feed.ics',
+  }, {});
+  await reachedJobsRead;
+
+  const secondResponse = await worker.fetch(request(), {
+    ACCESS_DISABLED: '1', DB: second.api, PORTAL_ICS_URL: 'https://second-binding.example.test/feed.ics',
+  }, {});
+  assert.equal(secondResponse.status, 200);
+  releaseBlockedJobsRead();
+  const firstResponse = await firstPending;
+  assert.equal(firstResponse.status, 200);
+
+  assert.deepEqual(fetched.sort(), [firstFeed, secondFeed].sort(),
+    'each poll must keep its D1-saved URL even while another request uses a different binding and setting');
+  assert.equal(process.env.PORTAL_ICS_URL, undefined, 'Worker bindings and saved values never leak into process.env');
+});
+
+test('credential responses do not inherit another request binding while settings load', async (t) => {
+  clearEnvSettings();
+  t.after(clearEnvSettings);
+  const first = createMockD1();
+  const second = createMockD1();
+  t.after(() => first.db.close());
+  t.after(() => second.db.close());
+  await Promise.all([new D1Store(first.api).init(), new D1Store(second.api).init()]);
+
+  let reachedSettingsRead;
+  let releaseSettingsRead;
+  const blockedSettingsRead = new Promise((resolve) => { releaseSettingsRead = resolve; });
+  const reached = new Promise((resolve) => { reachedSettingsRead = resolve; });
+  t.after(releaseSettingsRead);
+  let paused = false;
+  const gatedFirstApi = {
+    ...first.api,
+    prepare(sql) {
+      const statement = first.api.prepare(sql);
+      if (sql !== 'SELECT name, value, updated_at FROM setting ORDER BY name') return statement;
+      return {
+        bind(...args) { statement.bind(...args); return this; },
+        async all() {
+          if (!paused) {
+            paused = true;
+            reachedSettingsRead();
+            await blockedSettingsRead;
+          }
+          return statement.all();
+        },
+      };
+    },
+  };
+
+  const firstPending = worker.fetch(new Request('https://dash.test/v1/credentials'), {
+    ACCESS_DISABLED: '1', DB: gatedFirstApi,
+  }, {});
+  await reached;
+  const secondResponse = await worker.fetch(new Request('https://dash.test/v1/credentials'), {
+    ACCESS_DISABLED: '1', DB: second.api, PORTAL_ICS_URL: 'https://bound.example.test/feed.ics',
+  }, {});
+  const secondSettings = await secondResponse.json();
+  releaseSettingsRead();
+  const firstResponse = await firstPending;
+  const firstSettings = await firstResponse.json();
+
+  assert.equal(secondSettings.portal.configured, true);
+  assert.equal(secondSettings.portal.source, 'Worker secret');
+  assert.equal(firstSettings.portal.configured, false,
+    'a request with no feed setting must remain unconfigured while another request has a binding');
+  assert.equal(process.env.PORTAL_ICS_URL, undefined);
+});
+
+test('local Node source configuration still falls back to process.env outside a Worker scope', async (t) => {
+  const portal = SOURCES.find((source) => source.id === 'uw-portal-ics');
+  const previousPortal = process.env.PORTAL_ICS_URL;
+  const previousLearn = process.env.LEARN_ICS_URL;
+  t.after(() => {
+    if (previousPortal === undefined) delete process.env.PORTAL_ICS_URL;
+    else process.env.PORTAL_ICS_URL = previousPortal;
+    if (previousLearn === undefined) delete process.env.LEARN_ICS_URL;
+    else process.env.LEARN_ICS_URL = previousLearn;
+  });
+
+  process.env.PORTAL_ICS_URL = 'https://local.example.test/feed.ics';
+  process.env.LEARN_ICS_URL = 'https://local.example.test/learn.ics';
+  assert.equal(portal.url(), process.env.PORTAL_ICS_URL);
+  await withRuntimeEnv(createRuntimeEnv({ PORTAL_ICS_URL: 'https://binding.example.test/feed.ics' }), async () => {
+    assert.equal(portal.url(), 'https://binding.example.test/feed.ics');
+    assert.equal(getRuntimeEnv('LEARN_ICS_URL'), '', 'missing scoped values do not fall through to local secrets');
+    await Promise.resolve();
+    assert.equal(portal.url(), 'https://binding.example.test/feed.ics');
+  });
+  assert.equal(portal.url(), 'https://local.example.test/feed.ics');
+});
 
 test('credentials saved from the app land in D1 and configure the feeds', async (t) => {
   t.after(clearEnvSettings);
@@ -599,7 +774,10 @@ test('saving changed feeds makes parked jobs due, polls one and leaves the other
   const jobs = await store.jobs();
   assert.ok(jobs.find(job => job.source_id === polledId).next_due_at > Date.now());
   assert.ok(jobs.find(job => job.source_id !== polledId && ['uw-portal-ics', 'uw-learn-ics'].includes(job.source_id)).next_due_at <= Date.now());
-  assert.equal((await pollDue(store, Date.now(), 2, SOURCES.filter(source => ['uw-portal-ics', 'google-calendar-ics', 'uw-learn-ics'].includes(source.id)))).receipts[0].source_id, polledId === 'uw-portal-ics' ? 'uw-learn-ics' : 'uw-portal-ics');
+  const settings = await store.settings();
+  const next = await withRuntimeEnv(createRuntimeEnv({}, settings), () =>
+    pollDue(store, Date.now(), 2, SOURCES.filter(source => ['uw-portal-ics', 'google-calendar-ics', 'uw-learn-ics'].includes(source.id))));
+  assert.equal(next.receipts[0].source_id, polledId === 'uw-portal-ics' ? 'uw-learn-ics' : 'uw-portal-ics');
   assert.equal(fetched.length, 2);
 });
 

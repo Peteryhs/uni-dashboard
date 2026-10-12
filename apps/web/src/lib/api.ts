@@ -37,15 +37,12 @@ const CALENDAR_CACHE_KEY = 'uni-dashboard:last-calendar:v1';
 const TOKEN_KEY = 'uni-dashboard:relay-token';
 const RECOMMENDATIONS_CACHE_KEY = 'uni-dashboard:last-recommendations:v1';
 
-/** Build-time default, overridable at runtime so a device can be paired without a rebuild. */
-const BUILD_TOKEN = (import.meta.env.VITE_RELAY_TOKEN as string | undefined) ?? '';
-
 export function getToken(): string {
   const origin = window.location.origin;
   try {
-    return localRelayToken(localStorage.getItem(TOKEN_KEY) ?? BUILD_TOKEN, origin);
+    return localRelayToken(localStorage.getItem(TOKEN_KEY) ?? '', origin);
   } catch {
-    return localRelayToken(BUILD_TOKEN, origin);
+    return '';
   }
 }
 
@@ -152,6 +149,10 @@ export interface PostedMenu {
   requested_date: string;
   service_date: string | null;
   status: 'today' | 'upcoming' | 'previous' | 'unavailable';
+  observed_at?: number | null;
+  valid_until?: number | null;
+  cadence_ms?: number;
+  state?: string;
   /** Every dish for the day, in page order (which is station order within an outlet). */
   items: MenuDish[];
 }

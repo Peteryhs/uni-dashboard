@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, CloudRain, ExternalLink, History, MapPin, Settings2, Star, Thermometer, TriangleAlert, WifiOff, Wind, X } from 'lucide-react';
 import { ChangeBlocks, alertChange } from '@/components/change-blocks';
@@ -23,8 +23,8 @@ import { dismissAlert, fetchCalendar, fetchCurrentWeather, fetchPostedMenu, fetc
 import { useDashboard, useHealth, useNow } from '@/hooks/use-dashboard';
 import { healthSummary } from '@/lib/source-status.mjs';
 import { usePreferences } from '@/lib/preferences-store';
-import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge } from '@/lib/time';
-import type { AlertData, CalendarData, CalendarEvent, CardState, DueSoonData, DueSoonItem, NextCommitmentData, RecommendationItem, WeatherSlice } from '@/lib/contract';
+import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge, shiftDate } from '@/lib/time';
+import { ageState, type AlertData, type CalendarData, type CalendarEvent, type CardState, type DueSoonData, type DueSoonItem, type NextCommitmentData, type RecommendationItem, type WeatherSlice } from '@/lib/contract';
 import './dashboard.css';
 
 function cleanTitle(value: string): string {
@@ -124,10 +124,6 @@ function refreshRequestIssue(message: string): string {
   if (/token rejected/i.test(message)) return 'Token rejected';
   if (/failed to fetch|networkerror|network request failed/i.test(message)) return 'Relay unreachable';
   return message.length <= 34 ? message : 'Refresh failed';
-}
-function shiftDate(date: string, days: number): string {
-  const [year, month, day] = date.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 function isWeekendDay(dateStr?: string): boolean {
   if (!dateStr) return false;
@@ -257,7 +253,7 @@ function AnimatedUndoToast({
   );
 }
 
-function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: RecommendationItem; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze' | 'dismiss') => void }) {
+function RecommendationDetail({ item, now, isClosing, onClose, onAction }: { item: RecommendationItem; now: number; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze' | 'dismiss') => void }) {
   const course = item.course;
   return <BlurFade as="section" className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} duration={0.3} offset={8} blur="5px" aria-label={'Details for ' + cleanTitle(item.title)}>
     <div className="rec-detail-head">
@@ -269,7 +265,7 @@ function RecommendationDetail({ item, isClosing, onClose, onAction }: { item: Re
       <button className="close-detail" onClick={onClose} aria-label="Close recommendation details"><X size={17} /></button>
     </div>
     {item.change && <ChangeBlocks className="rec-detail-change" change={item.change} showConfidence />}
-    <RecommendationWarnings item={item} className="rec-detail-warnings" />
+    <div className="recommendation-timing rec-detail-timing"><span>{timing(item, now)}</span><RecommendationWarnings item={item} /></div>
     {isAiFood(item) ? <p>{recommendationBody(item)}</p> : <CourseDetailContent
       description={item.kind === 'change' && item.change ? '' : recommendationBody(item)} topics={item.topics} readings={item.readings}
     />}
@@ -530,7 +526,7 @@ function DueWorkSection({ data }: { data?: DueSoonData }) {
   return <BlurFade as="section" className="content-section" id="work" inView duration={0.45} offset={10} blur="6px" direction="up"><div className="section-head"><h2>Due & opening</h2><span className="section-count">{near.filter(item => item.phase !== 'opens').length} due · {near.filter(item => item.phase === 'opens').length} opens in 7 days</span></div><div className="section-panel work-panel">{data.error && <p className="calendar-notice">{data.error}</p>}{near.length ? near.map(renderTask) : <p className="empty-state">Nothing due or opening in the next seven days.</p>}{ahead.length > 0 && <BlurFadeDisclosure className="term-work" summary={<>Later this term · {ahead.reduce((sum, group) => sum + group.items.length, 0)} major items<ChevronRight size={15} /></>}>{ahead.map(group => <div className="term-week" key={group.week_start}><h3>{group.label}</h3>{group.items.map(renderTask)}</div>)}</BlurFadeDisclosure>}<AnimatedUndoToast lastHidden={lastHidden} onUndo={(id) => { undismissTask(id); setLastHidden(null); }} onDismiss={() => setLastHidden(null)} /></div></BlurFade>;
 }
 
-function MenuSection() {
+function MenuSection({ now }: { now: number }) {
   const queryClient = useQueryClient();
   const { preferences, isFavoriteDish, toggleFavoriteDish, isFavoriteOutlet, toggleFavoriteOutlet, setDishSearchQuery } = usePreferences();
   const [refreshing, setRefreshing] = useState(false);
@@ -542,17 +538,14 @@ function MenuSection() {
     return () => window.clearTimeout(timer);
   }, [refreshStatus]);
   const [selectedDay, setSelectedDay] = useState<'today' | 'tomorrow'>('today');
-  const todayDate = useMemo(() => {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  }, []);
-  const tomorrowDate = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-  }, []);
-  const activeDate = selectedDay === 'tomorrow' ? tomorrowDate : undefined;
-
-  const menu = useQuery({ queryKey: ['posted-menu', selectedDay], queryFn: ({ signal }) => fetchPostedMenu(activeDate, signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
+  const todayDate = campusDate(now);
+  const tomorrowDate = shiftDate(todayDate, 1);
+  const activeDate = selectedDay === 'tomorrow' ? tomorrowDate : todayDate;
+  const menuKey = ['posted-menu', activeDate];
+  const menu = useQuery({ queryKey: menuKey, queryFn: ({ signal }) => fetchPostedMenu(activeDate, signal), refetchInterval: 5 * 60_000, staleTime: 60_000 });
+  const menuState = menu.data?.cadence_ms && menu.data.observed_at != null
+    ? ageState(menu.data.observed_at, menu.data.cadence_ms, now) : menu.data?.state;
+  const savedMenu = menu.isError || ['ageing', 'stale', 'dead'].includes(menuState ?? '');
   const diningRecommendation = useDiningRecommendation(menu.data?.service_date ?? undefined);
   const search = preferences.dishSearchQuery.trim().toLowerCase();
   const groups = new Map<string, MenuDish[]>();
@@ -580,7 +573,7 @@ function MenuSection() {
       await queryClient.invalidateQueries({ queryKey: ['food-recommendation'] });
       const issue = result.receipts.find(receipt => receipt.outcome !== 'ok' && receipt.outcome !== 'empty' && receipt.outcome !== 'skipped');
       if (issue) throw new Error(refreshIssue(issue.source_id, issue.error, issue.outcome));
-      const viewError = queryClient.getQueryState(['posted-menu', selectedDay])?.error;
+      const viewError = queryClient.getQueryState(menuKey)?.error;
       if (viewError) throw viewError;
       const foodReceipt = result.receipts.find(receipt => receipt.source_id === 'uw-food-daily-menu');
       if (foodReceipt?.outcome === 'empty' || foodReceipt?.outcome === 'skipped') {
@@ -610,11 +603,12 @@ function MenuSection() {
     </div>
     <BlurFade key={selectedDay} duration={0.35} offset={8} blur="6px" direction="up">
       {menu.data?.service_date && menu.data.status !== 'unavailable' && (
-        <p className={'menu-status' + (menu.data.status === 'previous' ? ' menu-status--old' : '')}>
+        <p className={'menu-status' + (menu.data.status === 'previous' || savedMenu ? ' menu-status--old' : '')}>
           <CalendarDays size={13} aria-hidden />
           {menu.data.status === 'previous'
             ? <><span>{isWeekendDay(menu.data.requested_date) ? 'No weekend menu' : 'Not posted yet'}</span><ArrowRight size={12} aria-hidden /><span>Showing {dateLabel(menu.data.service_date)}</span></>
             : <span>{menu.data.status === 'today' ? 'Today · ' : ''}{dateLabel(menu.data.service_date)}{isWeekendDay(menu.data.service_date) ? ' · weekend' : ''}</span>}
+          {savedMenu && <span>Saved menu{menu.data.observed_at != null ? ` · checked ${shortAge(menu.data.observed_at, now)} ago` : ''}</span>}
         </p>
       )}
       {menu.data?.service_date && <AiMenuSummary service_date={menu.data.service_date} {...diningRecommendation} />}
@@ -856,17 +850,26 @@ export default function App() {
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
             <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} showConfidence />}<ChevronRight size={18} /></button>
-            {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
-            <RecommendationWarnings item={featured} className="hero-warnings" />
+            <div className="recommendation-timing hero-timing">
+              {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
+              <RecommendationWarnings item={featured} />
+            </div>
           </div>
           <button className="hero-next" onClick={() => nextTask && setSelectedId(nextTask.id)} disabled={!nextTask}><span>Next</span><strong>{nextTask ? cleanTitle(nextTask.title) : 'Nothing else due soon'}</strong>{nextTask && <small>{shortTiming(nextTask, now)}</small>}</button>
         </BlurFade>
         <BlurFade as="section" className="more-recs" aria-label="More recommendations" duration={0.58} delay={0.14} offset={14} blur="7px"><span className="more-label">More for today</span>
-          {nextTwo.length ? nextTwo.map(item => <button key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><small>{item.change ? <ChangeBlocks change={item.change} showConfidence /> : timing(item, now)}</small><RecommendationWarnings item={item} /><ChevronRight className="more-chevron" size={17} /></button>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
-          {largestTask && <button className="largest-task-row" onClick={() => setSelectedId(largestTask.id)}><span>Largest upcoming task</span><strong>{cleanTitle(largestTask.title)}</strong><small>{timing(largestTask, now)}</small><RecommendationWarnings item={largestTask} /></button>}
+          {nextTwo.length ? nextTwo.map(item => <div key={item.id} className={'more-rec-row' + (isAiFood(item) ? ' more-rec-row--ai' : '')}>
+            <button className="recommendation-row-main" onClick={() => setSelectedId(selectedId === item.id ? null : item.id)} aria-expanded={selectedId === item.id}><strong>{cleanTitle(item.title)}</strong><ChevronRight className="more-chevron" size={17} /></button>
+            <div className="recommendation-timing"><small>{item.change ? <ChangeBlocks change={item.change} showConfidence /> : timing(item, now)}</small><RecommendationWarnings item={item} /></div>
+          </div>) : <p className="muted-note">Nothing else needs your attention right now.</p>}
+          {largestTask && <div className="largest-task-row">
+            <span>Largest upcoming task</span>
+            <button className="recommendation-row-main" onClick={() => setSelectedId(largestTask.id)} aria-expanded={selectedId === largestTask.id}><strong>{cleanTitle(largestTask.title)}</strong></button>
+            <div className="recommendation-timing"><small>{timing(largestTask, now)}</small><RecommendationWarnings item={largestTask} /></div>
+          </div>}
         </BlurFade>
       </div>}
-      {activeSelected && <RecommendationDetail item={activeSelected} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
+      {activeSelected && <RecommendationDetail item={activeSelected} now={now} isClosing={isDetailClosing} onClose={() => setSelectedId(null)} onAction={action => void act(activeSelected, action)} />}
       <AnimatedUndoToast
         lastHidden={lastHiddenRec}
         actionLabel={lastHiddenRec?.action === 'done' ? 'Completed' : 'Dismissed'}
@@ -886,7 +889,7 @@ export default function App() {
     </section>
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />
     <DueWorkSection data={dueWork} />
-    <MenuSection />
+    <MenuSection now={now} />
     <CoursesSection data={settingsCalendar.data} pending={settingsCalendar.isPending} error={settingsCalendar.isError} onManageCourse={(course) => { setSettingsCourse(course); setSettingsOpen(true); }} />
   </main>
   <CustomizationSheet

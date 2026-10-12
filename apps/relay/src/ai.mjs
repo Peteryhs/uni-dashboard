@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { OfficeHoursDraft, OFFICE_HOURS_JSON_SCHEMA } from '#contract/office-hours.mjs';
 import { config } from './config.mjs';
 import { registerDynamicRates } from './ai-budget.mjs';
+import { getRuntimeEnv } from './runtime-env.mjs';
 
 try {
   process.loadEnvFile?.();
@@ -151,8 +152,8 @@ let modelsCacheExpiresAt = 0;
 const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 export async function getAvailableAiModels({
-  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  accountId = getRuntimeEnv('CLOUDFLARE_ACCOUNT_ID'),
+  apiToken = getRuntimeEnv('CLOUDFLARE_API_TOKEN'),
   force = false,
   now = Date.now(),
 } = {}) {
@@ -475,8 +476,8 @@ export async function runStructured({
   model = DEFAULT_AI_MODEL,
   cfEnv = null,
   env = null,
-  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  accountId = getRuntimeEnv('CLOUDFLARE_ACCOUNT_ID'),
+  apiToken = getRuntimeEnv('CLOUDFLARE_API_TOKEN'),
   cacheKey = null,
   ttlMs = CACHE_TTL_MS,
   now = Date.now(),
@@ -759,8 +760,8 @@ export async function rankDailyMenu({
   model = DEFAULT_AI_MODEL,
   cfEnv = null,
   env = null,
-  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  accountId = getRuntimeEnv('CLOUDFLARE_ACCOUNT_ID'),
+  apiToken = getRuntimeEnv('CLOUDFLARE_API_TOKEN'),
   force = false,
   now = Date.now(),
   beforeAiCall = null,
@@ -917,8 +918,8 @@ export async function parseOfficeHoursWithAi({
   model = DEFAULT_AI_MODEL,
   cfEnv = null,
   env = null,
-  accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  apiToken = process.env.CLOUDFLARE_API_TOKEN || '',
+  accountId = getRuntimeEnv('CLOUDFLARE_ACCOUNT_ID'),
+  apiToken = getRuntimeEnv('CLOUDFLARE_API_TOKEN'),
   force = false,
   now = Date.now(),
   timezone = config.timezone,

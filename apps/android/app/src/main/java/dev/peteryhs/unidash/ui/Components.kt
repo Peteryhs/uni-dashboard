@@ -155,8 +155,8 @@ fun ShapedIcon(
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.titleMediumEmphasized,
+        color = MaterialTheme.colorScheme.onSurface,
         modifier = modifier.padding(start = Spacing.m, end = Spacing.m, top = Spacing.l, bottom = Spacing.s),
     )
 }

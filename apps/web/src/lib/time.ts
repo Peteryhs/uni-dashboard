@@ -55,6 +55,12 @@ export function campusDate(ms: number): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+/** Advance a calendar date without depending on device timezone or daylight-saving day length. */
+export function shiftDate(date: string, days: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 /**
  * "in 2h 14m", "in 3 days", "12m ago". Coarse on purpose past an hour: a countdown to something
  * three days out does not need seconds, and showing them implies a precision the feed lacks.

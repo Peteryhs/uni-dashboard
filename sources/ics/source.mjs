@@ -10,6 +10,7 @@ import { parseIcs, expandRecurrence, DEFAULT_TZ } from './parse.mjs';
 import { classifyLearnEvent } from './learn-classification.mjs';
 import { parseDescriptionDueDate } from '../../apps/relay/src/task-context.mjs';
 import { parseRetryAfter } from '../../apps/relay/src/retry.mjs';
+import { getRuntimeEnv } from '../../apps/relay/src/runtime-env.mjs';
 
 export const shape = 'timeline_event';
 export const cadenceMs = 15 * 60 * 1000;
@@ -64,7 +65,7 @@ export function makeIcsSource({
     // A suddenly empty feed is less trustworthy, so keep the last good rows in that case.
     tombstoneOnEmpty: (parsed) => parsed.meta.events > 0 && parsed.meta.skipped_events === 0,
     url() {
-      const v = process.env[envVar] || fallbackEnvVars.map((k) => process.env[k]).find(Boolean);
+      const v = getRuntimeEnv(envVar) || fallbackEnvVars.map((k) => getRuntimeEnv(k)).find(Boolean);
       if (!v) return null;
       return v;
     },
@@ -234,7 +235,7 @@ export const portalIcs = makeIcsSource({
   cadenceMs: 6 * 60 * 60 * 1000,
   rateLimitMinMs: 12 * 60 * 60 * 1000,
   rateLimitMaxMs: 7 * 24 * 60 * 60 * 1000,
-  optional: () => Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
+  optional: () => Boolean(getRuntimeEnv('GOOGLE_CALENDAR_ICS_URL')),
 });
 export const googleCalendarIcs = makeIcsSource({
   id: 'google-calendar-ics',

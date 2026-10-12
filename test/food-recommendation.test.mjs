@@ -10,6 +10,7 @@ import {
   syncFoodRecommendation,
 } from '../apps/relay/src/food-recommendation.mjs';
 import { createServer } from '../apps/relay/src/server.mjs';
+import { makeCasBarrierStore } from './helpers/cas-barrier-store.mjs';
 
 const SERVICE_DATE = '2026-09-24';
 const PROFILE_KEY = 'FOOD_AI_PROFILE_JSON';
@@ -25,6 +26,12 @@ function makeStore() {
     async rows() { return menu; },
     async getSetting(key) { return settings.get(key) ?? null; },
     async setSetting(key, value) { settings.set(key, value); },
+    async compareAndSetSetting(key, expected, value) {
+      const current = settings.has(key) ? settings.get(key) : null;
+      if (current !== expected) return false;
+      settings.set(key, value);
+      return true;
+    },
     async reserveAiBudget(day, amount, limit) {
       if (reserved + amount > limit) return null;
       reserved += amount;
@@ -145,6 +152,49 @@ test('known manual usage remains capped when automatic attempts are still availa
   const updated = JSON.parse(store.settings.get(USAGE_KEY));
   assert.equal(updated.manual_count, 12);
   assert.equal(updated.automatic_count, 1);
+});
+
+test('concurrent dining claims cannot exceed the daily source cap and reset cleanly', async () => {
+  const now = Date.parse(`${SERVICE_DATE}T12:00:00Z`);
+  const store = makeCasBarrierStore({
+    key: USAGE_KEY,
+    initial: JSON.stringify({ date: SERVICE_DATE, count: 11, automatic_count: 11, manual_count: 0, legacy_unattributed_count: 0 }),
+    barrierReads: 8,
+  });
+  const claims = await Promise.all(Array.from({ length: 8 }, () => claimFoodAiRun(store, now, 'automatic')));
+  assert.equal(claims.filter(Boolean).length, 1, 'only the final automatic slot is reserved');
+  assert.deepEqual(JSON.parse(store.settings.get(USAGE_KEY)), {
+    date: SERVICE_DATE, count: 12, automatic_count: 12, manual_count: 0, legacy_unattributed_count: 0,
+  });
+  assert.equal(await claimFoodAiRun(store, now, 'manual'), true, 'the manual cap remains independent');
+  assert.equal(await claimFoodAiRun(store, now + 86_400_000, 'automatic'), true, 'the UTC day reset creates a fresh budget');
+  assert.deepEqual(JSON.parse(store.settings.get(USAGE_KEY)), {
+    date: '2026-09-25', count: 1, automatic_count: 1, manual_count: 0,
+  });
+  await assert.rejects(claimFoodAiRun(store, now, 'automatic'), error => error.retryable === true);
+  assert.equal(JSON.parse(store.settings.get(USAGE_KEY)).date, '2026-09-25', 'a delayed prior-day call cannot roll the counter back');
+});
+
+test('dining usage CAS contention fails with an explicit retryable conflict', async () => {
+  const store = makeCasBarrierStore({ key: USAGE_KEY, barrierReads: 1, alwaysFail: true });
+  await assert.rejects(
+    claimFoodAiRun(store, Date.parse(`${SERVICE_DATE}T12:00:00Z`), 'automatic'),
+    error => error.status === 409 && error.retryable === true && /please retry/i.test(error.message),
+  );
+
+  const syncStore = makeStore();
+  let casAttempts = 0;
+  syncStore.compareAndSetSetting = async () => { casAttempts++; return false; };
+  let aiCalls = 0;
+  const result = await syncFoodRecommendation(syncStore, {
+    now: Date.parse(`${SERVICE_DATE}T12:00:00Z`),
+    cfEnv: { AI: { run: async () => { aiCalls++; return { response: '{}' }; } } },
+  });
+  assert.equal(result.status, 'retryable');
+  assert.equal(result.retryable, true);
+  assert.equal(casAttempts, 1, 'automatic food work makes one claim attempt on a cron tick');
+  assert.equal(aiCalls, 0, 'contention does not spend an AI call or become a false cap result');
+  assert.equal(syncStore.settings.has(RESULT_KEY), false, 'the retryable result leaves the food cache untouched');
 });
 
 test('legacy daily totals do not bypass the shared AI neuron budget', async () => {

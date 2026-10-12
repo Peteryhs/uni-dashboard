@@ -1,172 +1,148 @@
 # Uni Dashboard
 
-A live dashboard for Waterloo student life: one web app and one Android app, fed by real
-campus data, readable at a glance.
+A personal dashboard for University of Waterloo student life. The web and native Android apps bring together your timetable, deadlines, course materials, posted dining menus, weather, and campus service notices.
 
-Status: the v1 relay works end to end and is covered by tests. The same code also runs as a
-Cloudflare Worker (built and exercised locally against a real D1 and the live feeds, not deployed to
-an account yet).
+The first screen answers what needs your attention next. Recommendations use saved source data and clear timing rules; optional AI helps with dining choices and text imports. Missing times and assessment coverage stay unknown rather than being invented.
 
-## What runs today
+**v1 preparation:** both clients and the Node/Cloudflare backends are implemented. Package versions are still `0.1.0`; this README does not announce a released `1.0`. See [v1 readiness](docs/V1-READINESS.md) for the latest audit and checks still needed before a release.
 
-| Source | Data | State |
+## Features
+
+- Ranked daily recommendations with completion, dismissal, snooze, and source evidence shared across devices.
+- A unified calendar for classes, exams, LEARN deadlines, reviewed syllabus dates, and office hours. A moving Now line and muted past entries make today's schedule easier to scan.
+- Compact warning icons beside recommendation timing, with explanations on hover, focus, or touch.
+- Posted menus grouped by outlet and station, dietary indicators, saved preferences, and optional personalized dining rankings.
+- Course links, reviewed syllabus imports, office-hours configuration, and section/group filters.
+- Source status that distinguishes configured connections, successful updates, failed attempts, and old data.
+- Native Android with dynamic Material color, expressive spring motion, a ranked Focus hierarchy, quiet background updates, pull-to-refresh, cached data, and finite activity/reminder notifications that clean up as their evidence expires.
+
+## Data sources
+
+| Source | Provides | Setup |
 |---|---|---|
-| `uw-food-daily-menu` | every dish per outlet and station, with diet tags | live, no auth, no CORS |
-| `uw-status` | campus and IT status | live, no auth, CORS `*` |
-| `open-meteo` | hourly weather for the next class hour | live, no auth, CORS `*` |
-| `uw-portal-ics` | class timetable and exams | needs the Portal iCal token URL |
-| `uw-learn-ics` | deadlines and due dates | needs the LEARN feed token URL |
-| `user-office-hours` | saved office hours occurrences | configured in the app |
+| UW Portal ICS | Classes and exams | Private subscription URL |
+| Google Calendar ICS | Optional schedule feed | Private subscription URL |
+| Waterloo LEARN ICS | Deadlines and dated course work | Private subscription URL |
+| Waterloo Food Services | Posted dishes, outlets, stations, dietary tags | Public feed |
+| UW service status | Campus and IT incidents | Public feed |
+| Open-Meteo | Cached weather for Waterloo | Public API |
+| Office hours and syllabi | Your saved, reviewed course information | Configure in Settings |
 
-The two token feeds are written and tested against fixtures, and they stay blocked until the
-owner copies the URLs out of Portal and LEARN. Everything else is real data.
+Schedule and deadline feeds are empty or marked unconfigured until you add real URLs. Normal startup does not substitute test fixtures. A posted menu does not prove an outlet is currently open; dietary labels describe the source's information.
 
-## Where it runs
+## Run locally
 
-Two targets, one codebase:
+Use **Node.js 24 or newer** and npm; the current checks use Node `24.5.0`. The local store uses Node's built-in SQLite support. Install backend and web dependencies separately:
 
-| | Local / VPS | Cloudflare |
-|---|---|---|
-| process | `apps/relay/src/server.mjs`, serves locally; interval polling is opt-in | `apps/relay/src/worker.mjs`, polls on a cron |
-| storage | `store.mjs` (node:sqlite) | `d1-store.mjs` (D1), same contract |
-| client | `apps/web/dist` read from disk | `apps/web/dist` uploaded as static assets |
-| secrets | `.env` | Worker secrets |
-
-`docs/DEPLOYMENT.md` has the deploy steps and the free-tier budget the code is shaped around (50 D1
-queries per invocation, measured 38 for the worst cron tick).
-
-## Quickstart
-
-```bash
-npm install
-npm test                                          # backend and contract tests
-node apps/relay/src/cli.mjs sources               # readiness, and which env var is missing
-node apps/relay/src/cli.mjs poll                  # fetch, parse, validate, store
-node apps/relay/src/cli.mjs bundle                # the four-card payload a client renders
-node apps/relay/src/cli.mjs health                 # per-source last run, age, circuit state
-node apps/relay/src/cli.mjs serve                  # http://127.0.0.1:8787/v1/dashboard
-node tools/inspect-db.mjs                         # what is actually stored, per shape
-node tools/menu-parse-bench.mjs                   # the CPU budget check
+```sh
+npm ci
+npm --prefix apps/web ci
+npm run dash
 ```
 
-The local relay serves saved data without polling by default, so it cannot double-fetch a
-Google Calendar URL alongside the deployed Worker. Set `RELAY_POLL_ENABLED=1` only when running
-the local relay as the sole poller.
+Open **http://127.0.0.1:8787/**. This builds the web app and serves it alongside `/v1` from one origin. Settings → Connections has the setup guide and feed configuration. Alternatively, copy [.env.example](.env.example) to `.env` and fill in only the settings you need.
 
-Cloudflare, without an account:
+Automatic local source polling is **off by default** to avoid fetching private feeds from both a laptop and a deployed Worker. If this local relay is your only poller, set `RELAY_POLL_ENABLED=1` before starting it. A manual fetch is also available:
 
-```bash
-npm run worker:check    # bundle the Worker and print the bindings, no deploy
-npm run worker:dev      # build the client, then run the Worker on a local D1
-npm run deploy          # build the client, then wrangler deploy (needs a real D1 id)
+```sh
+npm run sources                      # Report source readiness; do not print private URLs
+npm run poll                         # Fetch configured sources once
+npm run health                       # Show latest source outcomes
 ```
 
-Set `PORTAL_ICS_URL` and `LEARN_ICS_URL` for the real feeds. Without them those two sources
-report `skipped` and say which variable to set.
+For web development, run these in separate terminals:
 
-## The dashboard
-
-```bash
-npm run web:install     # once
-npm run dash            # build the client, then serve it and the API on one origin
-                        # -> http://127.0.0.1:8787/
+```sh
+npm run serve                        # Relay on port 8787
+npm run web:dev                      # Web on port 5173, with the API proxied to the relay
 ```
 
-For UI work, run the relay and the Vite dev server side by side:
+The relay binds to loopback by default. A non-loopback bind requires `RELAY_TOKEN`; enter that token at runtime in web Settings. Tokens must never be embedded in the web build. See [deployment](docs/DEPLOYMENT.md) for hosting and authentication details.
 
-```bash
-npm run serve           # terminal 1: relay on 8787
-npm run web:dev         # terminal 2: http://127.0.0.1:5173, proxies /v1 to 8787
+## Host on Cloudflare
+
+One Worker serves the web assets and API, uses D1 for saved data, and polls due sources on a minute cron. Ordinary dashboard, calendar, and recommendation reads do not poll sources or run AI.
+
+Before deploying your own copy:
+
+1. Create your own D1 database and replace the database ID in [wrangler.toml](wrangler.toml). The committed configuration identifies this project's existing deployment.
+2. Configure Cloudflare Access for your dashboard and set your own `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`. Allow only people you trust with the entire instance, including its connection settings.
+3. Set private feed URLs through authenticated Settings → Connections or as Worker secrets. Keep local development values in ignored `.dev.vars`, not committed configuration.
+4. Enable Access Managed OAuth if you want Android browser sign-in. Follow [the Android sign-in guide](docs/ANDROID-OAUTH.md).
+
+With dependencies installed:
+
+```sh
+npm run web:build
+npm run worker:check                 # Bundle and inspect; does not deploy
+npm run worker:dev                   # Local Worker, with Access disabled for development
+npm run deploy                       # Build and deploy to your configured account
 ```
 
-One origin serves both the app shell and `/v1`, which is what Workers static assets gives for
-free, so there is no CORS path anywhere and no dev-only workaround to remove at deploy time.
+The database schema initializes on first use. Cloudflare authentication and account configuration are required for a real deployment. The production API fails closed if its Access configuration is missing. The Worker AI binding supplies optional inference; a local Node relay can instead use backend-only Cloudflare account/API credentials. Gemini and OpenAI keys are not used by this implementation.
 
-The web calendar and Android client read the same server-built agenda at
-`GET /v1/calendar`. See [Unified calendar API](docs/UNIFIED-CALENDAR.md) for date-range parameters,
-event fields, and the source window.
+See [deployment](docs/DEPLOYMENT.md) for complete instructions and [Cloudflare usage](docs/CLOUDFLARE-USAGE.md) for the measured local scenario, read budgets, AI reservations, and production monitoring needs. The app reserves at most an estimated **7,000 AI neurons per UTC day**. Account-wide usage and Worker CPU still need live monitoring; extra clients, large feeds, or other deployments consume the same account allowances.
 
-The backend also serves an explainable, clock-aware daily feed at `GET /v1/recommendations`, with
-reviewed syllabus imports and cross-device completion/snooze state. See
-[Daily guidance backend](docs/DAILY-GUIDANCE.md) for the endpoints, priorities, limits and simulations.
+## Android
 
-Settings → Status consolidates backend reachability, source freshness, failures, and runtime information.
-The Recommendations settings view (How it works on Android Today) explains ranking and deferred suggestions.
-See [Service status](docs/SERVICE-STATUS.md) for the shared monitoring policy.
+The native app is in [apps/android](apps/android). It supports **Android 10 / API 29 and newer**. The current build uses **JDK 21** and **Android SDK 37**, with Gradle and library versions pinned in the project.
 
-The client is Vite + React + Tailwind v4 + shadcn/ui. It imports the age ladder and the
-skip-unknown-card rule from `packages/contract` rather than restating them, so the web and Android
-clients cannot drift from the server.
+Open `apps/android` in Android Studio, or use its Gradle wrapper:
 
-The native Android app lives in `apps/android` and uses Material 3 Expressive. Enter the deployed
-dashboard address and select **Sign in** to use Cloudflare Access in the system browser. The app
-renews its short-lived access token automatically and keeps cached data available when offline.
-Existing service-token connections remain supported under **Advanced**, and Settings offers a
-switch to browser sign-in. The deployment must enable Managed OAuth first; see
-[Android sign-in and deployment setup](docs/ANDROID-OAUTH.md).
-
-Two visible design rules:
-
-- **Amber means stale, and nothing else.** The accent is cool cyan on purpose. If the brand colour
-  were also warm, "this number is old" and "this is the theme" would look identical.
-- **The alert slot renders zero height when nothing is wrong.** A permanent "all normal" tile trains
-  the eye to skip exactly the region where a real outage would appear.
-
-## Layout
-
-```
-packages/contract/   the schema source of truth: canonical rows, card envelope, age ladder,
-                     per-card payload schemas
-sources/food/        marker scanner, zero imports, no DOM
-sources/ics/         RFC 5545 reader with weekly recurrence expansion, one adapter two roles
-sources/status/      Statuspage JSON
-apps/relay/          runner, SQLite store (D1 dialect), job scheduler, card builders, server, cli
-apps/relay/src/static.mjs   serves the built client; deleted when Workers static assets take over
-apps/web/            Vite + React + Tailwind v4 + shadcn/ui client
-  src/App.tsx               the single page: today, calendar, due work, dining menu, courses
-  src/lib/contract.ts       typed bridge to packages/contract
-  src/lib/menu.ts           station grouping, station icons and diet chips (mirrored on Android)
-  src/components/change-blocks.tsx   schedule changes drawn as [old] → [new] blocks
-fixtures/            captured real bytes plus labelled synthetic samples
-test/                integration and regression tests
-tools/               fixture capture, db inspection, the parse benchmark
+```sh
+cd apps/android
+./gradlew --max-workers=1 :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-## Load-bearing rules
+On Windows, the repository currently includes only the Unix wrapper. Use Android Studio or invoke its wrapper JAR from PowerShell with JDK 21 on your path:
 
-- **The food parser must not import a DOM.** Measured 0.55 ms versus 41.3 ms for cheerio; Workers
-  Free allows 10 ms per invocation. `test/food-parser.test.mjs` fails if an import appears.
-- **Every row and every card carries `observed_at` and `valid_until`.** Without them there is no
-  honest staleness and no offline decision.
-- **Tombstones only after a run that was plausible and not valid-empty.** A login page must never
-  delete a timetable.
-- **Dialect-neutral storage.** Epoch milliseconds, no `jsonb`, no timestamptz, a `job` table instead
-  of `LISTEN/NOTIFY`, so the same code runs on SQLite/D1 and Postgres.
+```powershell
+Set-Location apps/android
+java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain --max-workers=1 :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+```
 
-## Design work
+The single-worker check completed unrestricted lint after parallel analysis crashed in the pinned tooling; no lint rule suppression is needed for that verified run. The debug APK is written to `apps/android/app/build/outputs/apk/debug/app-debug.apk`. Enter your deployed HTTPS dashboard address and select **Sign in**; the system browser handles Cloudflare Access. Reminder permission is optional and enabled from Settings → Notifications. Android 16+ can promote the imminent/active activity tracker when system eligibility and permissions permit; earlier versions use an ordinary notification.
 
-The antislop skills (UI, copy, people, mobile layout, code comments) are Hermes skills, not repo
-files: `~/.hermes/skills/creative/antislop*`. They used to be committed here three times over
-(`.agents/`, `.claude/`, `agent/`), which is 6,300 lines of duplicated instructions in a project
-repo. `DESIGN.md` stays, because it is this project's direction, and the filter reads it.
+The native UI uses flexible Material headers, fade-through navigation, spring-driven disclosures, and connected task and settings groups. Focus keeps its primary Done action visible; Calendar has date tiles, a separate time column and adaptive segmented filters. Dining opens the recommended outlet's posted dishes first and lets other menus expand in place. Warning explanations stay behind icons beside timing, and ranking progress appears within Dining. These presentation changes do not add refreshes or AI jobs. Install a newly built APK to receive Android changes; deploying the web app does not update an installed native app.
 
-## Docs
+Current release builds use the debug signing key. Configure a real signing key before distributing v1. See [Android notifications](docs/ANDROID-NOTIFICATIONS.md) for lifecycle behavior and device checks.
 
-- `GOALS.md` core needs and constraints
-- `PLAN_BRIEF.md` what the planning pass had to answer
-- `BUILD_SPEC.md` v1 scope, the four signed-in checks, and the verify list
-- `docs/PLAN.md` the architecture plan
-- `docs/DEPLOYMENT.md` targets, Cloudflare limits, self-hosting, pins
-- `docs/ANDROID-OAUTH.md` native browser sign-in, Access configuration, renewal, and verification
-- `docs/MEASUREMENTS.md` measured numbers with method
+## Verification
 
-## Next
+```sh
+npm test                             # Backend, shared contract, web helpers, local D1 regressions
+npm run web:build                    # Type-check and production web build
+npm run worker:check                 # Worker dry run; build web assets first
+```
 
-1. Point the two ICS sources at the real feeds. Until then the schedule and deadline cards render
-   fixture data, and the UI says so: both show an amber dashed hairline and the sources panel names
-   the missing variable.
-2. Make the client a PWA (`vite-plugin-pwa`). The last-good bundle already survives in
-   localStorage, but a cold start with the relay down cannot even load the shell yet, because the
-   relay is what serves it. A service worker is what closes that gap.
-3. Move this code into a Worker: static assets, cron trigger, D1 binding, tested with `wrangler dev`.
-4. Android (Kotlin/Compose) once the web side has proved the contract.
+Tests use synthetic/captured fixtures and local databases. The local D1 row-budget regression includes a week of minute-by-minute source receipts, so an expensive receipt scan cannot hide behind a low query count. Native unit tests cover sessions, refresh reuse, calendar progress, and notification planning. Device behavior and live Cloudflare resource usage are separate release checks, documented in [v1 readiness](docs/V1-READINESS.md).
+
+## Privacy and current limits
+
+One deployment is **one student's shared data space**, not separate profiles for every Access login. Any allowed Access identity can read and modify that instance. Host a separate Worker/database for another student.
+
+Private feed URLs and API tokens stay on the backend. Cached schedule data and preferences stay on the client for offline use; use a trusted browser profile and clear its site data when handing a device to someone else. Android credentials use Keystore-backed encryption. Keep `.env`, `.dev.vars`, database files, and private calendar links out of Git.
+
+The web app can display saved data when requests fail after its shell has loaded. It does not yet have a service worker for a cold offline launch. Syllabus imports require readable/extracted text; scanned PDFs need OCR first. Source refreshes remain subject to upstream posting schedules and rate limits. Notifications depend on Android permissions, channels, and alarm timing.
+
+## Project layout and guides
+
+| Path | Purpose |
+|---|---|
+| `apps/relay` | Node server, Worker entry point, stores, polling, ranking, AI jobs |
+| `apps/web` | React/Vite web client |
+| `apps/android` | Kotlin/Compose native client |
+| `packages/contract` | Shared schemas, freshness and presentation rules |
+| `sources` | ICS, menus, status, and office-hours adapters |
+| `test`, `fixtures`, `tools` | Regression tests, source fixtures, development tools |
+
+- [Design contract](DESIGN.md)
+- [Unified calendar API](docs/UNIFIED-CALENDAR.md)
+- [Daily recommendations and reviewed syllabi](docs/DAILY-GUIDANCE.md)
+- [Schedule changes](docs/SCHEDULE-CHANGES.md)
+- [Service status](docs/SERVICE-STATUS.md)
+- [Deployment and Android sign-in](docs/DEPLOYMENT.md)
+- [Cloudflare usage audit](docs/CLOUDFLARE-USAGE.md)
+- [v1 readiness and latest review](docs/V1-READINESS.md)
+
+Package metadata specifies ISC. A standalone licence file remains part of release preparation.

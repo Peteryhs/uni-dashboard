@@ -12,6 +12,7 @@ import { MENU_ROW_LIMIT } from './menu.mjs';
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const POLICY = Object.freeze({ schedule_notice_hours: 24, deadline_change_hours: 72, tutorial_work_notice_hours: 72, task_horizon_days: 14, small_task_feed_days: 2, max_feed_items: 16 });
 const ACTION_KEY = 'RECOMMENDATION_ACTIONS_JSON';
+const ACTION_CAS_ATTEMPTS = 4;
 const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
 const timeFormat = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, hour: 'numeric', minute: '2-digit' });
 function day(ms) { const parts = Object.fromEntries(dateFormat.formatToParts(new Date(ms)).map(p => [p.type, p.value])); return `${parts.year}-${parts.month}-${parts.day}`; }
@@ -357,10 +358,21 @@ export async function saveRecommendationAction(store, { id, action, until = null
   if (action === 'done' && !/^rec:(task|learning):/.test(id)) throw new RangeError('only tasks and learning items can be completed');
   if (action === 'snooze' && until == null) until = now + HOUR;
   if (action === 'snooze' && (!Number.isInteger(until) || until <= now || until > now + 7 * DAY)) throw new RangeError('snooze must end within the next seven days');
-  const previous = json(await store.getSetting(ACTION_KEY), {});
-  const entries = Object.entries(previous).filter(([key, value]) => key !== id && value && value.at >= now - 90 * DAY && (value.action === 'done' || value.action === 'dismiss' || value.until > now)).sort((a, b) => b[1].at - a[1].at).slice(0, 255);
-  const next = Object.fromEntries(entries);
-  if (action !== 'undo') next[id] = { action, until: action === 'snooze' ? until : null, at: now };
-  await store.setSetting(ACTION_KEY, JSON.stringify(next));
-  return { ok: true, id, action, until: action === 'snooze' ? until : null };
+  if (typeof store.compareAndSetSetting !== 'function') {
+    throw new Error('Atomic recommendation actions are unavailable; retry this action later.');
+  }
+  for (let attempt = 0; attempt < ACTION_CAS_ATTEMPTS; attempt++) {
+    const previousRaw = await store.getSetting(ACTION_KEY);
+    const previous = json(previousRaw, {});
+    const entries = Object.entries(previous).filter(([key, value]) => key !== id && value && value.at >= now - 90 * DAY && (value.action === 'done' || value.action === 'dismiss' || value.until > now)).sort((a, b) => b[1].at - a[1].at).slice(0, 255);
+    const next = Object.fromEntries(entries);
+    if (action !== 'undo') next[id] = { action, until: action === 'snooze' ? until : null, at: now };
+    if (await store.compareAndSetSetting(ACTION_KEY, previousRaw, JSON.stringify(next), now)) {
+      return { ok: true, id, action, until: action === 'snooze' ? until : null };
+    }
+  }
+  const error = new Error('Recommendation actions changed repeatedly; please retry this action.');
+  error.status = 409;
+  error.retryable = true;
+  throw error;
 }

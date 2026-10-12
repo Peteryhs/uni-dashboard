@@ -7,6 +7,7 @@ const DISMISSED_KEY = 'ALERT_DISMISSED_KEY';
 const USAGE_KEY = 'ALERT_AI_USAGE_JSON';
 const RETRY_MS = 15 * 60_000;
 const MAX_AI_SUMMARIES_PER_DAY = 8;
+const USAGE_CAS_ATTEMPTS = 3;
 
 function parseJson(raw, fallback) {
   try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
@@ -36,6 +37,34 @@ export function alertSummaryFor(notices, raw) {
     ? saved.summary : fallbackAlertSentence(notices);
 }
 
+/** Reserve one of the eight daily alert summaries without racing another Worker. */
+export async function claimAlertAiRun(store, now = Date.now(), { maxAttempts = USAGE_CAS_ATTEMPTS } = {}) {
+  const date = new Date(now).toISOString().slice(0, 10);
+  const retries = Number.isInteger(maxAttempts) ? Math.max(1, Math.min(maxAttempts, USAGE_CAS_ATTEMPTS)) : USAGE_CAS_ATTEMPTS;
+  if (typeof store.compareAndSetSetting !== 'function') {
+    throw new Error('Atomic campus alert limits are unavailable; retry the summary later.');
+  }
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const previousRaw = await store.getSetting(USAGE_KEY);
+    const usage = parseJson(previousRaw, {});
+    // Do not let a delayed request from yesterday overwrite the current day's usage.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(usage.date) && usage.date > date) {
+      const error = new Error('Campus alert usage has advanced to a newer UTC day; retry on the next update.');
+      error.status = 409;
+      error.retryable = true;
+      throw error;
+    }
+    const sameDate = usage.date === date;
+    const count = sameDate ? usage.count || 0 : 0;
+    if (count >= MAX_AI_SUMMARIES_PER_DAY) return false;
+    if (await store.compareAndSetSetting(USAGE_KEY, previousRaw, JSON.stringify({ date, count: count + 1 }), now)) return true;
+  }
+  const error = new Error('Campus alert usage changed repeatedly; retry the summary on the next update.');
+  error.status = 409;
+  error.retryable = true;
+  throw error;
+}
+
 export async function syncAlertSummary(store, { cfEnv = null, now = Date.now() } = {}) {
   const notices = (await store.rows('notice', { where: 'source_id = ?', params: ['uw-status'], limit: 20 }))
     .filter((notice) => ['minor', 'major', 'critical'].includes(notice.severity));
@@ -46,14 +75,17 @@ export async function syncAlertSummary(store, { cfEnv = null, now = Date.now() }
     if (previous.status === 'ready' || (previous.status === 'limited' && new Date(previous.updated_at).toISOString().slice(0, 10) === new Date(now).toISOString().slice(0, 10))) return { status: previous.status, cached: true };
     if (now - (previous.updated_at || 0) < RETRY_MS) return { status: previous.status, cached: true };
   }
-  const date = new Date(now).toISOString().slice(0, 10);
-  const usage = parseJson(await store.getSetting(USAGE_KEY), {});
-  const count = usage.date === date ? usage.count || 0 : 0;
-  if (count >= MAX_AI_SUMMARIES_PER_DAY) {
+  let claimed;
+  try {
+    claimed = await claimAlertAiRun(store, now, { maxAttempts: 1 });
+  } catch (error) {
+    if (error?.retryable) return { status: 'retryable', error: error.message, retryable: true };
+    throw error;
+  }
+  if (!claimed) {
     await store.setSetting(SUMMARY_KEY, JSON.stringify({ signature, status: 'limited', updated_at: now }));
     return { status: 'limited' };
   }
-  await store.setSetting(USAGE_KEY, JSON.stringify({ date, count: count + 1 }));
   await store.setSetting(SUMMARY_KEY, JSON.stringify({ signature, status: 'processing', updated_at: now }));
   try {
     const summary = await summarizeAlertsWithAi({ notices, cfEnv, now, beforeAiCall: aiBudgetGuard(store) });

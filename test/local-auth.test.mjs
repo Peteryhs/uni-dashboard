@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, existsSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, basename } from 'node:path';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
@@ -132,6 +132,7 @@ test('local credentials reject non-object bodies and cleared values stay removed
   writeFileSync(join(scratch, '.env'), '# keep this\r\nUNRELATED=value\r\n' + names.map(name => `${name}=${process.env[name]}`).join('\r\n') + '\r\nLEARN_ICS_URL=https://synthetic.test/duplicate.ics\r\n');
   assert.equal((await post(Object.fromEntries(names.map(name => [name, ''])))).status, 200);
   const cleared = readFileSync(join(scratch, '.env'), 'utf8');
+  if (process.platform !== 'win32') assert.equal(statSync(join(scratch, '.env')).mode & 0o777, 0o600);
   assert.match(cleared, /# keep this/);
   assert.match(cleared, /UNRELATED=value/);
   for (const name of names) {

@@ -8,8 +8,8 @@
  *   - scheduling:     scheduled() instead of setInterval + pollDue()
  *   - static assets:  the ASSETS binding instead of a node:fs reader
  *
- * Secrets: Worker secrets land in env, and the source adapters read process.env, so bindings are
- * bridged onto process.env once per request. Nothing else in the tree has to know where it runs.
+ * Worker bindings and saved settings are exposed through an invocation-scoped environment view.
+ * Nothing in the shared isolate's process.env is mutated between concurrent requests.
  */
 import { D1Store } from './d1-store.mjs';
 import { RUN_RETENTION_MS } from './schema.mjs';
@@ -31,24 +31,16 @@ import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
 import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oauth-callback.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 import { buildHealth } from './health.mjs';
+import { createRuntimeEnv, getRuntimeEnv, withRuntimeEnv } from './runtime-env.mjs';
 
 const STARTED_AT = Date.now();
-
-/** Config keys the sources and the AI proxy read from the environment. */
-const ENV_KEYS = [
-  'PORTAL_ICS_URL',
-  'GOOGLE_CALENDAR_ICS_URL',
-  'LEARN_ICS_URL',
-  'CLOUDFLARE_ACCOUNT_ID',
-  'CLOUDFLARE_API_TOKEN',
-];
 
 /**
  * Keys the app is allowed to write, with the shape each one has to match.
  *
  * Validation lives here rather than in the UI because this is the boundary that matters: the value
- * ends up in an environment variable that the adapters read, so anything with whitespace in it could
- * smuggle a second variable, and anything that is not https is not a feed.
+ * adapters receive this configuration directly. Feed values must be HTTPS URLs without whitespace,
+ * and credential values must match their expected character set before they are saved.
  */
 const WRITABLE_SETTINGS = {
   PORTAL_ICS_URL: (v) => /^https:\/\/\S+$/.test(v),
@@ -68,36 +60,6 @@ const WRITABLE_SETTINGS = {
 
 const SETTING_KEYS = Object.keys(WRITABLE_SETTINGS);
 
-/**
- * Apply the settings saved from the app onto process.env, which is where the source adapters read
- * their configuration. Returns which keys came from the database, so the credentials route can say
- * where a value it is reporting actually lives.
- */
-async function applySettings(store, rows = null) {
-  rows ||= await store.settings();
-  const fromDb = [];
-  for (const row of rows) {
-    if (!SETTING_KEYS.includes(row.name) || !row.value) continue;
-    if (row.name === 'OFFICE_HOURS_JSON') continue;
-    process.env[row.name] = row.value;
-    fromDb.push(row.name);
-  }
-  return fromDb;
-}
-
-/**
- * Bridge Worker bindings onto process.env so the source adapters, which read process.env because
- * they also run under Node, work unchanged. A Worker has one isolate per request, so this cannot
- * leak across requests.
- */
-function bridgeEnv(env) {
-  for (const key of ENV_KEYS) {
-    const value = env?.[key];
-    if (typeof value === 'string' && value) process.env[key] = value;
-    else delete process.env[key];
-  }
-}
-
 function storeFor(env) {
   return new D1Store(env.DB);
 }
@@ -112,7 +74,7 @@ function json(body, status = 200) {
 /**
  * Sources polled per invocation. Workers Free allows 50 D1 queries per invocation, and a full poll
  * of all four sources measures 41 on its own, so a tick takes two and leaves the rest due. The cron
-  * runs every minute, which is far more often than the slowest cadence (food, 12 hours), so
+ * runs every minute, which is far more often than the source cadences (food, four hours), so
  * nothing waits long.
  */
 const MAX_SOURCES_PER_TICK = 2;
@@ -183,7 +145,12 @@ async function handleFetch(request, env, ctx) {
   await store.init();
 
   // Settings the owner saved from the app win over Worker secrets: the more recent explicit choice.
-  const saved = await applySettings(store);
+  // Read once, as before, and keep the immutable view scoped to this request's async work.
+  const settings = await store.settings();
+  const saved = settings
+    .filter((row) => SETTING_KEYS.includes(row.name) && row.name !== 'OFFICE_HOURS_JSON' && row.value)
+    .map((row) => row.name);
+  return withRuntimeEnv(createRuntimeEnv(env, settings), async () => {
   const startAiJob = (job) => {
     const task = processAiJob(store, job, { cfEnv: env });
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
@@ -291,10 +258,7 @@ async function handleFetch(request, env, ctx) {
   }
 
   if (path === '/v1/ai/models' && request.method === 'GET') {
-    const models = await getAvailableAiModels({
-      accountId: env.CLOUDFLARE_ACCOUNT_ID,
-      apiToken: env.CLOUDFLARE_API_TOKEN,
-    });
+    const models = await getAvailableAiModels();
     return json({ default_model: DEFAULT_AI_MODEL, models });
   }
 
@@ -390,39 +354,38 @@ async function handleFetch(request, env, ctx) {
   /**
    * Credentials, writable from the app.
    *
-   * Values are stored as rows in D1 and applied to the environment on every request, so the app can
-   * be configured without the dashboard. Two rules keep this honest: a value is validated before it
-   * is stored (it ends up in an environment variable), and a value is never echoed back, only
+   * Values are stored as rows in D1 and included in each request's runtime configuration, so the app
+   * can configure them without a redeploy. Two rules keep this honest: a value is validated before
+   * it is stored (it ends up in the adapter's environment view), and a value is never echoed back, only
    * whether it is configured and where it came from. A Worker secret still works and is what the
    * app reports when nothing was saved here.
    */
   if (path === '/v1/credentials') {
-    const scheduleUrl = process.env.GOOGLE_CALENDAR_ICS_URL || process.env.PORTAL_ICS_URL || '';
     if (request.method === 'GET') {
       return json({
         portal: {
-          configured: Boolean(process.env.PORTAL_ICS_URL),
+          configured: Boolean(getRuntimeEnv('PORTAL_ICS_URL')),
           env_var: 'PORTAL_ICS_URL',
-          source: saved.includes('PORTAL_ICS_URL') ? 'saved in the app' : process.env.PORTAL_ICS_URL ? 'Worker secret' : 'not set',
+          source: saved.includes('PORTAL_ICS_URL') ? 'saved in the app' : getRuntimeEnv('PORTAL_ICS_URL') ? 'Worker secret' : 'not set',
           name: 'Waterloo Portal Feed',
           role: 'Official class timetable, room locations and exams',
         },
         google_calendar: {
-          configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
+          configured: Boolean(getRuntimeEnv('GOOGLE_CALENDAR_ICS_URL')),
           env_var: 'GOOGLE_CALENDAR_ICS_URL',
-          source: saved.includes('GOOGLE_CALENDAR_ICS_URL') ? 'saved in the app' : process.env.GOOGLE_CALENDAR_ICS_URL ? 'Worker secret' : 'not set',
+          source: saved.includes('GOOGLE_CALENDAR_ICS_URL') ? 'saved in the app' : getRuntimeEnv('GOOGLE_CALENDAR_ICS_URL') ? 'Worker secret' : 'not set',
           name: 'Google Calendar Feed',
           role: 'Google Calendar events, personal timetable or exported classes',
         },
         learn: {
-          configured: Boolean(process.env.LEARN_ICS_URL),
+          configured: Boolean(getRuntimeEnv('LEARN_ICS_URL')),
           env_var: 'LEARN_ICS_URL',
-          source: saved.includes('LEARN_ICS_URL') ? 'saved in the app' : process.env.LEARN_ICS_URL ? 'Worker secret' : 'not set',
+          source: saved.includes('LEARN_ICS_URL') ? 'saved in the app' : getRuntimeEnv('LEARN_ICS_URL') ? 'Worker secret' : 'not set',
           name: 'Waterloo LEARN Deadlines Feed',
           role: 'Upcoming assignments, quizzes, homework and project due dates',
         },
         cloudflare: {
-          configured: Boolean(env.AI || (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN)),
+          configured: Boolean(env.AI || (getRuntimeEnv('CLOUDFLARE_ACCOUNT_ID') && getRuntimeEnv('CLOUDFLARE_API_TOKEN'))),
           mode: env.AI ? 'binding' : 'api',
           account_id: env.AI ? 'native Workers AI binding' : '',
           name: 'Cloudflare Workers AI',
@@ -464,14 +427,15 @@ async function handleFetch(request, env, ctx) {
 
       const stored = [];
       const feedsToSchedule = new Set();
+      const runtimeOverrides = new Map();
       for (const [name, trimmed] of updates) {
         const previous = await store.getSetting(name);
-        const wasConfigured = process.env[name] || previous || '';
+        const wasConfigured = getRuntimeEnv(name) || previous || '';
         const valueChanged = wasConfigured !== trimmed;
         const changedAt = Date.now();
         if (!trimmed) {
           await store.deleteSetting(name); // an empty value clears it, same as the local .env path
-          delete process.env[name];
+          if (name !== 'OFFICE_HOURS_JSON') runtimeOverrides.set(name, '');
           if (valueChanged) {
             const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
             if (marker) await store.setSetting(marker, String(changedAt), changedAt);
@@ -487,33 +451,33 @@ async function handleFetch(request, env, ctx) {
           if (name === 'PORTAL_ICS_URL') feedsToSchedule.add('uw-portal-ics');
           if (name === 'GOOGLE_CALENDAR_ICS_URL') feedsToSchedule.add('google-calendar-ics');
         }
-        if (name !== 'OFFICE_HOURS_JSON') {
-          process.env[name] = trimmed;
-        }
+        if (name !== 'OFFICE_HOURS_JSON') runtimeOverrides.set(name, trimmed);
         stored.push({ name, cleared: false });
       }
 
-      // A new feed URL should show up now, not on the next cron tick.
-      // Blocked feeds are parked for six hours. Bring changed feeds forward before the capped
-      // poll, leaving any second feed due for the next tick rather than waiting out that delay.
-      for (const sourceId of feedsToSchedule) await store.scheduleJob(sourceId, Date.now());
-      const changed = stored.some((s) => !s.cleared);
-      let polled = [];
-      if (changed) {
-        const changedSources = SOURCES.filter(source => feedsToSchedule.has(source.id) ||
-          (['uw-portal-ics', 'google-calendar-ics'].includes(source.id) &&
-            [...feedsToSchedule].some(id => ['uw-portal-ics', 'google-calendar-ics'].includes(id))));
-        const { receipts } = await pollDue(store, Date.now(), 1, changedSources);
-        polled = receipts.map((r) => `${r.source_id}:${r.outcome}`);
-      }
+      return withRuntimeEnv(createRuntimeEnv(env, settings, runtimeOverrides), async () => {
+        // A new feed URL should show up now, not on the next cron tick.
+        // Blocked feeds are parked for six hours. Bring changed feeds forward before the capped
+        // poll, leaving any second feed due for the next tick rather than waiting out that delay.
+        for (const sourceId of feedsToSchedule) await store.scheduleJob(sourceId, Date.now());
+        const changed = stored.some((s) => !s.cleared);
+        let polled = [];
+        if (changed) {
+          const changedSources = SOURCES.filter(source => feedsToSchedule.has(source.id) ||
+            (['uw-portal-ics', 'google-calendar-ics'].includes(source.id) &&
+              [...feedsToSchedule].some(id => ['uw-portal-ics', 'google-calendar-ics'].includes(id))));
+          const { receipts } = await pollDue(store, Date.now(), 1, changedSources);
+          polled = receipts.map((r) => `${r.source_id}:${r.outcome}`);
+        }
 
-      return json({
-        ok: true,
-        stored,
-        polled,
-        portal_configured: Boolean(process.env.PORTAL_ICS_URL),
-        google_calendar_configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
-        learn_configured: Boolean(process.env.LEARN_ICS_URL),
+        return json({
+          ok: true,
+          stored,
+          polled,
+          portal_configured: Boolean(getRuntimeEnv('PORTAL_ICS_URL')),
+          google_calendar_configured: Boolean(getRuntimeEnv('GOOGLE_CALENDAR_ICS_URL')),
+          learn_configured: Boolean(getRuntimeEnv('LEARN_ICS_URL')),
+        });
       });
     }
 
@@ -527,11 +491,11 @@ async function handleFetch(request, env, ctx) {
     },
     404,
   );
+  });
 }
 
 export default {
   async fetch(request, env, ctx) {
-    bridgeEnv(env);
     try {
       return await handleFetch(request, env, ctx);
     } catch (e) {
@@ -544,12 +508,11 @@ export default {
    * backoff, so the cron interval only sets how often the table is consulted.
    */
   async scheduled(event, env, ctx) {
-    bridgeEnv(env);
     const store = storeFor(env);
     await store.init();
     // settings saved from the app first: the cron polls the feeds the app was configured with
     const settings = await store.settings();
-    await applySettings(store, settings);
+    return withRuntimeEnv(createRuntimeEnv(env, settings), async () => {
     const stalled = await restartStalledAiJob(store, settings);
     if (stalled) {
       const result = await processAiJob(store, stalled, { cfEnv: env });
@@ -571,5 +534,6 @@ export default {
         `${deferred.length ? ` deferred=${deferred.join(',')}` : ''}` +
         `${pruned ? ` pruned=${pruned}` : ''}`,
     );
+    });
   },
 };

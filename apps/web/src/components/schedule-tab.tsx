@@ -37,6 +37,7 @@ import type {
   OfficeHourKind,
   ParseOfficeHoursResponse,
 } from '@/lib/contract';
+import { formatShortDay, formatTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
 const WEEKDAYS: { code: WeekdayCode; label: string }[] = [
@@ -68,23 +69,7 @@ function formatTime24to12(timeStr: string): string {
 }
 
 function formatOccurrenceTime(startsAt: number, endsAt: number): string {
-  const d = new Date(startsAt);
-  const dateStr = d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
-  const startTime = d.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-  const endTime = new Date(endsAt).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-  return `${dateStr}, ${startTime}–${endTime}`;
+  return `${formatShortDay(startsAt)}, ${formatTime(startsAt)}–${formatTime(endsAt)}`;
 }
 
 function formatRuleSummary(rule: {

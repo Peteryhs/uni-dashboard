@@ -13,16 +13,32 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.outlined.HealthAndSafety
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -35,13 +51,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,6 +79,7 @@ import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.RefreshControl
 import dev.peteryhs.unidash.ui.ScreenScaffold
+import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
@@ -116,54 +140,58 @@ fun SettingsScreen(
         notificationsOn = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
+    val destinationStates = rememberSaveableStateHolder()
     val title = destination.title
-    ScreenScaffold(
-        title = title,
-        subtitle = null,
-        snapshot = snapshot,
-        now = now,
-        snackbar = snackbar,
-        refreshing = snapshot.manualRefreshing,
-        pullToRefreshEnabled = false,
-        navigationIcon = {
-            if (destination != SettingsDestination.Overview) {
-                IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to settings")
-                }
-            }
-        },
-        onStatus = if (destination == SettingsDestination.Status) null else onStatus,
-        showConnectionBanner = destination != SettingsDestination.Status,
-        onRefresh = if (destination == SettingsDestination.Status) vm::refreshSources else vm::refresh,
-    ) {
-        when (destination) {
-            SettingsDestination.Overview -> settingsOverview(snapshot, now, onDestination)
-            SettingsDestination.Connections -> connectionsSettings(
-                baseUrl, managedOAuth, browser.error, browser.busy, onReauthenticate,
-                onOpenGuide = { guideOpen = true },
-                onDisconnect = { confirmSignOut = true },
-            )
-            SettingsDestination.Notifications -> notificationsSettings(
-                notificationsOn = notificationsOn,
-                exactAlarms = exactAlarms,
-                automaticTracking = automaticTracking,
-                onAutomaticTracking = vm::setAutomaticTracking,
-                onPromotedNotifications = promotionIntent?.takeIf { !promotedNotifications }?.let { intent ->
-                    { context.startActivity(intent) }
-                },
-                onNotifications = {
-                    if (!notificationsOn && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-                },
-                onExactAlarms = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
-                        if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+    destinationStates.SaveableStateProvider(destination.name) {
+        ScreenScaffold(
+            title = title,
+            subtitle = null,
+            snapshot = snapshot,
+            now = now,
+            snackbar = snackbar,
+            refreshing = snapshot.manualRefreshing,
+            pullToRefreshEnabled = false,
+            navigationIcon = {
+                if (destination != SettingsDestination.Overview) {
+                    IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to settings")
                     }
-                },
-            )
-            SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
-            SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
+                }
+            },
+            onStatus = if (destination == SettingsDestination.Status) null else onStatus,
+            showConnectionBanner = destination != SettingsDestination.Status,
+            onRefresh = if (destination == SettingsDestination.Status) vm::refreshSources else vm::refresh,
+            headerSize = if (destination == SettingsDestination.Overview) ScreenHeaderSize.Large else ScreenHeaderSize.Compact,
+        ) {
+            when (destination) {
+                SettingsDestination.Overview -> settingsOverview(snapshot, now, onDestination)
+                SettingsDestination.Connections -> connectionsSettings(
+                    baseUrl, managedOAuth, browser.error, browser.busy, onReauthenticate,
+                    onOpenGuide = { guideOpen = true },
+                    onDisconnect = { confirmSignOut = true },
+                )
+                SettingsDestination.Notifications -> notificationsSettings(
+                    notificationsOn = notificationsOn,
+                    exactAlarms = exactAlarms,
+                    automaticTracking = automaticTracking,
+                    onAutomaticTracking = vm::setAutomaticTracking,
+                    onPromotedNotifications = promotionIntent?.takeIf { !promotedNotifications }?.let { intent ->
+                        { context.startActivity(intent) }
+                    },
+                    onNotifications = {
+                        if (!notificationsOn && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                    },
+                    onExactAlarms = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
+                            if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                        }
+                    },
+                )
+                SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
+                SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
+            }
         }
     }
 
@@ -193,19 +221,81 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsOverview(
     onDestination: (SettingsDestination) -> Unit,
 ) {
     val rows = listOf(
-        Triple(SettingsDestination.Connections, "Dashboard address, sign-in and setup guide", "Connections"),
-        Triple(SettingsDestination.Notifications, "Class reminders and app alerts", "Notifications"),
-        Triple(SettingsDestination.Status, statusTeaser(snapshot, now), "Status"),
-        Triple(SettingsDestination.About, "App version and project information", "About"),
+        SettingsOverviewRow(
+            SettingsDestination.Connections,
+            "Connections",
+            "Dashboard address, sign-in and setup guide",
+            Icons.Outlined.Link,
+        ),
+        SettingsOverviewRow(
+            SettingsDestination.Notifications,
+            "Notifications",
+            "Class reminders and app alerts",
+            Icons.Outlined.NotificationsActive,
+        ),
+        SettingsOverviewRow(
+            SettingsDestination.Status,
+            "Status",
+            statusTeaser(snapshot, now),
+            Icons.Outlined.HealthAndSafety,
+        ),
+        SettingsOverviewRow(
+            SettingsDestination.About,
+            "About",
+            "App version and project information",
+            Icons.AutoMirrored.Outlined.Article,
+        ),
     )
-    rows.forEach { (destination, detail, label) ->
-        item(key = "settings:${destination.name}") {
-            ListItem(
-                headlineContent = { Text(label) },
-                supportingContent = { Text(detail) },
-                trailingContent = { Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onDestination(destination) },
-            )
+    item(key = "settings:overview") {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+        ) {
+            rows.forEachIndexed { index, row ->
+                SegmentedListItem(
+                    onClick = { onDestination(row.destination) },
+                    shapes = ListItemDefaults.segmentedShapes(index, rows.size),
+                    content = { Text(row.label, style = MaterialTheme.typography.titleMedium) },
+                    supportingContent = { Text(row.detail, style = MaterialTheme.typography.bodyMedium) },
+                    leadingContent = {
+                        SettingsIconBacking(row.destination, row.icon)
+                    },
+                    trailingContent = {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                    colors = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+private data class SettingsOverviewRow(
+    val destination: SettingsDestination,
+    val label: String,
+    val detail: String,
+    val icon: ImageVector,
+)
+
+@Composable
+private fun SettingsIconBacking(destination: SettingsDestination, icon: ImageVector) {
+    val colors = MaterialTheme.colorScheme
+    val (container, content) = when (destination) {
+        SettingsDestination.Connections -> colors.primaryContainer to colors.onPrimaryContainer
+        SettingsDestination.Notifications -> colors.secondaryContainer to colors.onSecondaryContainer
+        SettingsDestination.Status -> colors.tertiaryContainer to colors.onTertiaryContainer
+        SettingsDestination.About -> colors.surfaceContainerHighest to colors.onSurface
+        SettingsDestination.Overview -> colors.surfaceContainerHighest to colors.onSurface
+    }
+    Surface(
+        modifier = Modifier.size(48.dp),
+        shape = CircleShape,
+        color = container,
+        contentColor = content,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
         }
     }
 }
@@ -222,6 +312,50 @@ private fun statusTeaser(snapshot: Snapshot, now: Long): String {
     }
 }
 
+private data class SettingsAction(
+    val title: String,
+    val detail: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+    val enabled: Boolean = true,
+    val destructive: Boolean = false,
+)
+
+@Composable
+private fun SettingsActionGroup(rows: List<SettingsAction>) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+    ) {
+        rows.forEachIndexed { index, row ->
+            SegmentedListItem(
+                onClick = row.onClick,
+                shapes = ListItemDefaults.segmentedShapes(index, rows.size),
+                enabled = row.enabled,
+                content = {
+                    if (row.destructive) {
+                        Text(row.title, style = MaterialTheme.typography.titleMedium, color = colors.error)
+                    } else {
+                        Text(row.title, style = MaterialTheme.typography.titleMedium)
+                    }
+                },
+                supportingContent = { Text(row.detail, style = MaterialTheme.typography.bodyMedium) },
+                leadingContent = {
+                    if (row.destructive) Icon(row.icon, contentDescription = null, tint = colors.error)
+                    else Icon(row.icon, contentDescription = null)
+                },
+                trailingContent = {
+                    if (row.destructive) Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = colors.error)
+                    else Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null)
+                },
+                colors = ListItemDefaults.segmentedColors(containerColor = colors.surfaceContainerLow),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
 private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
     baseUrl: String?,
     managedOAuth: Boolean,
@@ -231,54 +365,62 @@ private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
     onOpenGuide: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    item { SectionHeader("Dashboard") }
+    item { SectionHeader("Connection") }
     item {
-        ListItem(
-            headlineContent = { Text("Setup guide") },
-            supportingContent = { Text("Connect calendar feeds in the web app and finish phone setup.") },
-            trailingContent = { TextButton(onClick = onOpenGuide) { Text("Open guide") } },
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
+        ) {
+            Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Text("Dashboard address", style = MaterialTheme.typography.titleMedium)
+                Text(baseUrl ?: "Not connected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    item { SectionHeader("Setup and sign-in") }
+    item {
+        SettingsActionGroup(
+            listOf(
+                SettingsAction(
+                    title = "Setup guide",
+                    detail = "Connect calendar feeds in the web app and finish phone setup.",
+                    icon = Icons.AutoMirrored.Outlined.Article,
+                    onClick = onOpenGuide,
+                ),
+                SettingsAction(
+                    title = if (managedOAuth) "Managed sign-in" else "Browser sign-in",
+                    detail = when {
+                        baseUrl == null -> "Connect from the setup screen first."
+                        browserBusy -> "Opening the system browser…"
+                        browserError != null -> "$browserError Try again when you are ready."
+                        managedOAuth -> "This phone uses Cloudflare Access in the system browser. No service token is stored."
+                        else -> "Use browser sign-in when it is enabled for this dashboard."
+                    },
+                    icon = Icons.Outlined.Link,
+                    onClick = { baseUrl?.let(onReauthenticate) },
+                    enabled = baseUrl != null && !browserBusy,
+                ),
+            ),
         )
     }
+    item { SectionHeader("Disconnect") }
     item {
-        ListItem(
-            headlineContent = { Text("Dashboard address") },
-            supportingContent = { Text(baseUrl ?: "Not connected") },
-        )
-    }
-    item {
-        ListItem(
-            headlineContent = {
-                Text(if (managedOAuth) "Managed sign-in" else "Browser sign-in")
-            },
-            supportingContent = {
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(
-                        when {
-                            browserError != null -> "$browserError Try again when you are ready."
-                            managedOAuth -> "This phone uses Cloudflare Access in the system browser. No service token is stored."
-                            else -> "Use browser sign-in when it is enabled for this dashboard."
-                        },
-                    )
-                    if (baseUrl == null) Text("Connect from the setup screen first.")
-                }
-            },
-            trailingContent = {
-                TextButton(onClick = { baseUrl?.let(onReauthenticate) }, enabled = baseUrl != null && !browserBusy) {
-                    Text(if (browserBusy) "Opening…" else if (managedOAuth) "Sign in again" else "Use browser")
-                }
-            },
-        )
-    }
-    item {
-        ListItem(
-            headlineContent = { Text("Disconnect this phone") },
-            supportingContent = {
-                Text(
-                    if (managedOAuth) "Removes this phone’s saved sign-in and cached dashboard data. Your browser login stays active."
-                    else "Removes the saved service token and cached dashboard data."
-                )
-            },
-            trailingContent = { TextButton(onClick = onDisconnect) { Text("Disconnect") } },
+        SettingsActionGroup(
+            listOf(
+                SettingsAction(
+                    title = "Disconnect this phone",
+                    detail = if (managedOAuth) {
+                        "Removes this phone’s saved sign-in and cached dashboard data. Your browser login stays active."
+                    } else {
+                        "Removes the saved service token and cached dashboard data."
+                    },
+                    icon = Icons.Outlined.Link,
+                    onClick = onDisconnect,
+                    destructive = true,
+                ),
+            ),
         )
     }
 }
@@ -292,37 +434,74 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
     onNotifications: () -> Unit,
     onExactAlarms: () -> Unit,
 ) {
+    item { SectionHeader("Activity tracking") }
     item {
-        ListItem(
-            headlineContent = { Text("Track imminent or current activity") },
-            supportingContent = {
-                Text("Show upcoming and active classes, exams and office hours with their room and countdown. Unpin to hide until the activity ends.")
-            },
-            trailingContent = { Switch(checked = automaticTracking, onCheckedChange = null) },
-            modifier = Modifier.toggleable(value = automaticTracking, role = Role.Switch, onValueChange = onAutomaticTracking),
-        )
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
+        ) {
+            ListItem(
+                headlineContent = { Text("Track imminent or current activity", style = MaterialTheme.typography.titleMedium) },
+                supportingContent = {
+                    Text(
+                        "Show upcoming and active classes, exams and office hours with their room and countdown. Unpin to hide until the activity ends.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                trailingContent = {
+                    Switch(
+                        checked = automaticTracking,
+                        onCheckedChange = null,
+                        enabled = true,
+                        modifier = Modifier.clearAndSetSemantics {},
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.fillMaxWidth()
+                    .toggleable(value = automaticTracking, role = Role.Switch, onValueChange = onAutomaticTracking)
+                    .semantics { stateDescription = if (automaticTracking) "On" else "Off" },
+            )
+        }
     }
-    if (automaticTracking && onPromotedNotifications != null) item {
-        ListItem(
-            headlineContent = { Text("Status-bar live updates") },
-            supportingContent = { Text("Allow the countdown to appear in the status bar. Class updates still appear as regular notifications while this is off.") },
-            trailingContent = { TextButton(onClick = onPromotedNotifications) { Text("Allow") } },
-        )
-    }
+    item { SectionHeader("Delivery permissions") }
     item {
-        ListItem(
-            headlineContent = { Text("Reminders and alerts") },
-            supportingContent = {
-                Text(if (notificationsOn) "On. Choose channels in system settings." else "Off. Class reminders, deadlines and outages will not reach you.")
+        SettingsActionGroup(
+            buildList {
+                if (automaticTracking && onPromotedNotifications != null) {
+                    add(
+                        SettingsAction(
+                            title = "Status-bar live updates",
+                            detail = "Allow the countdown in the status bar. Class updates still appear as regular notifications while this is off.",
+                            icon = Icons.Outlined.NotificationsActive,
+                            onClick = onPromotedNotifications,
+                        ),
+                    )
+                }
+                add(
+                    SettingsAction(
+                        title = "Reminders and alerts",
+                        detail = if (notificationsOn) {
+                            "On. Choose channels in system settings."
+                        } else {
+                            "Off. Class reminders, deadlines and outages will not reach you."
+                        },
+                        icon = Icons.Outlined.NotificationsActive,
+                        onClick = onNotifications,
+                    ),
+                )
+                if (!exactAlarms) {
+                    add(
+                        SettingsAction(
+                            title = "On-time class reminders",
+                            detail = "Without exact-alarm access, reminders can arrive a few minutes late.",
+                            icon = Icons.Outlined.Schedule,
+                            onClick = onExactAlarms,
+                        ),
+                    )
+                }
             },
-            trailingContent = { TextButton(onClick = onNotifications) { Text(if (notificationsOn) "Channels" else "Turn on") } },
-        )
-    }
-    if (!exactAlarms) item {
-        ListItem(
-            headlineContent = { Text("On-time class reminders") },
-            supportingContent = { Text("Without exact-alarm access, reminders can arrive a few minutes late.") },
-            trailingContent = { TextButton(onClick = onExactAlarms) { Text("Allow") } },
         )
     }
 }
@@ -351,32 +530,45 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
 
     item { SectionHeader("Source health") }
     item {
+        val colors = MaterialTheme.colorScheme
+        val (container, onContainer, stateIcon) = when {
+            snapshot.healthError != null -> Triple(colors.errorContainer, colors.onErrorContainer, Icons.Outlined.ErrorOutline)
+            summary?.condition == "healthy" -> Triple(colors.primaryContainer, colors.onPrimaryContainer, Icons.Outlined.CheckCircle)
+            summary?.condition == "attention" -> Triple(colors.errorContainer, colors.onErrorContainer, Icons.Outlined.WarningAmber)
+            else -> Triple(colors.tertiaryContainer, colors.onTertiaryContainer, Icons.Outlined.HelpOutline)
+        }
         Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface,
+            color = container,
+            contentColor = onContainer,
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
         ) {
-            val tone = when {
-                snapshot.healthError != null -> MaterialTheme.colorScheme.error
-                summary?.condition == "healthy" -> MaterialTheme.colorScheme.primary
-                summary?.condition == "attention" -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.tertiary
-            }
-            Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                Text(title, style = MaterialTheme.typography.titleMediumEmphasized, color = tone)
-                Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (snapshot.healthRefreshing) {
-                    Text("Checking for updates…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (summary != null && summary.total > 0) {
-                    Text(
-                        "${summary.healthy} of ${summary.total} monitored sources within their freshness window · ${summary.issues} ${if (summary.issues == 1) "needs" else "need"} attention · ${summary.unchecked} unchecked",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
-                health?.let {
-                    Text("Checked ${Format.age(it.now, now).removeSuffix(" old").let { age -> if (age == "just now") age else "$age ago" }}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier.fillMaxWidth().padding(Spacing.m),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Icon(stateIcon, contentDescription = null, modifier = Modifier.padding(top = Spacing.xs).size(28.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Text(title, style = MaterialTheme.typography.titleMediumEmphasized, color = onContainer)
+                    Text(detail, style = MaterialTheme.typography.bodyMedium, color = onContainer)
+                    if (snapshot.healthRefreshing) {
+                        Text("Checking for updates…", style = MaterialTheme.typography.labelMedium, color = onContainer)
+                    }
+                    if (summary != null && summary.total > 0) {
+                        Text(
+                            "${summary.healthy} of ${summary.total} monitored sources within their freshness window · ${summary.issues} ${if (summary.issues == 1) "needs" else "need"} attention · ${summary.unchecked} unchecked",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = onContainer,
+                        )
+                    }
+                    health?.let {
+                        Text(
+                            "Checked ${Format.age(it.now, now).removeSuffix(" old").let { age -> if (age == "just now") age else "$age ago" }}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = onContainer,
+                        )
+                    }
                 }
             }
         }
@@ -537,19 +729,30 @@ private fun ageAgo(since: Long, now: Long): String {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.aboutSettings(onSource: () -> Unit) {
     item {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.l),
-            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
         ) {
-            Text("Uni Dashboard", style = MaterialTheme.typography.headlineSmallEmphasized)
-            Text("Version ${dev.peteryhs.unidash.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text(
-                "A centralized dashboard for calendars, deadlines, dining, and everyday Waterloo student life.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text("Created by Peter (Peteryhs)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = onSource) { Text("View source on GitHub") }
+            Row(
+                Modifier.fillMaxWidth().padding(Spacing.m),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                verticalAlignment = Alignment.Top,
+            ) {
+                SettingsIconBacking(SettingsDestination.About, Icons.Outlined.Dashboard)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Text("Uni Dashboard", style = MaterialTheme.typography.headlineSmallEmphasized)
+                    Text("Version ${dev.peteryhs.unidash.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "A centralized dashboard for calendars, deadlines, dining, and everyday Waterloo student life.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text("Created by Peter (Peteryhs)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = onSource) { Text("View source on GitHub") }
+                }
+            }
         }
     }
 }

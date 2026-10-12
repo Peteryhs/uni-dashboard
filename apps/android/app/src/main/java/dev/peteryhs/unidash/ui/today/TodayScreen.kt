@@ -1,12 +1,17 @@
 package dev.peteryhs.unidash.ui.today
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -22,6 +27,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -32,14 +39,14 @@ import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Snooze
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
@@ -72,12 +79,16 @@ import dev.peteryhs.unidash.data.NextCommitment
 import dev.peteryhs.unidash.data.Recommendation
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.ui.ChangeBlocks
+import dev.peteryhs.unidash.ui.DisclosureIcon
 import dev.peteryhs.unidash.ui.EmptyNote
 import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.FreshnessLabel
+import dev.peteryhs.unidash.ui.InitialLoadingNote
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
+import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.SectionHeader
+import dev.peteryhs.unidash.ui.ShapedIcon
 import dev.peteryhs.unidash.ui.theme.Spacing
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -114,9 +125,15 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
         return
     }
 
-    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus) {
+    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus, headerSize = ScreenHeaderSize.Large) {
         if (!snapshot.hasData) {
-            item { EmptyNote(if (snapshot.refreshing) "Loading your dashboard…" else "Nothing loaded yet. Pull to refresh.") }
+            item {
+                when {
+                    snapshot.refreshing && !snapshot.manualRefreshing -> InitialLoadingNote("Loading your dashboard…")
+                    snapshot.manualRefreshing -> EmptyNote("Loading your dashboard…")
+                    else -> EmptyNote("Nothing loaded yet. Pull to refresh.")
+                }
+            }
             return@ScreenScaffold
         }
         if (alert != null && alert.count > 0 && !alert.dismissed) {
@@ -124,13 +141,15 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
         }
         val recommended = recs?.items.orEmpty()
         val nextIsRecommended = next != null && recommended.any { it.represents(next) }
+        if (recommended.isNotEmpty() || next == null) {
+            recommendations(recs?.headline, recommended, now, vm) {
+                showRecommendationExplanation = true
+            }
+        }
         if (next != null && !nextIsRecommended && nextCard.state != CardState.Degraded) {
-            item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now) }
+            item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now, emphasize = recommended.isEmpty()) }
         } else if (next != null && !nextIsRecommended) {
             item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
-        }
-        recommendations(recs?.headline, recs?.items.orEmpty(), now, vm) {
-            showRecommendationExplanation = true
         }
         if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now, recommended)
     }
@@ -185,11 +204,16 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
                         modifier = Modifier.semantics { contentDescription = "$more more notices" },
                     )
                 }
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                        contentDescription = if (expanded) "Hide notice details" else "Show notice details",
+                IconButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.semantics {
+                        contentDescription = if (expanded) "Hide notice details" else "Show notice details"
+                    },
+                ) {
+                    DisclosureIcon(
+                        expanded = expanded,
                         modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
                 IconButton(onClick = onDismiss) {
@@ -217,10 +241,11 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
 }
 
 @Composable
-private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?, now: Long) {
+private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?, now: Long, emphasize: Boolean) {
     val start = next.startsAt
     val end = next.endsAt
     val progress = next.eventProgress(now)
+    val contentColor = if (emphasize) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     val happening = start != null && end != null && end > start && now >= start && now < end
     val label = when {
         happening -> "Now · ends ${Format.relative(end!!, now)}"
@@ -229,15 +254,19 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
     }
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            containerColor = if (emphasize) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = if (emphasize) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
         ),
         shape = MaterialTheme.shapes.large,
         modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
     ) {
         Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
             Text(label, style = MaterialTheme.typography.labelLarge)
-            Text(next.title, style = MaterialTheme.typography.headlineMediumEmphasized)
+            Text(
+                next.title,
+                style = if (emphasize) MaterialTheme.typography.headlineMediumEmphasized
+                else MaterialTheme.typography.titleLarge,
+            )
             if (next.subtitle.isNotBlank()) Text(next.subtitle, style = MaterialTheme.typography.bodyLarge)
             val weather = next.weather?.takeIf { it.show && it.tempC != null }
             if ((start != null && progress == null) || next.location.isNotBlank() || weather != null) {
@@ -262,13 +291,13 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
             progress?.let {
                 EventTimeline(
                     progress = it,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
-                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = contentColor,
+                    trackColor = contentColor.copy(alpha = 0.2f),
+                    labelColor = contentColor,
                 )
             }
             next.following?.let { f ->
-                HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                HorizontalDivider(color = contentColor.copy(alpha = 0.2f))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Then", modifier = Modifier.size(18.dp))
                     Text(
@@ -311,15 +340,60 @@ private fun LazyListScope.recommendations(
         }
     }
     if (items.isEmpty()) item(key = "recs-empty") { EmptyNote(headline?.takeIf { it.isNotBlank() } ?: "Nothing needs you right now.") }
-    items(items, key = { "rec:${it.id}" }) { rec -> RecommendationCard(rec, now, vm, Modifier.animateItem()) }
+    itemsIndexed(items, key = { _, rec -> "rec:${rec.id}" }) { index, rec ->
+        RecommendationCard(
+            rec = rec,
+            now = now,
+            vm = vm,
+            modifier = Modifier.animateItem(
+                fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+            ),
+            isLead = index == 0,
+            index = index,
+            count = items.size,
+        )
+    }
 }
 
 @Composable
-private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel, modifier: Modifier = Modifier) {
+private fun RecommendationCard(
+    rec: Recommendation,
+    now: Long,
+    vm: MainViewModel,
+    modifier: Modifier = Modifier,
+    isLead: Boolean,
+    index: Int,
+    count: Int,
+) {
     val presentation = rec.presentation()
     val uri = LocalUriHandler.current
     val haptics = LocalHapticFeedback.current
     var expanded by rememberSaveable(rec.id) { mutableStateOf(false) }
+    val progress = rec.eventProgress(now)
+    val highlighted = expanded || progress != null
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            isLead -> MaterialTheme.colorScheme.primaryContainer
+            highlighted -> MaterialTheme.colorScheme.surfaceContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Recommendation container color",
+    )
+    val contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val actionShapes = ButtonDefaults.shapes()
+    val textActionColors = ButtonDefaults.textButtonColors(
+        contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+    )
+    val outlinedActionColors = ButtonDefaults.outlinedButtonColors(
+        contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
+    )
+    val outlinedActionBorder = BorderStroke(
+        1.dp,
+        if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outlineVariant,
+    )
     val snooze = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); vm.act(rec, "snooze", now + HOUR) }
     val done = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "done") }
     val dismiss = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "dismiss") }
@@ -333,11 +407,12 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
             }
         },
         backgroundContent = { SwipeBackground(swipe.dismissDirection, rec.canComplete) },
-        modifier = modifier.padding(horizontal = Spacing.m, vertical = Spacing.xs),
+        modifier = modifier.padding(horizontal = Spacing.m, vertical = if (isLead) Spacing.s else 1.dp),
     ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-            shape = MaterialTheme.shapes.large,
+        Surface(
+            color = containerColor,
+            contentColor = contentColor,
+            shape = if (isLead) RoundedCornerShape(28.dp) else recommendationGroupShape(index - 1, count - 1),
             modifier = Modifier.fillMaxWidth().semantics {
                 customActions = buildList {
                     if (rec.canComplete) {
@@ -349,75 +424,149 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
                 }
             },
         ) {
-            Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())) {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.xs, top = Spacing.s, bottom = Spacing.s),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        Text(rec.title, style = MaterialTheme.typography.titleMedium)
-                        val meta = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · ")
-                        if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(
-                        onClick = { expanded = !expanded },
-                        modifier = Modifier.semantics {
-                            contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details and actions for ${rec.title}"
-                        },
-                    ) {
-                        Icon(
-                            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                            contentDescription = null,
+            Column(
+                Modifier.fillMaxWidth().padding(if (isLead) 24.dp else Spacing.s),
+                verticalArrangement = Arrangement.spacedBy(if (isLead) Spacing.m else Spacing.xs),
+            ) {
+                if (isLead) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                        ShapedIcon(
+                            icon = recommendationIcon(rec.kind),
+                            container = MaterialTheme.colorScheme.primary,
+                            content = MaterialTheme.colorScheme.onPrimary,
+                            size = 56.dp,
                         )
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            Text(
+                                listOfNotNull(recommendationKindLabel(rec.kind), rec.course).joinToString(" · "),
+                                style = MaterialTheme.typography.labelLargeEmphasized,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                     }
+                    Text(rec.title, style = MaterialTheme.typography.headlineMediumEmphasized)
+                    RecommendationMetadata(
+                        timing = recTime(rec, now).orEmpty(),
+                        warnings = presentation.warnings,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        warningColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
+                        ?.let { IconText(Icons.Outlined.Place, it) }
+                } else {
+                    Text(rec.title, style = MaterialTheme.typography.titleMediumEmphasized)
+                    RecommendationMetadata(
+                        timing = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · "),
+                        warnings = presentation.warnings,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        warningColor = MaterialTheme.colorScheme.tertiary,
+                    )
+                    rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
+                        ?.let { IconText(Icons.Outlined.Place, it) }
                 }
-                Column(
-                    Modifier.padding(start = Spacing.m, end = Spacing.m, bottom = if (expanded) Spacing.s else Spacing.m),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
+
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     // A change is drawn as blocks; its sentence body would only repeat them.
                     rec.change?.let { ChangeBlocks(it, Modifier.padding(vertical = Spacing.xs)) }
                     rec.change?.takeIf { !it.confirmed }?.let {
                         Text(
                             if (it.roomMoved) "Room change inferred · check the course source" else "Change needs confirmation · check the course source",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.tertiary,
+                            color = if (isLead) contentColor else MaterialTheme.colorScheme.tertiary,
                         )
                     }
-                    RecommendationWarnings(presentation.warnings)
-                    rec.eventProgress(now)?.let { EventTimeline(it, Modifier.padding(vertical = Spacing.xs)) }
+                    progress?.let {
+                        EventTimeline(
+                            it,
+                            Modifier.padding(vertical = Spacing.xs),
+                            color = contentColor,
+                            trackColor = contentColor.copy(alpha = 0.2f),
+                            labelColor = contentColor,
+                        )
+                    }
                     FreshnessLabel(rec.state, null, now)
-                    if (expanded) {
-                        val time = rec.dueAt ?: rec.startsAt
-                        val repeatsTime = (time != null && rec.timeLabel != null && presentation.body.startsWith(rec.timeLabel) && presentation.body.length < 48)
-                            || (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
-                        if (presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
-                            Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
+                    if (isLead && rec.canComplete) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                            Button(onClick = done, shapes = actionShapes) {
+                                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                Text("Done", Modifier.padding(start = Spacing.s))
+                            }
+                            TextButton(
+                                onClick = { expanded = !expanded },
+                                shapes = actionShapes,
+                                colors = textActionColors,
+                                modifier = Modifier.semantics {
+                                    contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
+                                },
+                            ) { Text(if (expanded) "Hide details" else "Details") }
                         }
-                        if (rec.reason.isNotBlank() && rec.reason != presentation.body) {
-                            Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
-                            if (rec.canComplete) {
-                                FilledTonalButton(onClick = done) {
-                                    Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                                    Text("Done", Modifier.padding(start = Spacing.s))
-                                }
-                                OutlinedButton(onClick = snooze) {
-                                    Icon(Icons.Outlined.Snooze, contentDescription = null)
-                                    Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
-                                }
-                            } else {
-                                OutlinedButton(onClick = dismiss) {
-                                    Icon(Icons.Outlined.Close, contentDescription = null)
-                                    Text("Dismiss", Modifier.padding(start = Spacing.s))
+                    } else if (isLead) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.Center) {
+                            TextButton(
+                                onClick = { expanded = !expanded },
+                                shapes = actionShapes,
+                                colors = textActionColors,
+                                modifier = Modifier.semantics {
+                                    contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
+                                },
+                            ) { Text(if (expanded) "Hide details" else "Details") }
+                            if (!expanded) rec.action?.let { action ->
+                                TextButton(onClick = { uri.openUri(action.url) }, shapes = actionShapes, colors = textActionColors) {
+                                    Text(action.label)
+                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
                                 }
                             }
-                            rec.action?.let { a ->
-                                TextButton(onClick = { uri.openUri(a.url) }) {
-                                    Text(a.label)
-                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                        }
+                    } else {
+                        TextButton(
+                            onClick = { expanded = !expanded },
+                            shapes = actionShapes,
+                            colors = textActionColors,
+                            modifier = Modifier.semantics {
+                                contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
+                            },
+                        ) { Text(if (expanded) "Hide details" else "Details") }
+                    }
+                    AnimatedVisibility(
+                        visible = expanded,
+                        enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+                            fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+                        exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
+                            fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            val time = rec.dueAt ?: rec.startsAt
+                            val repeatsTime = (time != null && rec.timeLabel != null && presentation.body.startsWith(rec.timeLabel) && presentation.body.length < 48)
+                                || (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
+                            if (presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
+                                Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            if (rec.reason.isNotBlank() && rec.reason != presentation.body) {
+                                Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = contentColor)
+                            }
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
+                                if (rec.canComplete) {
+                                    if (!isLead) {
+                                        FilledTonalButton(onClick = done, shapes = actionShapes) {
+                                            Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                            Text("Done", Modifier.padding(start = Spacing.s))
+                                        }
+                                    }
+                                    OutlinedButton(onClick = snooze, shapes = actionShapes, colors = outlinedActionColors, border = outlinedActionBorder) {
+                                        Icon(Icons.Outlined.Snooze, contentDescription = null)
+                                        Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
+                                    }
+                                } else {
+                                    OutlinedButton(onClick = dismiss, shapes = actionShapes, colors = outlinedActionColors, border = outlinedActionBorder) {
+                                        Icon(Icons.Outlined.Close, contentDescription = null)
+                                        Text("Dismiss", Modifier.padding(start = Spacing.s))
+                                    }
+                                }
+                                if (!isLead || rec.canComplete || expanded) rec.action?.let { a ->
+                                    TextButton(onClick = { uri.openUri(a.url) }, shapes = actionShapes, colors = textActionColors) {
+                                        Text(a.label)
+                                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                                    }
                                 }
                             }
                         }
@@ -426,6 +575,27 @@ private fun RecommendationCard(rec: Recommendation, now: Long, vm: MainViewModel
             }
         }
     }
+}
+
+private fun recommendationGroupShape(index: Int, count: Int): RoundedCornerShape {
+    val top = if (index == 0) 20.dp else 4.dp
+    val bottom = if (index == count - 1) 20.dp else 4.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+}
+
+private fun recommendationKindLabel(kind: String): String = when (kind) {
+    "task" -> "Task"
+    "change" -> "Schedule change"
+    "class" -> "Class"
+    "deadline" -> "Deadline"
+    "exam" -> "Exam"
+    else -> kind.replace('_', ' ').replaceFirstChar { it.uppercase() }
+}
+
+private fun recommendationIcon(kind: String): ImageVector = when (kind) {
+    "task", "deadline", "exam" -> Icons.Outlined.CheckCircle
+    "change" -> Icons.Outlined.History
+    else -> Icons.Outlined.Schedule
 }
 
 @Composable
@@ -464,36 +634,60 @@ private fun LazyListScope.dueSoon(
         }
     }
     if (items.isEmpty()) item(key = "due-empty") { EmptyNote(due.error ?: "Nothing due this week.") }
-    items(items.take(6), key = { "due:${it.key}" }) { item ->
+    itemsIndexed(items.take(6), key = { _, item -> "due:${item.key}" }) { index, item ->
         val uri = LocalUriHandler.current
         val url = item.url ?: item.links.firstOrNull()?.url
-        ListItem(
-            headlineContent = { Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-            supportingContent = { Text(listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · ")) },
-            trailingContent = {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = dueGroupShape(index, items.size.coerceAtMost(6)),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = 1.dp)
+                .animateItem(
+                    fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                    placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                    fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                ),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (url != null) {
+                        val sourceLabel = item.links.firstOrNull { it.url == url }?.label ?: "LEARN"
+                        TextButton(
+                            onClick = { uri.openUri(url) },
+                            shapes = ButtonDefaults.shapes(),
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = Spacing.xs),
+                            modifier = Modifier.semantics { contentDescription = "Open ${item.title} in $sourceLabel" },
+                        ) {
+                            Text(sourceLabel)
+                            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                        }
+                    }
+                }
                 Text(
                     Format.relative(item.startsAt, now),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelLargeEmphasized,
                     color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier
-                .padding(horizontal = Spacing.s)
-                .animateItem(),
-        )
-        if (url != null) {
-            Row(Modifier.fillMaxWidth().padding(start = Spacing.m, bottom = Spacing.xs)) {
-                AssistChip(
-                    onClick = { uri.openUri(url) },
-                    label = { Text("LEARN") },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
-                    modifier = Modifier.semantics { contentDescription = "Open ${item.title} in LEARN" },
                 )
             }
         }
     }
     if (items.size > 6) item { EmptyNote("+${items.size - 6} more in Calendar") }
+}
+
+private fun dueGroupShape(index: Int, count: Int): RoundedCornerShape {
+    val top = if (index == 0) 20.dp else 4.dp
+    val bottom = if (index == count - 1) 20.dp else 4.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 
 private fun kindLabel(kind: String?): String = when (kind) {
