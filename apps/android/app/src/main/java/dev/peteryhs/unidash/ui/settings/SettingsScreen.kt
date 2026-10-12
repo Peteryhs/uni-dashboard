@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
@@ -80,6 +79,8 @@ import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.RefreshControl
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.ScreenHeaderSize
+import dev.peteryhs.unidash.ui.PredictiveNavigation
+import dev.peteryhs.unidash.ui.LocalNavigationActive
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
@@ -112,12 +113,13 @@ fun SettingsScreen(
     val automaticTracking by vm.automaticTracking.collectAsStateWithLifecycle()
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     var guideOpen by rememberSaveable { mutableStateOf(false) }
-    BackHandler(enabled = destination != SettingsDestination.Overview) {
-        onDestination(SettingsDestination.Overview)
-    }
-
-    LaunchedEffect(destination) {
-        if (destination == SettingsDestination.Status) vm.refreshHealth()
+    val navigationActive = LocalNavigationActive.current
+    var healthRequested by remember(destination) { mutableStateOf(false) }
+    LaunchedEffect(destination, navigationActive) {
+        if (navigationActive && destination == SettingsDestination.Status && !healthRequested) {
+            healthRequested = true
+            vm.refreshHealth()
+        }
     }
 
     var notificationsOn by remember { mutableStateOf(true) }
@@ -141,56 +143,63 @@ fun SettingsScreen(
     }
 
     val destinationStates = rememberSaveableStateHolder()
-    val title = destination.title
-    destinationStates.SaveableStateProvider(destination.name) {
-        ScreenScaffold(
-            title = title,
-            subtitle = null,
-            snapshot = snapshot,
-            now = now,
-            snackbar = snackbar,
-            refreshing = snapshot.manualRefreshing,
-            pullToRefreshEnabled = false,
-            navigationIcon = {
-                if (destination != SettingsDestination.Overview) {
-                    IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to settings")
-                    }
-                }
-            },
-            onStatus = if (destination == SettingsDestination.Status) null else onStatus,
-            showConnectionBanner = destination != SettingsDestination.Status,
-            onRefresh = if (destination == SettingsDestination.Status) vm::refreshSources else vm::refresh,
-            headerSize = if (destination == SettingsDestination.Overview) ScreenHeaderSize.Large else ScreenHeaderSize.Compact,
-        ) {
-            when (destination) {
-                SettingsDestination.Overview -> settingsOverview(snapshot, now, onDestination)
-                SettingsDestination.Connections -> connectionsSettings(
-                    baseUrl, managedOAuth, browser.error, browser.busy, onReauthenticate,
-                    onOpenGuide = { guideOpen = true },
-                    onDisconnect = { confirmSignOut = true },
-                )
-                SettingsDestination.Notifications -> notificationsSettings(
-                    notificationsOn = notificationsOn,
-                    exactAlarms = exactAlarms,
-                    automaticTracking = automaticTracking,
-                    onAutomaticTracking = vm::setAutomaticTracking,
-                    onPromotedNotifications = promotionIntent?.takeIf { !promotedNotifications }?.let { intent ->
-                        { context.startActivity(intent) }
-                    },
-                    onNotifications = {
-                        if (!notificationsOn && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-                    },
-                    onExactAlarms = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
-                            if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+    PredictiveNavigation(
+        destination = destination,
+        backDestination = SettingsDestination.Overview.takeUnless { destination == SettingsDestination.Overview },
+        onBack = { onDestination(SettingsDestination.Overview) },
+        isRootDestination = { it == SettingsDestination.Overview },
+    ) { page ->
+        destinationStates.SaveableStateProvider(page.name) {
+            ScreenScaffold(
+                title = page.title,
+                subtitle = null,
+                snapshot = snapshot,
+                now = now,
+                snackbar = snackbar,
+                refreshing = snapshot.manualRefreshing,
+                pullToRefreshEnabled = false,
+                navigationIcon = {
+                    if (page != SettingsDestination.Overview) {
+                        IconButton(onClick = { onDestination(SettingsDestination.Overview) }) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to settings")
                         }
-                    },
-                )
-                SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
-                SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
+                    }
+                },
+                onStatus = if (page == SettingsDestination.Status) null else onStatus,
+                showConnectionBanner = false,
+                onRefresh = if (page == SettingsDestination.Status) vm::refreshSources else vm::refresh,
+                headerSize = if (page == SettingsDestination.Overview) ScreenHeaderSize.Large else ScreenHeaderSize.Compact,
+                tintHeaderOnScroll = false,
+            ) {
+                when (page) {
+                    SettingsDestination.Overview -> settingsOverview(snapshot, now, onDestination)
+                    SettingsDestination.Connections -> connectionsSettings(
+                        baseUrl, managedOAuth, browser.error, browser.busy, onReauthenticate,
+                        onOpenGuide = { guideOpen = true },
+                        onDisconnect = { confirmSignOut = true },
+                    )
+                    SettingsDestination.Notifications -> notificationsSettings(
+                        notificationsOn = notificationsOn,
+                        exactAlarms = exactAlarms,
+                        automaticTracking = automaticTracking,
+                        onAutomaticTracking = vm::setAutomaticTracking,
+                        onPromotedNotifications = promotionIntent?.takeIf { !promotedNotifications }?.let { intent ->
+                            { context.startActivity(intent) }
+                        },
+                        onNotifications = {
+                            if (!notificationsOn && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            else context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                        },
+                        onExactAlarms = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
+                                if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                            }
+                        },
+                    )
+                    SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
+                    SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
+                }
             }
         }
     }
@@ -529,6 +538,16 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
     }
 
     item { SectionHeader("Source health") }
+    snapshot.error?.let { error ->
+        item(key = "dashboard-error") {
+            Text(
+                "Dashboard update failed: ${MainViewModel.describe(error)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+            )
+        }
+    }
     item {
         val colors = MaterialTheme.colorScheme
         val (container, onContainer, stateIcon) = when {

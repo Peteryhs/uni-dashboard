@@ -79,6 +79,7 @@ fun ScreenScaffold(
     refreshLabel: String = "Refresh",
     pullToRefreshEnabled: Boolean = true,
     headerSize: ScreenHeaderSize = ScreenHeaderSize.Medium,
+    tintHeaderOnScroll: Boolean = true,
     listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
@@ -117,7 +118,8 @@ fun ScreenScaffold(
                 }
                 val colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    scrolledContainerColor = if (tintHeaderOnScroll) MaterialTheme.colorScheme.surfaceContainer
+                        else MaterialTheme.colorScheme.surface,
                 )
                 when (headerSize) {
                     ScreenHeaderSize.Compact -> TopAppBar(
@@ -183,8 +185,9 @@ fun ScreenScaffold(
 @Composable
 private fun StatusAction(snapshot: Snapshot, now: Long, onClick: () -> Unit) {
     val summary = snapshot.health?.summaryAt(now)
-    val checkFailed = snapshot.healthError != null
-    val checkFailureDetails = snapshot.healthError?.let(MainViewModel::describe)
+    val dashboardFailed = snapshot.error != null
+    val checkFailed = snapshot.healthError != null || dashboardFailed
+    val checkFailureDetails = (snapshot.error ?: snapshot.healthError)?.let(MainViewModel::describe)
     val warning = checkFailed || summary?.condition != "healthy"
     val count = when {
         checkFailed -> "?"
@@ -194,6 +197,7 @@ private fun StatusAction(snapshot: Snapshot, now: Long, onClick: () -> Unit) {
         else -> null
     }
     val description = when {
+        dashboardFailed -> "Dashboard update failed${checkFailureDetails?.let { ": $it" }.orEmpty()} Open Status for details."
         checkFailed && snapshot.health != null ->
             "Source status check failed${checkFailureDetails?.let { ": $it" }.orEmpty()} Showing last known status. Open Status to retry."
         checkFailed ->

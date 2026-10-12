@@ -1,6 +1,5 @@
 package dev.peteryhs.unidash.ui.today
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -48,7 +47,6 @@ fun RecommendationExplanationScreen(
     onRefresh: () -> Unit,
     onStatus: (() -> Unit)? = null,
 ) {
-    BackHandler(onBack = onBack)
     ScreenScaffold(
         title = "How suggestions are chosen",
         subtitle = null,

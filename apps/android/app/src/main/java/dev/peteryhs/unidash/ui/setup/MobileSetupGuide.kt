@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,8 +38,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.fillMaxHeight
 import dev.peteryhs.unidash.data.Credentials
 import dev.peteryhs.unidash.ui.theme.Spacing
 
@@ -71,8 +71,13 @@ fun MobileSetupGuide(
         catch (_: Exception) { linkError = "No browser could open this link. Open it in a browser on another device." }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.safeDrawingPadding().padding(Spacing.l)) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetMaxWidth = 560.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        BoxWithConstraints(Modifier.fillMaxHeight(0.94f).padding(horizontal = Spacing.m, vertical = Spacing.s)) {
             Surface(
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = maxHeight),
                 shape = MaterialTheme.shapes.extraLarge,

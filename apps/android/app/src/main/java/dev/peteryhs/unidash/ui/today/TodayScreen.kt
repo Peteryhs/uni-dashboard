@@ -59,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +88,7 @@ import dev.peteryhs.unidash.ui.InitialLoadingNote
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.ScreenHeaderSize
+import dev.peteryhs.unidash.ui.PredictiveNavigation
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.ShapedIcon
 import dev.peteryhs.unidash.ui.theme.Spacing
@@ -98,7 +100,15 @@ import kotlin.math.roundToInt
 private const val HOUR = 3_600_000L
 
 @Composable
-fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: SnackbarHostState, onStatus: (() -> Unit)? = null) {
+fun TodayScreen(
+    vm: MainViewModel,
+    snapshot: Snapshot,
+    now: Long,
+    snackbar: SnackbarHostState,
+    onStatus: (() -> Unit)? = null,
+    explanationOpen: Boolean,
+    onExplanation: (Boolean) -> Unit,
+) {
     val bundle = snapshot.bundle
     val alertCard = bundle?.card("alert")
     val alert = alertCard?.payload<Alert>()
@@ -107,51 +117,59 @@ fun TodayScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snac
     val dueCard = bundle?.card("due_soon")
     val due = dueCard?.payload<DueSoon>()
     val recs = snapshot.recommendations
-    var showRecommendationExplanation by rememberSaveable { mutableStateOf(false) }
     val subtitle = LocalDate.now(dev.peteryhs.unidash.data.CAMPUS_ZONE)
         .format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.CANADA))
 
-    if (showRecommendationExplanation) {
-        RecommendationExplanationScreen(
-            diagnostics = recs?.diagnostics,
-            warnings = recs?.warnings.orEmpty(),
-            snapshot = snapshot,
-            now = now,
-            snackbar = snackbar,
-            onBack = { showRecommendationExplanation = false },
-            onRefresh = vm::refresh,
-            onStatus = onStatus,
-        )
-        return
-    }
-
-    ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus, headerSize = ScreenHeaderSize.Large) {
-        if (!snapshot.hasData) {
-            item {
-                when {
-                    snapshot.refreshing && !snapshot.manualRefreshing -> InitialLoadingNote("Loading your dashboard…")
-                    snapshot.manualRefreshing -> EmptyNote("Loading your dashboard…")
-                    else -> EmptyNote("Nothing loaded yet. Pull to refresh.")
+    val pageStates = rememberSaveableStateHolder()
+    PredictiveNavigation(
+        destination = explanationOpen,
+        backDestination = false.takeIf { explanationOpen },
+        onBack = { onExplanation(false) },
+        isRootDestination = { !it },
+    ) { explanation ->
+        pageStates.SaveableStateProvider(explanation) {
+            if (explanation) {
+                RecommendationExplanationScreen(
+                    diagnostics = recs?.diagnostics,
+                    warnings = recs?.warnings.orEmpty(),
+                    snapshot = snapshot,
+                    now = now,
+                    snackbar = snackbar,
+                    onBack = { onExplanation(false) },
+                    onRefresh = vm::refresh,
+                    onStatus = onStatus,
+                )
+            } else {
+                ScreenScaffold("Today", subtitle, snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus, headerSize = ScreenHeaderSize.Large) {
+                    if (!snapshot.hasData) {
+                        item {
+                            when {
+                                snapshot.refreshing && !snapshot.manualRefreshing -> InitialLoadingNote("Loading your dashboard…")
+                                snapshot.manualRefreshing -> EmptyNote("Loading your dashboard…")
+                                else -> EmptyNote("Nothing loaded yet. Pull to refresh.")
+                            }
+                        }
+                        return@ScreenScaffold
+                    }
+                    if (alert != null && alert.count > 0 && !alert.dismissed) {
+                        item(key = "alert") { AlertCard(alert, alertCard.state, alertCard.observedAt, now, onDismiss = { vm.dismissAlert(alert.key) }) }
+                    }
+                    val recommended = recs?.items.orEmpty()
+                    val nextIsRecommended = next != null && recommended.any { it.represents(next) }
+                    if (recommended.isNotEmpty() || next == null) {
+                        recommendations(recs?.headline, recommended, now, vm) {
+                            onExplanation(true)
+                        }
+                    }
+                    if (next != null && !nextIsRecommended && nextCard.state != CardState.Degraded) {
+                        item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now, emphasize = recommended.isEmpty()) }
+                    } else if (next != null && !nextIsRecommended) {
+                        item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
+                    }
+                    if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now, recommended)
                 }
             }
-            return@ScreenScaffold
         }
-        if (alert != null && alert.count > 0 && !alert.dismissed) {
-            item(key = "alert") { AlertCard(alert, alertCard.state, alertCard.observedAt, now, onDismiss = { vm.dismissAlert(alert.key) }) }
-        }
-        val recommended = recs?.items.orEmpty()
-        val nextIsRecommended = next != null && recommended.any { it.represents(next) }
-        if (recommended.isNotEmpty() || next == null) {
-            recommendations(recs?.headline, recommended, now, vm) {
-                showRecommendationExplanation = true
-            }
-        }
-        if (next != null && !nextIsRecommended && nextCard.state != CardState.Degraded) {
-            item(key = "next") { NextUpCard(next, nextCard.state, nextCard.observedAt, now, emphasize = recommended.isEmpty()) }
-        } else if (next != null && !nextIsRecommended) {
-            item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
-        }
-        if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now, recommended)
     }
 }
 
@@ -425,8 +443,11 @@ private fun RecommendationCard(
             },
         ) {
             Column(
-                Modifier.fillMaxWidth().padding(if (isLead) 24.dp else Spacing.s),
-                verticalArrangement = Arrangement.spacedBy(if (isLead) Spacing.m else Spacing.xs),
+                Modifier.fillMaxWidth().padding(
+                    horizontal = if (isLead) 24.dp else 16.dp,
+                    vertical = if (isLead) 24.dp else 12.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(if (isLead) Spacing.m else 12.dp),
             ) {
                 if (isLead) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
@@ -648,40 +669,67 @@ private fun LazyListScope.dueSoon(
                     fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
                 ),
         ) {
-            Row(
+            androidx.compose.foundation.layout.BoxWithConstraints(
                 Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
             ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    Text(item.title, style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (url != null) {
-                        val sourceLabel = item.links.firstOrNull { it.url == url }?.label ?: "LEARN"
-                        TextButton(
-                            onClick = { uri.openUri(url) },
-                            shapes = ButtonDefaults.shapes(),
-                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = Spacing.xs),
-                            modifier = Modifier.semantics { contentDescription = "Open ${item.title} in $sourceLabel" },
-                        ) {
-                            Text(sourceLabel)
-                            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+                val compact = maxWidth < 400.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.2f
+                val sourceLabel = item.links.firstOrNull { it.url == url }?.label ?: "LEARN"
+                val relativeColor = if (item.startsAt - now < 24 * HOUR) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                if (compact) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(Format.relative(item.startsAt, now), style = MaterialTheme.typography.labelLargeEmphasized, color = relativeColor)
+                        if (url != null) DueSourceButton(item.title, url, sourceLabel, uri)
+                    }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (url != null) DueSourceButton(item.title, url, sourceLabel, uri)
                         }
+                        Text(
+                            Format.relative(item.startsAt, now),
+                            style = MaterialTheme.typography.labelLargeEmphasized,
+                            color = relativeColor,
+                            modifier = Modifier.padding(top = Spacing.xs),
+                        )
                     }
                 }
-                Text(
-                    Format.relative(item.startsAt, now),
-                    style = MaterialTheme.typography.labelLargeEmphasized,
-                    color = if (item.startsAt - now < 24 * HOUR) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
     if (items.size > 6) item { EmptyNote("+${items.size - 6} more in Calendar") }
+}
+
+@Composable
+private fun DueSourceButton(title: String, url: String, sourceLabel: String, uri: androidx.compose.ui.platform.UriHandler) {
+    TextButton(
+        onClick = { uri.openUri(url) },
+        shapes = ButtonDefaults.shapes(),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = Spacing.xs),
+        modifier = Modifier.semantics { contentDescription = "Open $title in $sourceLabel" },
+    ) {
+        Text(sourceLabel)
+        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+    }
 }
 
 private fun dueGroupShape(index: Int, count: Int): RoundedCornerShape {

@@ -322,79 +322,63 @@ private fun EventRow(
             inner = innerRadius,
         ),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.s, vertical = Spacing.s)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-            ) {
-                Column(
-                    Modifier.width(88.dp),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
-                    when {
-                        ev.allDay -> Text(
-                            if (ev.category == "deadline" || ev.category == "exam") "Date only" else "All day",
-                            style = MaterialTheme.typography.labelLargeEmphasized,
-                            color = timeColor,
-                        )
-                        ev.category == "deadline" -> {
-                            Text("Due", style = MaterialTheme.typography.labelSmall, color = timeColor)
-                            Text(Format.time(ev.startsAt), style = MaterialTheme.typography.labelLargeEmphasized, color = timeColor)
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compact = maxWidth < 420.dp || LocalDensity.current.fontScale >= 1.2f
+                if (compact) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
+                            EventCategoryLabel(ev, label, past, happening, expanded, accent)
+                            if (happening) EventNowLabel(expanded)
+                            EventTimeContent(ev, timeColor, compact = true)
                         }
-                        else -> {
-                            Text(Format.time(ev.startsAt), style = MaterialTheme.typography.labelLargeEmphasized, color = timeColor)
-                            if (ev.endsAt > ev.startsAt) Text(Format.time(ev.endsAt), style = MaterialTheme.typography.labelMedium, color = timeColor)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Box(Modifier.weight(1f)) { EventTitle(ev, past, happening, expanded, contentColor) }
+                            EventDisclosureButton(ev, expanded, past, happening, onToggle)
                         }
+                        if (ev.location.isNotBlank() && !roomShownBelow && !expanded) {
+                            Text(
+                                ev.location,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (happening) contentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        alerts.forEach { ChangeBlocks(it.detail) }
                     }
-                }
-                Column(
-                    Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
-                    Text(
-                        listOfNotNull(ev.course?.takeIf { it.isNotBlank() && !ev.title.startsWith(it) }, label).joinToString(" · "),
-                        style = MaterialTheme.typography.labelMediumEmphasized,
-                        color = when {
-                            past -> MaterialTheme.colorScheme.onSurfaceVariant
-                            happening && !expanded -> MaterialTheme.colorScheme.onPrimaryContainer
-                            ev.category == "opens" || ev.category == "event" -> MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> accent
-                        },
-                    )
-                    if (happening) Text(
-                        "Happening now",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Text(
-                        ev.title,
-                        style = MaterialTheme.typography.titleMediumEmphasized,
-                        color = when {
-                            past -> MaterialTheme.colorScheme.onSurfaceVariant
-                            happening && !expanded -> contentColor
-                            ev.phase == "opens" -> MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> contentColor
-                        },
-                    )
-                    if (ev.location.isNotBlank() && !roomShownBelow) {
-                        Text(ev.location, style = MaterialTheme.typography.bodySmall, color = if (happening && !expanded) contentColor else MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                    ) {
+                        Column(Modifier.width(88.dp), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            EventTimeContent(ev, timeColor, compact = false)
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            EventCategoryLabel(ev, label, past, happening, expanded, accent)
+                            if (happening) EventNowLabel(expanded)
+                            EventTitle(ev, past, happening, expanded, contentColor)
+                            if (ev.location.isNotBlank() && !roomShownBelow && !expanded) {
+                                Text(
+                                    ev.location,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (happening) contentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            alerts.forEach { ChangeBlocks(it.detail) }
+                        }
+                        EventDisclosureButton(ev, expanded, past, happening, onToggle)
                     }
-                    alerts.forEach { ChangeBlocks(it.detail) }
-                }
-                FilledTonalIconButton(
-                    onClick = onToggle,
-                    shapes = IconButtonDefaults.shapes(),
-                    modifier = Modifier.semantics {
-                        contentDescription = if (expanded) "Hide details for ${ev.title}" else "Show details for ${ev.title}"
-                        stateDescription = listOfNotNull(
-                            if (past) "Past event" else null,
-                            if (happening) "Happening now" else null,
-                            if (expanded) "Expanded" else "Collapsed",
-                        ).joinToString(", ")
-                    },
-                ) {
-                    DisclosureIcon(expanded = expanded, tint = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
             AnimatedVisibility(
@@ -405,6 +389,105 @@ private fun EventRow(
                     fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
             ) { EventDetails(ev, now, alerts) }
         }
+    }
+}
+
+@Composable
+private fun EventCategoryLabel(
+    ev: CalendarEvent,
+    label: String,
+    past: Boolean,
+    happening: Boolean,
+    expanded: Boolean,
+    accent: Color,
+) {
+    Text(
+        listOfNotNull(ev.course?.takeIf { it.isNotBlank() && !ev.title.startsWith(it) }, label).joinToString(" · "),
+        style = MaterialTheme.typography.labelMediumEmphasized,
+        color = when {
+            past -> MaterialTheme.colorScheme.onSurfaceVariant
+            happening && !expanded -> MaterialTheme.colorScheme.onPrimaryContainer
+            ev.category == "opens" || ev.category == "event" -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> accent
+        },
+    )
+}
+
+@Composable
+private fun EventNowLabel(expanded: Boolean) {
+    Text(
+        "Happening now",
+        style = MaterialTheme.typography.labelSmall,
+        color = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimaryContainer,
+    )
+}
+
+@Composable
+private fun EventTitle(ev: CalendarEvent, past: Boolean, happening: Boolean, expanded: Boolean, contentColor: Color) {
+    Text(
+        ev.title,
+        style = MaterialTheme.typography.titleMediumEmphasized,
+        color = when {
+            past -> MaterialTheme.colorScheme.onSurfaceVariant
+            happening && !expanded -> contentColor
+            ev.phase == "opens" -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> contentColor
+        },
+    )
+}
+
+@Composable
+private fun EventTimeContent(ev: CalendarEvent, timeColor: Color, compact: Boolean) {
+    when {
+        ev.allDay -> Text(
+            if (ev.category == "deadline" || ev.category == "exam") "Date only" else "All day",
+            style = MaterialTheme.typography.labelLargeEmphasized,
+            color = timeColor,
+        )
+        ev.category == "deadline" -> {
+            if (compact) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text("Due", style = MaterialTheme.typography.labelSmall, color = timeColor)
+                    Text(Format.time(ev.startsAt), style = MaterialTheme.typography.labelLargeEmphasized, color = timeColor)
+                }
+            } else {
+                Text("Due", style = MaterialTheme.typography.labelSmall, color = timeColor)
+                Text(Format.time(ev.startsAt), style = MaterialTheme.typography.labelLargeEmphasized, color = timeColor)
+            }
+        }
+        compact -> Text(
+            if (ev.endsAt > ev.startsAt) "${Format.time(ev.startsAt)} – ${Format.time(ev.endsAt)}" else Format.time(ev.startsAt),
+            style = MaterialTheme.typography.labelLargeEmphasized,
+            color = timeColor,
+        )
+        else -> {
+            Text(Format.time(ev.startsAt), style = MaterialTheme.typography.labelLargeEmphasized, color = timeColor)
+            if (ev.endsAt > ev.startsAt) Text(Format.time(ev.endsAt), style = MaterialTheme.typography.labelMedium, color = timeColor)
+        }
+    }
+}
+
+@Composable
+private fun EventDisclosureButton(
+    ev: CalendarEvent,
+    expanded: Boolean,
+    past: Boolean,
+    happening: Boolean,
+    onToggle: () -> Unit,
+) {
+    FilledTonalIconButton(
+        onClick = onToggle,
+        shapes = IconButtonDefaults.shapes(),
+        modifier = Modifier.size(48.dp).semantics {
+            contentDescription = if (expanded) "Hide details for ${ev.title}" else "Show details for ${ev.title}"
+            stateDescription = listOfNotNull(
+                if (past) "Past event" else null,
+                if (happening) "Happening now" else null,
+                if (expanded) "Expanded" else "Collapsed",
+            ).joinToString(", ")
+        },
+    ) {
+        DisclosureIcon(expanded = expanded, tint = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }
 
@@ -434,12 +517,12 @@ private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChan
         .distinctBy { it.url }
 
     Column(
-        Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
-        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+        Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (ev.category == "opens" && ev.dueAt != null) DetailLine("Due", Format.dayTime(ev.dueAt))
-        if (ev.location.isNotBlank()) DetailLine("Location", ev.location)
+        if (ev.location.isNotBlank() && alerts.none { it.detail.roomMoved }) DetailLine("Location", ev.location)
         alerts.filterNot { it.detail.confirmed }.forEach { change ->
             val note = if (change.detail.roomMoved) {
                 "This room change is inferred from the schedule pattern. Confirm it with the course source."
@@ -535,9 +618,9 @@ private fun SyllabusReadings(readings: List<String>) {
 
 @Composable
 private fun DetailLine(label: String, value: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
-        Text(value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

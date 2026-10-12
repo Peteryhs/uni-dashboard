@@ -21,6 +21,8 @@ The README now describes the implemented web, native Android, Node relay and Clo
 
 The review also checked notification expiry/cleanup, shared cache behavior, source polling and quota-sensitive reads. One deployment is one personal shared data space: every authorized Access identity can modify its data and connections. It is not a multi-user account boundary.
 
+The next Android refinement adds predictive parent previews for nested settings and recommendation explanations, returns the other main tabs to Today, and leaves root back-to-home to Android. Completed gestures commit before settling; cancelled gestures preserve the current route, and preview pages cannot initiate source refreshes. Main navigation reopens Today/Settings at their overview while retaining list state. Secondary tasks have roomier insets; compact agenda rows place time above the title, align details with summaries and avoid duplicated locations. Settings removes its header tint/band while retaining errors in the status action and Status page. The setup guide now uses a native Material sheet with predictive dismissal.
+
 ## Checks completed
 
 | Check | Result |
@@ -29,7 +31,7 @@ The review also checked notification expiry/cleanup, shared cache behavior, sour
 | Local D1 row budget | Calendar and recommendation reads stay below the regression's 1,000-row limit with a week of minute receipts; no data writes or AI calls on these reads. Included in the suite above. |
 | Web production build | Type-check and build passed. Existing third-party annotation and bundle-size warnings remain. |
 | Worker bundle | Dry run passed with the current D1, AI and assets bindings; no deployment. The suite also exercises the actual local Wrangler assets router. |
-| Android | Debug APK built; all 138 unit tests passed. Unrestricted lint completed with 0 errors and 11 warnings using a single build worker. |
+| Android | Debug APK built; all 141 unit tests passed, including cancelled/completed predictive gestures and button-back fallback. Unrestricted lint completed with 0 errors and 11 warnings using a single build worker. |
 | Web visual/interaction check | Checked desktop and 390/375-pixel layouts using synthetic data. Icons sit beside timing; narrow screens have 44-pixel targets and no horizontal overflow. Tap/focus tooltips, Escape dismissal and separate recommendation expansion work. |
 | Android design contract | Local checks found no broken design token references or insufficient text contrast in declared component pairs. Custom fallback text/container pairs exceed 4.5:1. The external document validator was blocked by automatic approval review because it would download and execute an unverified package; it was not run. |
 
@@ -39,7 +41,7 @@ Native rendering remains unverified: this workspace has no connected phone, inst
 
 ## Before distributing v1
 
-- [ ] Test a real Android device: tooltip tap/long-press, TalkBack, keyboard navigation, larger fonts, pull-to-refresh, quiet background updates and dining controls. Check rapid tab changes, restored scroll/disclosure state, animation scale set to zero, both themes and wallpaper-derived colors. No device or emulator was attached during this audit. Check API 29/33 notification fallbacks and API 36+ system promotion separately.
+- [ ] Test a real Android device: tooltip tap/long-press, TalkBack, keyboard navigation, larger fonts, pull-to-refresh, quiet background updates and dining controls. Check predictive-back completion/cancellation from every nested page and main tab, a swipe during page entry, root back-to-home, three-button back, setup-sheet dismissal, rapid tab changes, restored scroll/disclosure state, RTL, animation scale set to zero, both themes and wallpaper-derived colors. Check the refined task/agenda insets against actual device text sizes. No device or emulator was attached during this audit. Check API 29/33 notification fallbacks and API 36+ system promotion separately.
 - [ ] Exercise reminder and live-tracker cleanup on device through expiry while offline, room/time changes, cancellation, reboot, Unpin, permission/channel denial, disabled tracking and sign-out/sign-in. Unit tests do not establish system presentation or alarm delivery.
 - [ ] Review the deployed Access policy for the intended owner and the Android OAuth flow. Use a separate Worker/D1 instance for another student's private feeds.
 - [ ] Check real Cloudflare D1 row totals, AI totals and Worker CPU percentiles/errors. CPU has a per-invocation allowance, not a daily pool. Account authentication did not permit verification of live account usage in this local audit.

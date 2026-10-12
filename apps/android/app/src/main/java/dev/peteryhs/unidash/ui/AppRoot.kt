@@ -1,19 +1,10 @@
 package dev.peteryhs.unidash.ui
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.focusGroup
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Restaurant
@@ -35,11 +26,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
 import dev.peteryhs.unidash.ui.setup.hasSeenMobileGuide
 import androidx.compose.runtime.remember
@@ -96,6 +85,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.Today) }
     val tabStateHolder = rememberSaveableStateHolder()
     var settingsDestination by rememberSaveable { mutableStateOf(SettingsDestination.Overview) }
+    var explanationOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val now = rememberNow()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -107,58 +97,31 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
     val alert = snapshot.bundle?.card("alert")?.payload<Alert>()
     val alertBadge = alert != null && alert.count > 0 && !alert.dismissed
     val openStatus = {
+        explanationOpen = false
         settingsDestination = SettingsDestination.Status
         tab = Tab.Settings
     }
+    val selectTab: (Tab) -> Unit = { selected ->
+        // Main destinations always reopen at their overview, with list/disclosure state retained.
+        explanationOpen = false
+        if (selected == Tab.Settings) settingsDestination = SettingsDestination.Overview
+        tab = selected
+    }
 
-    var displayedTab by remember { mutableStateOf(tab) }
-    val contentAlpha = remember { Animatable(1f) }
-    val motionScheme = MaterialTheme.motionScheme
-    val focusManager = LocalFocusManager.current
-    var contentHasFocus by remember { mutableStateOf(false) }
-    val transitioning by remember {
-        derivedStateOf { displayedTab != tab || contentAlpha.value < 1f }
-    }
-    LaunchedEffect(tab, motionScheme) {
-        if (displayedTab != tab) {
-            if (contentHasFocus) focusManager.clearFocus(force = true)
-            contentAlpha.animateTo(
-                targetValue = 0f,
-                animationSpec = motionScheme.fastEffectsSpec(),
-            )
-            displayedTab = tab
-        }
-        contentAlpha.animateTo(
-            targetValue = 1f,
-            animationSpec = motionScheme.slowEffectsSpec(),
-        )
-    }
-    val inputBlocker = if (transitioning) {
-        Modifier
-            .focusProperties { canFocus = false }
-            .onPreviewKeyEvent { true }
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        event.changes.forEach { it.consume() }
-                    }
-                }
-            }
-            .clearAndSetSemantics { }
-    } else Modifier
     val content: @Composable () -> Unit = {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = contentAlpha.value }
-                .then(inputBlocker)
-                .onFocusChanged { contentHasFocus = it.hasFocus }
-                .focusGroup(),
-        ) {
-            tabStateHolder.SaveableStateProvider(displayedTab.name) {
-                when (displayedTab) {
-                    Tab.Today -> TodayScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
+        PredictiveNavigation(
+            destination = tab,
+            backDestination = Tab.Today.takeUnless { tab == Tab.Today },
+            onBack = { selectTab(Tab.Today) },
+            topLevel = true,
+        ) { page ->
+            tabStateHolder.SaveableStateProvider(page.name) {
+                when (page) {
+                    Tab.Today -> TodayScreen(
+                        vm, snapshot, now, snackbar, onStatus = openStatus,
+                        explanationOpen = explanationOpen,
+                        onExplanation = { explanationOpen = it },
+                    )
                     Tab.Calendar -> CalendarScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
                     Tab.Food -> FoodScreen(vm, snapshot, now, snackbar, onStatus = openStatus)
                     Tab.Settings -> SettingsScreen(
@@ -184,7 +147,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
                     Tab.entries.forEach { t ->
                         NavigationRailItem(
                             selected = tab == t,
-                            onClick = { tab = t; if (t == Tab.Settings) settingsDestination = SettingsDestination.Overview },
+                            onClick = { selectTab(t) },
                             icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
                             label = {
                                 Text(
@@ -207,7 +170,7 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
                     Tab.entries.forEach { t ->
                         ShortNavigationBarItem(
                             selected = tab == t,
-                            onClick = { tab = t; if (t == Tab.Settings) settingsDestination = SettingsDestination.Overview },
+                            onClick = { selectTab(t) },
                             icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
                             label = {
                                 Text(
