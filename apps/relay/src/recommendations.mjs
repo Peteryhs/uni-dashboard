@@ -11,6 +11,12 @@ import { MENU_ROW_LIMIT } from './menu.mjs';
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const POLICY = Object.freeze({ schedule_notice_hours: 24, deadline_change_hours: 72, tutorial_work_notice_hours: 72, task_horizon_days: 14, small_task_feed_days: 2, max_feed_items: 16 });
+const WEATHER_HORIZON_MS = 12 * HOUR;
+const MAX_WEATHER_ADVISORIES = 3;
+const WEATHER_SNOW_CODES = new Set([71, 73, 75, 77, 85, 86]);
+const WEATHER_FREEZING_CODES = new Set([56, 57, 66, 67]);
+const WEATHER_STORM_CODES = new Set([95, 96, 99]);
+const WEATHER_FOG_CODES = new Set([45, 48]);
 const ACTION_KEY = 'RECOMMENDATION_ACTIONS_JSON';
 const ACTION_CAS_ATTEMPTS = 4;
 const dateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -106,6 +112,126 @@ function taskItem(event, entry, course, now) {
   });
 }
 function taskTime(task) { return task.due_at ?? task.starts_at ?? (task.scheduled_date ? clock(task.scheduled_date, 23, 59) : Infinity); }
+function firstFiniteWeather(row, names) {
+  for (const name of names) if (Number.isFinite(row?.[name])) return row[name];
+  return null;
+}
+/** Valid epoch milliseconds only; a cache with an absurd or fractional value must not throw. */
+function safeEpoch(ms) {
+  return Number.isSafeInteger(ms) && Math.abs(ms) <= 8.64e15 ? ms : null;
+}
+function safeEpochIso(ms) {
+  const epoch = safeEpoch(ms);
+  if (epoch === null) return null;
+  const date = new Date(epoch);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+function forecastAgeLabel(observedAt, now) {
+  const epoch = safeEpoch(observedAt);
+  if (epoch === null) return 'of unknown age';
+  const age = Math.min(Math.max(0, now - epoch), 365 * DAY);
+  return age < MIN ? 'just cached' : age < HOUR ? `${Math.round(age / MIN)} min old` : age < DAY ? `${Math.round(age / HOUR)} h old` : `${Math.round(age / DAY)} d old`;
+}
+function forecastAgeText(observedAt, now) {
+  const iso = safeEpochIso(observedAt);
+  return iso ? `cached ${iso} (${forecastAgeLabel(observedAt, now)})` : 'cached at an unknown time';
+}
+function weatherWhen(at, now) {
+  if (at <= now) return 'Now';
+  if (at - now <= 30 * MIN) return 'Soon';
+  if (at - now <= HOUR) return 'Within the next hour';
+  if (day(at) === day(now)) return `Around ${displayTime(at)}`;
+  if (day(at) === shift(day(now), 1)) return `Tomorrow around ${displayTime(at)}`;
+  return `${day(at)} around ${displayTime(at)}`;
+}
+function visibilityText(metres) {
+  return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`;
+}
+function weatherHazards(row) {
+  const hazards = [];
+  const measuredSnow = firstFiniteWeather(row, ['snow_cm', 'snowfall_cm', 'snowfall']);
+  const measuredVisibility = firstFiniteWeather(row, ['visibility_m', 'visibility']);
+  const values = {
+    code: Number.isFinite(row.weather_code) ? Math.trunc(row.weather_code) : null,
+    feels: Number.isFinite(row.feels_c) ? row.feels_c : null,
+    precipProb: Number.isFinite(row.precip_prob) ? row.precip_prob : null,
+    precipMm: Number.isFinite(row.precip_mm) ? row.precip_mm : null,
+    wind: Number.isFinite(row.wind_kmh) ? row.wind_kmh : null,
+    snowCm: measuredSnow !== null && measuredSnow > 0 ? measuredSnow : null,
+    // A negative measurement is a bad value, not an invisible fog.
+    visibility: measuredVisibility !== null && measuredVisibility > 0 ? measuredVisibility : null,
+  };
+  const { code, feels, precipProb, precipMm, wind, snowCm, visibility } = values;
+  const ice = code !== null && WEATHER_FREEZING_CODES.has(code);
+  const snow = (snowCm !== null && snowCm >= 0.1) || (code !== null && WEATHER_SNOW_CODES.has(code));
+  const frozen = ice || snow;
+  if (!frozen && ((precipProb !== null && precipProb >= 50) || (precipMm !== null && precipMm >= 0.5))) {
+    const severe = (precipMm !== null && precipMm >= 5) || (precipProb !== null && precipProb >= 80 && precipMm !== null && precipMm >= 2);
+    hazards.push({ ...values, key: 'rain', severity: severe ? 2 : 1, row });
+  }
+  if (feels !== null && feels <= 0) hazards.push({ ...values, key: 'cold', severity: feels <= -15 ? 2 : 1, row });
+  if (feels !== null && feels >= 30) hazards.push({ ...values, key: 'heat', severity: feels >= 35 ? 2 : 1, row });
+  if (wind !== null && wind >= 35) hazards.push({ ...values, key: 'wind', severity: wind >= 60 ? 2 : 1, row });
+  if (snow || ice) {
+    const severe = code === 66 || code === 67 || code === 75 || code === 86 || (snowCm !== null && snowCm >= 2);
+    hazards.push({ ...values, key: 'snow', severity: severe ? 2 : 1, row, snow, iceOnly: ice && !snow });
+  }
+  if (code !== null && WEATHER_STORM_CODES.has(code)) hazards.push({ ...values, key: 'storm', severity: code === 96 || code === 99 ? 2 : 1, row });
+  if ((code !== null && WEATHER_FOG_CODES.has(code)) || (visibility !== null && visibility <= 1000)) {
+    hazards.push({ ...values, key: 'fog', severity: visibility !== null && visibility <= 200 ? 2 : 1, row });
+  }
+  return hazards;
+}
+function selectWeatherAdvisories(rows) {
+  const best = new Map();
+  for (const row of rows) for (const hazard of weatherHazards(row)) {
+    const previous = best.get(hazard.key);
+    if (!previous || hazard.severity > previous.severity || (hazard.severity === previous.severity && row.at < previous.row.at)) best.set(hazard.key, hazard);
+  }
+  return [...best.values()].sort((a, b) => b.severity - a.severity || a.row.at - b.row.at || a.key.localeCompare(b.key));
+}
+function weatherAdvisory(hazard, weather, now, nextBlock) {
+  const severe = hazard.severity >= 2, when = weatherWhen(hazard.row.at, now);
+  let title, detail, advice;
+  if (hazard.key === 'rain') {
+    title = severe ? 'Heavy rain: bring rain protection' : 'Rain likely: bring an umbrella';
+    detail = `${hazard.precipProb !== null ? `${Math.round(hazard.precipProb)}% chance of rain` : 'Rain is forecast'}${hazard.precipMm !== null && hazard.precipMm >= 0.1 ? `, about ${hazard.precipMm.toFixed(1)} mm` : ''}`;
+    advice = severe ? 'Bring an umbrella and rain protection; allow extra travel time.' : 'Bring an umbrella or rain jacket.';
+  } else if (hazard.key === 'cold') {
+    title = severe ? 'Severe cold: dress in warm layers' : 'Cold outside: dress warm';
+    detail = `Feels like ${Math.round(hazard.feels)}°C`;
+    advice = severe ? 'Cover exposed skin and limit time outdoors.' : 'Wear warm layers and cover exposed skin.';
+  } else if (hazard.key === 'heat') {
+    title = severe ? 'Severe heat: plan water and shade' : 'Heat outside: carry water';
+    detail = `Feels like ${Math.round(hazard.feels)}°C`;
+    advice = severe ? 'Carry water, avoid prolonged sun and plan indoor breaks.' : 'Carry water and plan shade or indoor breaks.';
+  } else if (hazard.key === 'wind') {
+    title = severe ? 'Severe wind: secure loose items' : 'Windy: secure loose items';
+    detail = `Winds about ${Math.round(hazard.wind)} km/h`;
+    advice = severe ? 'Avoid exposed routes and secure anything that could blow away.' : 'Allow extra travel time and secure anything loose.';
+  } else if (hazard.key === 'snow') {
+    const snowy = hazard.snow && hazard.snowCm !== null && hazard.snowCm > 0;
+    title = hazard.iceOnly ? severe ? 'Freezing rain: avoid icy surfaces' : 'Ice risk: watch for slippery surfaces'
+      : severe ? 'Heavy snow: allow extra travel time' : 'Snow or ice: allow extra travel time';
+    detail = hazard.iceOnly ? 'Freezing precipitation is forecast' : snowy ? `Snowfall about ${hazard.snowCm.toFixed(1)} cm` : 'Snow is forecast';
+    advice = severe ? 'Watch for icy or slippery surfaces; delay travel if possible.' : 'Watch for slippery surfaces and allow extra travel time.';
+  } else if (hazard.key === 'storm') {
+    title = severe ? 'Severe thunderstorms: plan to stay indoors' : 'Thunderstorms possible: plan to be indoors';
+    detail = severe ? 'Severe thunderstorms with possible hail are forecast' : 'Thunderstorms are forecast';
+    advice = severe ? 'Stay indoors, away from exposed areas and loose objects.' : 'Plan to be indoors while storms pass.';
+  } else {
+    title = severe ? 'Dense fog: slow down or delay travel' : 'Fog: allow extra travel time';
+    detail = hazard.visibility !== null ? `Visibility about ${visibilityText(hazard.visibility)}` : 'Fog is forecast';
+    advice = severe ? 'Slow down or delay travel until visibility improves.' : 'Allow extra travel time and use low-beam lights.';
+  }
+  return {
+    title, body: `${when}: ${detail}. ${advice}`, priority: severe ? 860 : 770, starts_at: hazard.row.at > now ? hazard.row.at : null,
+    state: weather.state || 'live', source_label: 'Cached weather forecast',
+    reason: nextBlock && Math.abs(hazard.row.at - nextBlock.starts_at) <= 90 * MIN ? 'Conditions around your next scheduled trip.' : severe ? 'A severe weather hazard is forecast within 12 hours.' : 'Weather may affect your next trip within 12 hours.',
+    evidence: `Forecast ${forecastAgeText(weather.observed_at, now)}; hourly conditions for ${safeEpochIso(hazard.row.at) ?? 'the selected hour'}.`,
+    revision_seed: [hazard.key, hazard.row.at, severe, title, detail, advice],
+  };
+}
 
 /** Preserve urgent ordering; use course variety among similarly ranked, non-urgent work. */
 export function rankRecommendationItems(items, trace = null) {
@@ -290,19 +416,38 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
         state, source_label: ready ? 'Cached dining recommendation' : 'Today’s menu', reason: 'Lunch is approaching in your campus time zone.', evidence: ready ? 'Uses the saved menu ranking; no AI request was made for this update.' : 'Current menu dishes; no personalized ranking is available.' }));
     }
   }
-  if (weather?.forecast?.length) {
-    const target = nextBlock && nextBlock.starts_at <= now + 3 * HOUR ? nextBlock.starts_at : now;
-    const hours = weather.forecast.filter(hour => hour.at >= now - HOUR && Math.abs(hour.at - target) <= 90 * MIN);
-    const hour = [...hours].sort((a, b) => Math.abs(a.at - target) - Math.abs(b.at - target))[0];
-    if (hour) {
-      const rain = Number.isFinite(hour.precip_prob) && hour.precip_prob >= 50 || Number.isFinite(hour.precip_mm) && hour.precip_mm >= 0.5;
-      const cold = Number.isFinite(hour.feels_c) && hour.feels_c <= 0, hot = Number.isFinite(hour.feels_c) && hour.feels_c >= 30, windy = Number.isFinite(hour.wind_kmh) && hour.wind_kmh >= 35;
-      const stale = ['stale', 'dead'].includes(weather.state);
-      candidates.push(item('weather', `${today}:${hour.at}`, { title: rain ? 'Rain near your next trip' : cold ? 'Cold weather outside' : hot ? 'Hot weather outside' : windy ? 'Windy weather outside' : 'Weather for your next break',
-        body: [Number.isFinite(hour.temp_c) ? `${Math.round(hour.temp_c)}°C` : 'No temperature', Number.isFinite(hour.feels_c) ? `feels ${Math.round(hour.feels_c)}°C` : null,
-          Number.isFinite(hour.precip_prob) ? `${Math.round(hour.precip_prob)}% rain` : null, rain ? 'bring an umbrella' : null, stale ? 'old forecast' : null].filter(Boolean).join(' · '),
-        priority: stale ? 250 : rain || cold || hot || windy ? 760 : 330, starts_at: hour.at, state: weather.state || 'live', source_label: 'Cached weather forecast',
-        reason: nextBlock ? 'Conditions around the next scheduled trip.' : 'Conditions around your current campus time.', evidence: `Forecast cached ${weather.observed_at ? new Date(weather.observed_at).toISOString() : 'at an unknown time'}.` }));
+  const forecastRows = Array.isArray(weather?.forecast) ? weather.forecast : [];
+  if (forecastRows.length) {
+    const currentHour = Math.floor(now / HOUR) * HOUR;
+    const hours = forecastRows
+      .filter(hour => hour && typeof hour === 'object' && safeEpoch(hour.at) !== null)
+      .filter(hour => hour.at >= currentHour && hour.at <= now + WEATHER_HORIZON_MS)
+      .sort((a, b) => a.at - b.at);
+    if (['stale', 'dead'].includes(weather.state)) {
+      candidates.push(item('weather', `${today}:old`, {
+        title: 'Old weather forecast',
+        body: `The saved weather forecast is ${forecastAgeLabel(weather.observed_at, now)}; it is an old forecast, not current weather. Check conditions before you leave.`,
+        priority: 250, starts_at: null, state: weather.state, source_label: 'Cached weather forecast',
+        reason: 'The forecast is too old to present hazards as current facts.',
+        evidence: `Forecast ${forecastAgeText(weather.observed_at, now)}; weather hazards are not treated as current.`,
+      }));
+      warnings.push('Weather forecast is old; hazards are not presented as current. Check current conditions before you leave.');
+    } else if (hours.length) {
+      const advisories = selectWeatherAdvisories(hours).slice(0, MAX_WEATHER_ADVISORIES);
+      if (advisories.length) {
+        for (const hazard of advisories) candidates.push(item('weather', `${today}:${hazard.key}`, weatherAdvisory(hazard, weather, now, nextBlock)));
+      } else {
+        const target = nextBlock && nextBlock.starts_at <= now + 3 * HOUR ? nextBlock.starts_at : now;
+        const hour = [...hours].sort((a, b) => Math.abs(a.at - target) - Math.abs(b.at - target) || a.at - b.at)[0];
+        candidates.push(item('weather', `${today}:general`, {
+          title: 'Weather for your next break',
+          body: [Number.isFinite(hour.temp_c) ? `${Math.round(hour.temp_c)}°C` : 'No temperature', Number.isFinite(hour.feels_c) ? `feels ${Math.round(hour.feels_c)}°C` : null,
+            Number.isFinite(hour.precip_prob) ? `${Math.round(hour.precip_prob)}% rain` : null, 'no notable weather expected'].filter(Boolean).join(' · '),
+          priority: 330, starts_at: hour.at > now ? hour.at : null, state: weather.state || 'live', source_label: 'Cached weather forecast',
+          reason: nextBlock ? 'Conditions around the next scheduled trip.' : 'Conditions around your current campus time.',
+          evidence: `Forecast ${forecastAgeText(weather.observed_at, now)}; no hazard crossed the advisory thresholds.`,
+        }));
+      }
     }
   }
   const sourceNames = { 'uw-portal-ics': 'Class schedule', 'google-calendar-ics': 'Google Calendar', 'uw-learn-ics': 'LEARN calendar', 'user-office-hours': 'Office hours' };

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteStore } from '../apps/relay/src/store.mjs';
 import { getCachedWeather, syncWeather } from '../apps/relay/src/weather-cache.mjs';
+import { hourlyForecast } from '../apps/relay/src/weather.mjs';
 
 test('weather is fetched once for thirty minutes and stays readable during provider failure', async () => {
   const store = new SqliteStore(':memory:');
@@ -53,4 +54,27 @@ test('repairing an invalid forecast respects an existing provider retry cooldown
   assert.equal((await syncWeather(store, { now: now + 15 * 60_000, fetchForecast })).status, 'ready');
   assert.equal(calls, 1);
   assert.equal((await getCachedWeather(store, { now: now + 15 * 60_000 })).error, '');
+});
+
+test('hourly forecast requests and maps weather code, snowfall and visibility', async () => {
+  const realFetch = globalThis.fetch;
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  let requested = '';
+  globalThis.fetch = async url => {
+    requested = String(url);
+    return { ok: true, json: async () => ({ timezone: 'America/Toronto', hourly: {
+      time: ['2026-10-07T08:00'], temperature_2m: [4], apparent_temperature: [1], precipitation_probability: [70],
+      precipitation: [1.2], wind_speed_10m: [42], weather_code: [73], snowfall: [0.8], visibility: [900],
+    } }) };
+  };
+  try {
+    const hours = await hourlyForecast(now, { force: true });
+    assert.match(requested, /weather_code/);
+    assert.match(requested, /snowfall/);
+    assert.match(requested, /visibility/);
+    assert.deepEqual(hours.get(now), { temp_c: 4, feels_c: 1, precip_prob: 70, precip_mm: 1.2, wind_kmh: 42,
+      weather_code: 73, snow_cm: 0.8, visibility_m: 900 });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

@@ -57,17 +57,18 @@
 .top-settings:disabled, .context-control:disabled, .section-control:disabled { color: #858c96; opacity: 0.72; }
 .recommendation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
 .hero-rec, .more-recs, .rec-detail, .section-panel, .menu-outlet, .course-card, .settings-open, .state-panel { border: 1px solid var(--dash-line); border-radius: 16px; background: var(--dash-panel); }
-.hero-rec, .more-recs { min-height: 232px; }
+.hero-rec { height: 288px; }
+.more-recs { min-height: 288px; }
 .hero-rec { display: flex; flex-direction: column; overflow: hidden; }
-.hero-primary { flex: 1; display: flex; flex-direction: column; padding: 22px 24px 18px; }
+.hero-primary { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 22px 24px 18px; overflow: hidden; }
 .neutral-label, .ai-label { display: inline-flex; align-items: center; width: fit-content; color: #ebedf0; font-size: 12px; font-weight: 600; }
 .neutral-label { text-transform: capitalize; }
 .ai-label { color: #6fa8ff; }
 .hero-rec--ai .hero-main h1,
 .rec-detail--ai h3 { color: #8dbaff; }
-.hero-main { position: relative; flex: 1; display: block; width: 100%; padding: 14px 20px 12px 0; text-align: left; }
-.hero-main h1 { max-width: 100%; margin: 0; color: #fff; font-size: clamp(26px, 3.6vw, var(--hero-title-max, 47px)); font-weight: 640; letter-spacing: -.045em; line-height: 1.08; text-wrap: balance; }
-.hero-main p { margin: 8px 0 0; color: #ccd1d8; font-size: 15px; }
+.hero-main { position: relative; flex: 1; min-height: 0; display: block; width: 100%; padding: 14px 20px 12px 0; overflow: hidden; text-align: left; }
+.hero-main h1 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; max-width: 100%; margin: 0; overflow: hidden; color: #fff; font-size: clamp(22px, 3.6vw, var(--hero-title-max, 47px)); font-weight: 640; letter-spacing: -.045em; line-height: 1.08; text-wrap: balance; }
+.hero-main p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; max-width: 100%; margin: 8px 0 0; overflow: hidden; color: #ccd1d8; font-size: 15px; }
 .hero-main > svg { position: absolute; right: 0; bottom: 18px; color: #abb2bc; transition: transform 180ms ease, color 180ms ease; }
 .hero-main:hover > svg, .hero-main[aria-expanded="true"] > svg { transform: translateX(4px); color: #fff; }
 .hero-due { margin: 0; color: #c4cad2; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -328,9 +329,11 @@
   .alert-list article:first-child .alert-severity { padding-right: 64px; }
   .alert-list article strong { display: block; margin-top: 4px; }
   .alert-actions { position: absolute; top: 15px; right: 15px; }
-  .hero-rec, .more-recs { min-height: 0; }
+  .hero-rec { height: 276px; }
+  .more-recs { height: auto; min-height: 0; }
   .hero-primary { padding: 22px 18px 18px; }
-  .hero-main h1 { font-size: clamp(25px, 8.5vw, var(--hero-title-max, 39px)); }
+  .hero-main h1 { font-size: clamp(20px, 6.4vw, var(--hero-title-max, 39px)); }
+  .hero-main p { -webkit-line-clamp: 1; line-clamp: 1; }
   .hero-next { padding-inline: 18px; }
   .hero-next small { max-width: 86px; }
   .more-recs { padding: 20px 18px; }
@@ -414,6 +417,14 @@
 .menu-status--old { color: var(--amber); }
 .menu-status--old svg { color: currentColor; }
 
+/* Weekend notice: a quiet note tied to the date controls, not an alert. */
+.menu-notice { display: flex; align-items: flex-start; gap: 10px; margin: -4px 0 14px; padding: 10px 12px; border: 1px solid var(--dash-line); border-radius: 10px; background: var(--dash-panel); color: var(--dash-muted); font-size: 12px; line-height: 1.5; }
+.menu-notice > svg { flex: none; margin-top: 1px; color: var(--dash-muted); }
+.menu-notice-copy { display: grid; gap: 2px; min-width: 0; }
+.menu-notice-copy strong { color: #e7eaee; font-size: 13px; font-weight: 600; }
+.menu-notice-showing { color: #c9cfd6; }
+.menu-notice-age { color: #98a0aa; }
+
 /* Stations inside an outlet: "Hot Dish", "The Carvery", each with its own short list. */
 .menu-station + .menu-station { border-top: 1px solid #484c53; }
 .menu-station-head { display: flex; align-items: center; gap: 7px; margin: 0; padding: 12px 22px 2px; color: #c9d0d8; font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
@@ -429,4 +440,5 @@
 .diet-chip--allergen { color: #ffd0b5; text-transform: capitalize; }
 @media (max-width: 560px) {
   .menu-station-head { padding-inline: 18px; }
+  .menu-notice { gap: 8px; padding: 9px 10px; }
 }

@@ -4,7 +4,7 @@ The fixture uses invented courses, tasks, a room, and a menu. It does not contai
 
 | Campus time | First recommendation | Why |
 | --- | --- | --- |
-| Wednesday 08:00 | Prepare for ECE 150 at 09:00 | The next class is an hour away. Its imported syllabus adds pointers and references; a rain reminder appears below. |
+| Wednesday 08:00 | Prepare for ECE 150 at 09:00 | The next class is an hour away. Its imported syllabus adds pointers and references; a rain advisory appears below. |
 | Wednesday 09:10 | ECE 150 is happening now | The ongoing class remains ahead of later deadlines. |
 | Wednesday 11:45 | Lunch at Campus Cafe | No class is in progress and lunch is approaching. The saved dining recommendation supplies the suggestion. |
 | Wednesday 14:05 | MATH 117 is happening now | Class takes priority; ECE 198 office hours appear because they precede the design project's deadline. |
@@ -13,7 +13,13 @@ The fixture uses invented courses, tasks, a room, and a menu. It does not contai
 | Tuesday 21:00 | Friday room change deferred | The change remains in the calendar and diagnostics explain that the reminder opens Thursday at 09:00. Its before/after room values stay structured. |
 | Thursday 09:00 | Friday room change shown | The notice enters daily guidance at the 24-hour boundary, with the room change still available as structured detail. |
 
-The same fixture exercises urgent deadlines and ongoing exams ahead of lunch; completion, undo, and expiring snooze; a changed due date; overlapping commitments; failed and old feeds; old menus; date-only assessments; missing weather measurements; weekly syllabus ranges; and two similarly named quizzes. It also checks that small tasks enter the daily feed two days before their due time while larger work appears earlier. Recommendation tests cover these behaviors and backwards compatibility when clients omit diagnostics.
+The same fixture exercises urgent deadlines and ongoing exams ahead of lunch; completion, undo, and expiring snooze; a changed due date; overlapping commitments; failed and old feeds; old menus; date-only assessments; missing weather measurements; multi-hazard and capped weather advisories; weekly syllabus ranges; and two similarly named quizzes. It also checks that small tasks enter the daily feed two days before their due time while larger work appears earlier. Recommendation tests cover these behaviors and backwards compatibility when clients omit diagnostics.
+
+## Weather advisories
+
+Weather is evaluated as independent hazards over the current hour and the next 12 hours. Rain is based on precipitation probability or amount, cold and heat on apparent temperature, wind on sustained speed, and snow/ice, thunderstorms and fog on weather code, snowfall and visibility when the cache provides them. A row can therefore produce rain and cold advisories together instead of a single mutually exclusive title. Severe conditions outrank notable ones, at most three advisories are shown, and a generic "Weather for your next break" item remains when conditions are usable but not notable.
+
+Reliability is part of the output. Rows without a finite forecast time are skipped rather than throwing, long-past hours are ignored, and null measurements are never treated as cold, hot, wet or windy. Advisories set `starts_at` only for a future forecast hour and include the forecast age in their evidence. A stale or dead forecast produces at most one low-priority old-forecast item plus a warning, so old data is never described as the current weather. Cached forecasts from before weather code, snowfall and visibility were fetched still work because missing fields stay unknown.
 
 ## What the engine can know
 

@@ -30,8 +30,9 @@ import './dashboard.css';
 function cleanTitle(value: string): string {
   return value.replace(/\s+(?:[-–—]\s*)?Available\s*$/i, '').replace(/\s+(?:[-–—]\s*)?Due\s*$/i, '').replace(/\s+[-–—]\s+\d+\s*(?:minutes?|mins?|hours?|hrs?)\s*$/i, '').replace(/\s*[-–]\s*Residence Dining Hall\s*$/i, '').trim();
 }
-function heroTitleSize(value: string): number {
-  return Math.round(Math.max(28, Math.min(47, 51 - Math.max(0, [...cleanTitle(value)].length - 18) * 0.42)));
+function heroTitleSize(value: string, extraWeight = 0): number {
+  const length = [...cleanTitle(value)].length + extraWeight;
+  return Math.round(Math.max(22, Math.min(47, 50 - Math.max(0, length - 15) * 0.55)));
 }
 function recommendationBody(item: RecommendationItem): string {
   const body = recommendationPresentation(item).body;
@@ -565,6 +566,10 @@ function MenuSection({ now }: { now: number }) {
     const rankB = matchDiningOutlet(rankedRecommendation, b)?.rank ?? Number.POSITIVE_INFINITY;
     return rankA - rankB || Number(isFavoriteOutlet(b)) - Number(isFavoriteOutlet(a)) || a.localeCompare(b);
   });
+  const requestedWeekend = isWeekendDay(menu.data?.requested_date);
+  const menuStatus = menu.data?.status;
+  const weekendNotice = requestedWeekend && (menuStatus === 'unavailable' || menuStatus === 'previous');
+  const weekendFallback = weekendNotice && menuStatus === 'previous';
   const refresh = async () => {
     setRefreshing(true); setRefreshError(''); setRefreshStatus('Checking menu…');
     try {
@@ -602,11 +607,22 @@ function MenuSection({ now }: { now: number }) {
       </div>
     </div>
     <BlurFade key={selectedDay} duration={0.35} offset={8} blur="6px" direction="up">
-      {menu.data?.service_date && menu.data.status !== 'unavailable' && (
+      {weekendNotice && (
+        <div className="menu-notice">
+          <CalendarDays size={16} aria-hidden />
+          <div className="menu-notice-copy">
+            <strong>No weekend menu</strong>
+            <span>Food Services typically does not publish daily menus on weekends.</span>
+            {weekendFallback && menu.data?.service_date && <span className="menu-notice-showing">Showing {dateLabel(menu.data.service_date)} · menu below</span>}
+            {savedMenu && menu.data?.observed_at != null && <span className="menu-notice-age">Saved menu · checked {shortAge(menu.data.observed_at, now)} ago</span>}
+          </div>
+        </div>
+      )}
+      {menu.data?.service_date && menu.data.status !== 'unavailable' && !weekendFallback && (
         <p className={'menu-status' + (menu.data.status === 'previous' || savedMenu ? ' menu-status--old' : '')}>
           <CalendarDays size={13} aria-hidden />
           {menu.data.status === 'previous'
-            ? <><span>{isWeekendDay(menu.data.requested_date) ? 'No weekend menu' : 'Not posted yet'}</span><ArrowRight size={12} aria-hidden /><span>Showing {dateLabel(menu.data.service_date)}</span></>
+            ? <><span>Not posted yet</span><ArrowRight size={12} aria-hidden /><span>Showing {dateLabel(menu.data.service_date)}</span></>
             : <span>{menu.data.status === 'today' ? 'Today · ' : ''}{dateLabel(menu.data.service_date)}{isWeekendDay(menu.data.service_date) ? ' · weekend' : ''}</span>}
           {savedMenu && <span>Saved menu{menu.data.observed_at != null ? ` · checked ${shortAge(menu.data.observed_at, now)} ago` : ''}</span>}
         </p>
@@ -615,9 +631,9 @@ function MenuSection({ now }: { now: number }) {
       {menu.isPending && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">Loading dining menu…</BlurFade>}
       {menu.isError && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Could not load the dining menu.</BlurFade>}
       {refreshError && <p className="action-error" role="alert">{refreshError}</p>}
-      {menu.data?.status === 'unavailable' && (
+      {menu.data?.status === 'unavailable' && !weekendNotice && (
         <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">
-          {isWeekendDay(menu.data?.requested_date) ? 'No weekend menu posted' : 'No menu posted yet'}
+          No menu posted yet
         </BlurFade>
       )}
       {menu.data && menu.data.items.length > 0 && groups.size === 0 && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">No dishes match your filters</BlurFade>}
@@ -849,7 +865,7 @@ export default function App() {
         <BlurFade as="article" className={'hero-rec' + (isAiFood(featured) ? ' hero-rec--ai' : '')} duration={0.58} delay={0.06} offset={14} blur="7px">
           <div className="hero-primary">
             {!isAiFood(featured) && <span className="neutral-label">{kindLabel(featured)}</span>}
-            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} showConfidence />}<ChevronRight size={18} /></button>
+            <button className="hero-main" onClick={() => setSelectedId(selectedId === featured.id ? null : featured.id)} aria-expanded={selectedId === featured.id} aria-label={'See details for ' + cleanTitle(featured.title)}><h1 style={{ '--hero-title-max': `${heroTitleSize(featured.title, featured.change ? 26 : 0)}px` } as CSSProperties}>{cleanTitle(featured.title)}</h1><p>{featured.kind === 'change' && !featured.change ? recommendationBody(featured) : featured.course || recommendationBody(featured).split(' · ')[0]}</p>{featured.change && <ChangeBlocks className="hero-change" change={featured.change} showConfidence />}<ChevronRight size={18} /></button>
             <div className="recommendation-timing hero-timing">
               {progress(featured, now) !== null ? <div className="event-timeline"><span>{formatTime(featured.starts_at!)}</span><div className="progress-wrap" role="progressbar" aria-valuenow={progress(featured, now)!} aria-valuemin={0} aria-valuemax={100} aria-label="Current event progress"><span style={{ width: progress(featured, now) + '%' }} /></div><span>{formatTime(featured.ends_at!)}</span></div> : <p className="hero-due">{timing(featured, now)}</p>}
               <RecommendationWarnings item={featured} />

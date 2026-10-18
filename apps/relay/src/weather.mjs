@@ -3,8 +3,11 @@
  * *client* fetches this and the server does nothing. It is here because the server needs it for
  * the same card, and because proving the join is worth more than asserting it.
  *
- * Only hourly fields that exist are requested (verified 2026-09-21): temperature_2m,
- * apparent_temperature, precipitation_probability, precipitation, wind_speed_10m.
+ * Hourly fields requested: temperature_2m, apparent_temperature, precipitation_probability,
+ * precipitation, wind_speed_10m, plus weather_code, snowfall and visibility for hazard advisories
+ * (the original five were verified 2026-09-21; the newer three were added 2026-10-17). Cached
+ * forecasts written before the newer fields remain usable; missing values stay null and are never
+ * treated as a hazard.
  */
 export const id = 'open-meteo';
 export const cadenceMs = 15 * 60 * 1000;
@@ -22,7 +25,7 @@ export async function hourlyForecast(now = Date.now(), { force = false } = {}) {
   if (!force && now - cache.at < cadenceMs && cache.byHour.size) return cache.byHour;
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-    `&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m` +
+    `&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,weather_code,snowfall,visibility` +
     `&forecast_days=2&timezone=${encodeURIComponent(TZ)}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`open-meteo http ${res.status}`);
@@ -38,6 +41,9 @@ export async function hourlyForecast(now = Date.now(), { force = false } = {}) {
       precip_prob: h.precipitation_probability?.[i] ?? null,
       precip_mm: h.precipitation?.[i] ?? null,
       wind_kmh: h.wind_speed_10m?.[i] ?? null,
+      weather_code: h.weather_code?.[i] ?? null,
+      snow_cm: h.snowfall?.[i] ?? null,
+      visibility_m: h.visibility?.[i] ?? null,
     });
   }
   cache.at = now;

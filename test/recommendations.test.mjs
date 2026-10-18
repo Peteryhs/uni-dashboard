@@ -461,6 +461,142 @@ test('unknown weather is not cold, old food carries old state, and weekly topics
   assert.ok(!tomorrow.items.some(item => item.kind === 'learning'), 'completed weekly reading stays complete on the next day');
 });
 
+test('rain and cold produce separate weather advisories with honest timing and evidence', () => {
+  const data = syntheticDay();
+  const when = at(DATE, '09:00');
+  data.weather.forecast = [{ at: when, temp_c: 1, feels_c: -2, precip_prob: 80, precip_mm: 2.5, wind_kmh: 15 }];
+  const feed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
+  const weather = feed.items.filter(item => item.kind === 'weather');
+  assert.equal(weather.length, 2, 'rain and cold coexist instead of one replacing the other');
+  const rain = weather.find(item => /rain/i.test(item.title));
+  const cold = weather.find(item => /cold/i.test(item.title));
+  assert.ok(rain && cold);
+  assert.match(rain.title, /Heavy rain/);
+  assert.match(rain.body, /umbrella/);
+  assert.match(cold.body, /Feels like -2°C/);
+  assert.ok(weather.every(item => item.starts_at === when), 'a future forecast hour is the advisory start');
+  assert.ok(weather.every(item => item.source_label === 'Cached weather forecast'));
+  assert.ok(weather.every(item => /Forecast cached .*old/.test(item.evidence)), 'evidence states the forecast age');
+  assert.ok(weather.every(item => item.state === 'live' && item.reason));
+
+  const current = recommendationsFromData({ ...data, now: at(DATE, '08:30'), weather: {
+    observed_at: at(DATE, '08:00'), state: 'live',
+    forecast: [{ at: at(DATE, '08:00'), temp_c: -18, feels_c: -20, precip_prob: null, precip_mm: null, wind_kmh: null }],
+  } });
+  const severeCold = current.items.find(item => item.kind === 'weather');
+  assert.match(severeCold.title, /Severe cold/);
+  assert.equal(severeCold.priority, 860);
+  assert.equal(severeCold.starts_at, null, 'current conditions do not claim a past start');
+});
+
+test('snow and ice advisories use snowfall and weather code', () => {
+  const data = syntheticDay();
+  data.weather.forecast = [{ at: at(DATE, '10:00'), temp_c: -3, feels_c: -5, precip_prob: 90, precip_mm: 3, snow_cm: 3, weather_code: 75 }];
+  const snowFeed = recommendationsFromData({ ...data, now: at(DATE, '08:00') });
+  const snow = snowFeed.items.find(item => item.kind === 'weather' && /snow/i.test(item.title));
+  assert.ok(snow, 'snowfall and a snow weather code produce an advisory');
+  assert.match(snow.title, /Heavy snow/);
+  assert.match(snow.body, /Snowfall about 3.0 cm/);
+  assert.match(snow.body, /slippery/);
+  assert.equal(snow.priority, 860);
+  assert.ok(!snowFeed.items.some(item => item.kind === 'weather' && /rain/i.test(item.title)), 'frozen precipitation is not also called rain');
+
+  data.weather.forecast = [{ at: at(DATE, '10:00'), temp_c: -1, feels_c: -1, precip_prob: 70, precip_mm: 1, weather_code: 66 }];
+  const ice = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).items.find(item => item.kind === 'weather' && /freezing rain/i.test(item.title));
+  assert.ok(ice, 'a freezing-rain weather code produces an ice advisory');
+  assert.match(ice.body, /Freezing precipitation/);
+  assert.equal(ice.priority, 860);
+});
+
+test('wind escalates from notable to severe with actionable advice', () => {
+  const data = syntheticDay();
+  data.weather.forecast = [{ at: at(DATE, '09:00'), temp_c: 15, feels_c: 15, wind_kmh: 40 }];
+  const windy = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).items.find(item => item.kind === 'weather');
+  assert.match(windy.title, /Windy/);
+  assert.equal(windy.priority, 770);
+  assert.match(windy.body, /secure/i);
+
+  data.weather.forecast = [{ at: at(DATE, '09:00'), temp_c: 15, feels_c: 15, wind_kmh: 65 }];
+  const severe = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).items.find(item => item.kind === 'weather');
+  assert.match(severe.title, /Severe wind/);
+  assert.equal(severe.priority, 860);
+});
+
+test('malformed and old forecasts never become current hazards', () => {
+  const data = syntheticDay();
+  data.weather.forecast = [null, {}, { at: 'not-a-time', feels_c: -30 }, { at: NaN, precip_prob: 100 }, { at: at(DATE, '09:00') + 1.5, feels_c: -30 }, { at: at(DATE, '03:00'), feels_c: -30, precip_prob: 100 }];
+  let feed;
+  assert.doesNotThrow(() => { feed = recommendationsFromData({ ...data, now: at(DATE, '11:45') }); });
+  assert.ok(!feed.items.some(item => item.kind === 'weather'), 'malformed and long-past rows are ignored without a false hazard');
+
+  const absurd = syntheticDay();
+  absurd.weather = { observed_at: 1e300, state: 'live', forecast: [{ at: at(DATE, '09:00'), feels_c: -20 }] };
+  let absurdFeed;
+  assert.doesNotThrow(() => { absurdFeed = recommendationsFromData({ ...absurd, now: at(DATE, '08:00') }); });
+  assert.match(absurdFeed.items.find(item => item.kind === 'weather').evidence, /cached at an unknown time/);
+
+  const negative = syntheticDay();
+  negative.weather.forecast = [{ at: at(DATE, '09:00'), visibility_m: -100, weather_code: null }];
+  assert.ok(!recommendationsFromData({ ...negative, now: at(DATE, '08:00') }).items.some(item => item.kind === 'weather' && /fog/i.test(item.title)), 'a negative visibility is bad data, not dense fog');
+
+  const zeroSnow = syntheticDay();
+  zeroSnow.weather.forecast = [{ at: at(DATE, '09:00'), weather_code: 75, snow_cm: 0 }];
+  const snow = recommendationsFromData({ ...zeroSnow, now: at(DATE, '08:00') }).items.find(item => item.kind === 'weather');
+  assert.match(snow.body, /Snow is forecast/);
+  assert.doesNotMatch(snow.body, /0\.0 cm/);
+
+  data.weather.state = 'stale';
+  data.weather.forecast = [{ at: at(DATE, '14:00'), temp_c: 1, feels_c: -30, precip_prob: 100, precip_mm: 5, wind_kmh: 70 }];
+  const stale = recommendationsFromData({ ...data, now: at(DATE, '11:45') });
+  const old = stale.items.filter(item => item.kind === 'weather');
+  assert.equal(old.length, 1, 'a stale forecast emits at most one quiet item');
+  assert.equal(old[0].title, 'Old weather forecast');
+  assert.equal(old[0].priority, 250);
+  assert.equal(old[0].state, 'stale');
+  assert.equal(old[0].starts_at, null);
+  assert.match(old[0].body, /old forecast/);
+  assert.match(old[0].evidence, /not treated as current/);
+  assert.ok(stale.warnings.some(warning => /Weather forecast is old/.test(warning)));
+  assert.ok(!stale.items.some(item => item.kind === 'weather' && /cold|rain|wind/i.test(item.title)));
+});
+
+test('weather advisories are capped at three and severe hazards lead', () => {
+  const data = syntheticDay();
+  data.weather.forecast = [
+    { at: at(DATE, '10:00'), precip_prob: 60 },
+    { at: at(DATE, '11:00'), weather_code: 45 },
+    { at: at(DATE, '13:00'), feels_c: -20 },
+  ];
+  const ordered = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).items.filter(item => item.kind === 'weather');
+  assert.equal(ordered.length, 3);
+  assert.match(ordered[0].title, /Severe cold/);
+  assert.equal(ordered[0].priority, 860);
+  assert.ok(ordered.slice(1).every(item => item.priority === 770), 'notable hazards follow severe ones');
+
+  data.weather.forecast = [
+    { at: at(DATE, '09:00'), precip_prob: 60 },
+    { at: at(DATE, '10:00'), feels_c: 32 },
+    { at: at(DATE, '11:00'), wind_kmh: 40 },
+    { at: at(DATE, '12:00'), weather_code: 45 },
+    { at: at(DATE, '13:00'), feels_c: -20 },
+  ];
+  const capped = recommendationsFromData({ ...data, now: at(DATE, '08:00') }).items.filter(item => item.kind === 'weather');
+  assert.equal(capped.length, 3, 'weather cannot flood the feed');
+  assert.equal(new Set(capped.map(item => item.id)).size, 3);
+  assert.match(capped[0].title, /Severe cold/);
+  assert.deepEqual(capped.map(item => item.priority), [860, 770, 770]);
+});
+
+test('usable mild weather keeps the generic fallback', () => {
+  const data = syntheticDay();
+  data.weather.forecast = [{ at: at(DATE, '14:00'), temp_c: 18, feels_c: 17, precip_prob: 10, precip_mm: 0, wind_kmh: 10, weather_code: 1 }];
+  const weather = recommendationsFromData({ ...data, now: at(DATE, '11:45') }).items.find(item => item.kind === 'weather');
+  assert.equal(weather.title, 'Weather for your next break');
+  assert.equal(weather.priority, 330);
+  assert.match(weather.body, /no notable weather expected/);
+  assert.equal(weather.starts_at, at(DATE, '14:00'));
+});
+
 test('ongoing exams stay ahead of lunch and all-day assessments never acquire midnight deadlines', () => {
   const data = syntheticDay();
   data.calendar.days[0].events.push({ ...data.calendar.days[0].events[0], id: 'exam', category: 'exam', title: 'ECE 150 midterm', starts_at: at(DATE, '11:30'), ends_at: at(DATE, '13:00') });
