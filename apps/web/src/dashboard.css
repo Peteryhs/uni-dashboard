@@ -57,8 +57,7 @@
 .top-settings:disabled, .context-control:disabled, .section-control:disabled { color: #858c96; opacity: 0.72; }
 .recommendation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
 .hero-rec, .more-recs, .rec-detail, .section-panel, .menu-outlet, .course-card, .settings-open, .state-panel { border: 1px solid var(--dash-line); border-radius: 16px; background: var(--dash-panel); }
-.hero-rec { height: 288px; }
-.more-recs { min-height: 288px; }
+.hero-rec, .more-recs { min-height: 288px; }
 .hero-rec { display: flex; flex-direction: column; overflow: hidden; }
 .hero-primary { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 22px 24px 18px; overflow: hidden; }
 .neutral-label, .ai-label { display: inline-flex; align-items: center; width: fit-content; color: #ebedf0; font-size: 12px; font-weight: 600; }
