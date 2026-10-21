@@ -185,14 +185,14 @@ test('a cron tick with the cap removed would not fit the free tier budget', asyn
   assert.ok(queries > 50, `uncapped, all four sources cost ${queries} queries: this is why the cap exists`);
 });
 
-test('the dashboard route answers with four cards and stays inside the query budget', async () => {
+test('the dashboard route answers with five cards and stays inside the query budget', async () => {
   const { api, counter } = createMockD1();
   const env = { ACCESS_DISABLED: '1', DB: api };
   const res = await worker.fetch(new Request('https://dash.test/v1/dashboard'), env, {});
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.cards.length, 4);
-  // measured 21: the schema probe, four card queries, the run receipts and the job table
+  assert.equal(body.cards.length, 5);
+  // measured: the schema probe, five card queries, the run receipts and the job table
   assert.ok(counter.prepares < 50, `a dashboard load used ${counter.prepares} queries, free tier allows 50`);
 });
 

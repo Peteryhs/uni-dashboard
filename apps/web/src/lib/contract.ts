@@ -305,6 +305,38 @@ export interface NextCommitmentData {
   following?: FollowingCommitment | null;
 }
 
+export interface StudySpaceFloor {
+  id: string;
+  name: string;
+  is_open: boolean;
+  people: number | null;
+  capacity: number | null;
+  percent: number | null;
+  summary?: string | null;
+}
+
+export interface StudySpaceLibrary extends StudySpaceFloor {
+  floors: StudySpaceFloor[];
+}
+
+export interface StudySpaceBest {
+  library_id: string;
+  library_name: string;
+  space_id: string;
+  space_name: string;
+  percent: number;
+  people: number | null;
+  capacity: number;
+}
+
+export interface StudySpacesData {
+  libraries: StudySpaceLibrary[];
+  best: StudySpaceBest | null;
+  open_count: number;
+  total_count: number;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Office Hours types
 // ---------------------------------------------------------------------------

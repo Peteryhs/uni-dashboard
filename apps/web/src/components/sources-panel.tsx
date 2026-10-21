@@ -26,6 +26,7 @@ const NAMES: Record<string, string> = {
   'uw-learn-ics': 'LEARN deadlines',
   'uw-status': 'Campus services',
   'user-office-hours': 'Office hours',
+  'uw-waitz': 'Study spaces',
   'open-meteo': 'Weather',
 };
 

@@ -187,11 +187,46 @@ export const AlertData = z.object({
   ),
 });
 
+/** One floor inside a library. Percent is null when people or capacity is missing or zero. */
+export const StudySpaceFloor = z.object({
+  id: z.string(),
+  name: z.string(),
+  is_open: z.boolean(),
+  people: z.number().int().nonnegative().nullable(),
+  capacity: z.number().int().nonnegative().nullable(),
+  percent: z.number().int().min(0).max(100).nullable(),
+  summary: z.string().default(''),
+});
+
+export const StudySpaceLibrary = StudySpaceFloor.extend({
+  /** Closed floors still ship; the client decides whether to show them. */
+  floors: z.array(StudySpaceFloor).default([]),
+});
+
+export const StudySpaceBest = z.object({
+  library_id: z.string(),
+  library_name: z.string(),
+  space_id: z.string(),
+  space_name: z.string(),
+  percent: z.number().int().min(0).max(100),
+  people: z.number().int().nonnegative().nullable(),
+  capacity: z.number().int().nonnegative(),
+});
+
+export const StudySpacesData = z.object({
+  libraries: z.array(StudySpaceLibrary).default([]),
+  best: StudySpaceBest.nullable().default(null),
+  open_count: z.number().int().nonnegative(),
+  total_count: z.number().int().nonnegative(),
+  error: z.string().optional(),
+});
+
 export const CARD_DATA_SCHEMAS = {
   next_commitment: NextCommitmentData,
   due_soon: DueSoonData,
   food: FoodData,
   alert: AlertData,
+  study_spaces: StudySpacesData,
   food_ai_recommendation: FoodAiRecommendation,
 };
 

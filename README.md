@@ -1,6 +1,6 @@
 # Uni Dashboard
 
-A personal dashboard for University of Waterloo student life. The web and native Android apps bring together your timetable, deadlines, course materials, posted dining menus, weather, and campus service notices.
+A personal dashboard for University of Waterloo student life. The web and native Android apps bring together your timetable, deadlines, course materials, posted dining menus, weather, and campus service notices. The web dashboard also shows live study-space occupancy.
 
 The first screen answers what needs your attention next. Recommendations use saved source data and clear timing rules; optional AI helps with dining choices and text imports. Missing times and assessment coverage stay unknown rather than being invented.
 
@@ -12,6 +12,7 @@ The first screen answers what needs your attention next. Recommendations use sav
 - A unified calendar for classes, exams, LEARN deadlines, reviewed syllabus dates, and office hours. A moving Now line and muted past entries make today's schedule easier to scan.
 - Compact warning icons beside recommendation timing, with explanations on hover, focus, or touch.
 - Posted menus grouped by outlet and station, dietary indicators, saved preferences, and optional personalized dining rankings.
+- Live study-space occupancy from Waitz, with the open floor that has the most room, per-library open states, and floor counts.
 - Course links, reviewed syllabus imports, office-hours configuration, and section/group filters.
 - Source status that distinguishes configured connections, successful updates, failed attempts, and old data.
 - Native Android with dynamic Material color, expressive spring motion, a ranked Focus hierarchy, quiet background updates, pull-to-refresh, cached data, and finite activity/reminder notifications that clean up as their evidence expires.
@@ -24,6 +25,7 @@ The first screen answers what needs your attention next. Recommendations use sav
 | Google Calendar ICS | Optional schedule feed | Private subscription URL |
 | Waterloo LEARN ICS | Deadlines and dated course work | Private subscription URL |
 | Waterloo Food Services | Posted dishes, outlets, stations, dietary tags | Public feed |
+| Waitz | Live library and study-space occupancy | Public feed |
 | UW service status | Campus and IT incidents | Public feed |
 | Open-Meteo | Cached weather for Waterloo | Public API |
 | Office hours and syllabi | Your saved, reviewed course information | Configure in Settings |
@@ -140,6 +142,7 @@ The web app can display saved data when requests fail after its shell has loaded
 - [Unified calendar API](docs/UNIFIED-CALENDAR.md)
 - [Daily recommendations and reviewed syllabi](docs/DAILY-GUIDANCE.md)
 - [Schedule changes](docs/SCHEDULE-CHANGES.md)
+- [Study spaces](docs/STUDY-SPACES.md)
 - [Service status](docs/SERVICE-STATUS.md)
 - [Deployment and Android sign-in](docs/DEPLOYMENT.md)
 - [Cloudflare usage audit](docs/CLOUDFLARE-USAGE.md)

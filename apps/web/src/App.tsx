@@ -15,6 +15,7 @@ import { readGuideProgress } from '@/lib/setup-guide';
 import { SetupChecklist } from '@/components/setup-checklist';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
 import { CourseDetailContent } from '@/components/course-detail-content';
+import { StudySpacesSection } from '@/components/study-spaces';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/lib/dining';
@@ -24,7 +25,7 @@ import { useDashboard, useHealth, useNow } from '@/hooks/use-dashboard';
 import { healthSummary } from '@/lib/source-status.mjs';
 import { usePreferences } from '@/lib/preferences-store';
 import { campusDate, countdown, formatDay, formatShortDay, formatTime, shortAge, shiftDate } from '@/lib/time';
-import { ageState, type AlertData, type CalendarData, type CalendarEvent, type CardState, type DueSoonData, type DueSoonItem, type NextCommitmentData, type RecommendationItem, type WeatherSlice } from '@/lib/contract';
+import { ageState, type AlertData, type CalendarData, type CalendarEvent, type CardState, type DueSoonData, type DueSoonItem, type NextCommitmentData, type RecommendationItem, type StudySpacesData, type WeatherSlice } from '@/lib/contract';
 import './dashboard.css';
 
 function cleanTitle(value: string): string {
@@ -113,6 +114,7 @@ function refreshIssue(sourceId: string, error: string | undefined, outcome: stri
     'uw-learn-ics': 'LEARN',
     'uw-portal-ics': 'Schedule',
     'uw-food-daily-menu': 'Dining',
+    'uw-waitz': 'Study spaces',
     'user-office-hours': 'Office hours',
   } as Record<string, string>)[sourceId] ?? sourceId.replace(/-/g, ' ');
   const reason = /not authenticated|unauthorized/i.test(error ?? '') ? 'sign-in needed'
@@ -769,6 +771,7 @@ export default function App() {
   const nextCommitmentCard = cards.find(card => card.type === 'next_commitment');
   const nextCommitment = nextCommitmentCard?.data as NextCommitmentData | undefined;
   const dueWork = cards.find(card => card.type === 'due_soon')?.data as DueSoonData | undefined;
+  const studySpacesCard = cards.find(card => card.type === 'study_spaces');
   const isOld = Boolean(recs.data && now - recs.data.generated_at > Math.max(180_000, recs.data.refresh_after_ms * 2));
   const nextTask = [...(recs.data?.tasks.large ?? []), ...(recs.data?.tasks.small ?? [])]
     .filter(item => !items.slice(0, 3).some(visible => visible.id === item.id) && (item.due_at ?? item.starts_at ?? Infinity) >= now)
@@ -906,6 +909,7 @@ export default function App() {
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />
     <DueWorkSection data={dueWork} />
     <MenuSection now={now} />
+    <StudySpacesSection data={studySpacesCard?.data as StudySpacesData | undefined} state={studySpacesCard?.state} observedAt={studySpacesCard?.observed_at} now={now} />
     <CoursesSection data={settingsCalendar.data} pending={settingsCalendar.isPending} error={settingsCalendar.isError} onManageCourse={(course) => { setSettingsCourse(course); setSettingsOpen(true); }} />
   </main>
   <CustomizationSheet

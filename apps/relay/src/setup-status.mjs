@@ -10,7 +10,11 @@ import { SHAPES } from './schema.mjs';
 export const SETUP_STARTED_AT = 'SETUP_STARTED_AT';
 export const SETUP_SCHEDULE_CHANGED_AT = 'SETUP_SCHEDULE_CHANGED_AT';
 export const SETUP_LEARN_CHANGED_AT = 'SETUP_LEARN_CHANGED_AT';
-const LIVE_SHAPES = Object.keys(SHAPES);
+/**
+ * Public campus sources can populate a shape before the owner has configured a personal feed.
+ * Study-space occupancy is one of them, so it must not make a fresh install look initialized.
+ */
+const LIVE_SHAPES = Object.keys(SHAPES).filter((shape) => shape !== 'place_state');
 const SUCCESS_OUTCOMES = new Set(['ok', 'empty']);
 
 const CONFIG_KEYS = {

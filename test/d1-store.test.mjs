@@ -369,7 +369,7 @@ test('buildDashboard works end-to-end on D1Store', async () => {
   ]);
 
   const bundle = await buildDashboard(store, { now, useWeather: false });
-  assert.equal(bundle.cards.length, 4);
+  assert.equal(bundle.cards.length, 5);
   const next = bundle.cards.find((c) => c.type === 'next_commitment');
   const food = bundle.cards.find((c) => c.type === 'food');
   const due = bundle.cards.find((c) => c.type === 'due_soon');

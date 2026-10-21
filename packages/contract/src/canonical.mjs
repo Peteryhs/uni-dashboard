@@ -60,6 +60,8 @@ export const PlaceState = z.object({
   is_open: z.boolean().nullable().default(null),
   people: z.number().int().nonnegative().nullable().default(null),
   capacity: z.number().int().nonnegative().nullable().default(null),
+  /** Upstream's own short status text, stored in payload_json rather than its own column. */
+  summary: z.string().optional(),
 });
 
 export const Notice = z.object({

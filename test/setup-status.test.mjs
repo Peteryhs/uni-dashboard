@@ -37,6 +37,17 @@ test('any live canonical row means data is not empty, even outside the current w
   } finally { store.close(); }
 });
 
+test('public place occupancy alone does not make a fresh install look initialized', async () => {
+  const store = new SqliteStore(':memory:');
+  try {
+    store.upsertRows('place_state', [{ source_id: 'uw-waitz', external_id: 'waitz:215', observed_at: 1, valid_until: 2, place_id: 'waitz:215', name: 'Dana Porter Library', is_open: false }]);
+    const status = await getSetupStatus(store, { sources: sources(), now: 1234 });
+    assert.equal(status.data_empty, true);
+    assert.equal(status.first_run, true);
+    assert.equal(status.setup_needed, true);
+  } finally { store.close(); }
+});
+
 test('configured feeds remain unsynced until their latest run succeeds', async () => {
   const store = new SqliteStore(':memory:');
   try {

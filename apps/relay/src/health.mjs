@@ -5,6 +5,7 @@ const NAMES = {
   'uw-food-daily-menu': 'Dining menu', 'uw-portal-ics': 'Portal schedule',
   'google-calendar-ics': 'Google Calendar', 'uw-learn-ics': 'LEARN deadlines',
   'uw-status': 'Campus services', 'user-office-hours': 'Office hours',
+  'uw-waitz': 'Study spaces',
 };
 
 function publicRun(run) {

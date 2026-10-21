@@ -13,6 +13,7 @@ import { hourlyForecast, at as weatherAt, worthShowing } from './weather.mjs';
 import { alertIdentity, alertSummaryFor, ALERT_SUMMARY_SETTING, ALERT_DISMISSED_SETTING } from './alert-summary.mjs';
 import { courseOf } from './course-code.mjs';
 import { tutorialAttendanceAlerts, sessionEvidenceEvents } from './calendar-changes.mjs';
+import { studySpacesCard } from './study-spaces.mjs';
 export { courseOf } from './course-code.mjs';
 
 const MIN = 60 * 1000;
@@ -590,6 +591,7 @@ export async function buildDashboard(store, { now = Date.now(), useWeather = tru
     nextCommitmentCard(store, { now, useWeather }),
     dueSoonCard(store, { now }),
     foodCard(store, { now }),
+    studySpacesCard(store, { now }),
   ])).map((card) => ({ ...card, data: validateCardData(card.type, card.data) }));
   return buildBundle(cards, now);
 }

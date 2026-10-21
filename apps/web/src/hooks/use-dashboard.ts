@@ -4,7 +4,7 @@ import { fetchBundle, fetchHealth, fetchHealthz, readCachedBundle } from '@/lib/
 import { renderableCards, type Bundle, type Card } from '@/lib/contract';
 
 /** Card types this build knows how to draw. Anything else is skipped and counted, never fatal. */
-export const KNOWN_CARD_TYPES = ['next_commitment', 'due_soon', 'food', 'alert'] as const;
+export const KNOWN_CARD_TYPES = ['next_commitment', 'due_soon', 'food', 'alert', 'study_spaces'] as const;
 
 /**
  * A clock that ticks independently of the data.

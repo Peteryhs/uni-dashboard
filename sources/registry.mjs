@@ -6,8 +6,9 @@ import food from './food/source.mjs';
 import { portalIcs, googleCalendarIcs, learnIcs } from './ics/source.mjs';
 import status from './status/source.mjs';
 import userOfficeHours from './office-hours/source.mjs';
+import waitz from './waitz/source.mjs';
 
-export const SOURCES = [food, portalIcs, googleCalendarIcs, learnIcs, status, userOfficeHours];
+export const SOURCES = [food, portalIcs, googleCalendarIcs, learnIcs, status, userOfficeHours, waitz];
 export { userOfficeHours, portalIcs, googleCalendarIcs, learnIcs };
 
 export function enabledSources(sources = SOURCES) {
