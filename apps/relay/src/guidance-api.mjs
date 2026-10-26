@@ -14,6 +14,47 @@ export function isGuidanceRoute(path) {
     /^\/v1\/courses\/[^/]+\/syllabus(?:\/preview)?$/.test(path);
 }
 
+const MENU_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+/**
+ * Posted menu for one date, falling back to the most recent earlier posting.
+ *
+ * Extracted from the /v1/menu route when the MCP tool surface landed: the tool and the web route
+ * must answer the same question from the same code, or an agent can describe a menu the app does
+ * not show. No fetch here — this reads saved rows only.
+ */
+export async function buildMenuView(store, { date = null, now = Date.now() } = {}) {
+  const todayDate = MENU_DATE.format(new Date(now));
+  const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayDate;
+  const matched = await store.rows('menu_item', { where: 'service_date = ?', params: [targetDate], limit: MENU_ROW_LIMIT });
+  const rows = matched.length ? matched : await store.rows('menu_item', {
+    where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: MENU_ROW_LIMIT,
+  });
+  const serviceDate = rows[0]?.service_date ?? null;
+  // Freshness belongs to the posted rows, not the time this read happened to run.
+  const observedAt = rows.length ? Math.min(...rows.map(row => row.observed_at)) : null;
+  const validUntil = rows.length ? Math.min(...rows.map(row => row.valid_until)) : null;
+  const status = !serviceDate
+    ? 'unavailable'
+    : serviceDate === targetDate
+      ? (targetDate === todayDate ? 'today' : targetDate > todayDate ? 'upcoming' : 'previous')
+      : 'previous';
+  return {
+    requested_date: targetDate, service_date: serviceDate, status,
+    observed_at: observedAt, valid_until: validUntil, cadence_ms: menuCadenceMs,
+    state: ageState(observedAt, menuCadenceMs, now),
+    items: rows.map(row => ({ outlet: row.outlet, ...menuDish(row), allergens: row.allergens || [] })),
+  };
+}
+
+/** Current hour from the saved forecast. Shared by /v1/weather/current and the MCP weather tool. */
+export async function buildWeatherView(store, { now = Date.now() } = {}) {
+  const weather = await getCachedWeather(store, { now });
+  const hours = weather?.forecast || [];
+  const hour = hours.filter(row => row.at <= now).at(-1) || hours[0];
+  return { temp_c: Number.isFinite(hour?.temp_c) ? Math.round(hour.temp_c) : null, observed_at: weather?.observed_at ?? null, state: weather?.state ?? 'unavailable' };
+}
+
 /** Bounded body reader usable with Web streams and Node IncomingMessage async iterators. */
 export async function readGuidanceJson(stream) {
   let size = 0;
@@ -41,34 +82,10 @@ export async function readGuidanceJson(stream) {
 export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, startAiJob = null, now = Date.now() }) {
   try {
     if (url.pathname === '/v1/menu' && method === 'GET') {
-      const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
-      const paramDate = url.searchParams.get('date');
-      const targetDate = paramDate && /^\d{4}-\d{2}-\d{2}$/.test(paramDate) ? paramDate : todayDate;
-      const matched = await store.rows('menu_item', { where: 'service_date = ?', params: [targetDate], limit: MENU_ROW_LIMIT });
-      const rows = matched.length ? matched : await store.rows('menu_item', {
-        where: 'service_date = (SELECT MAX(service_date) FROM menu_item WHERE deleted=0 AND service_date <= ?)', params: [targetDate], limit: MENU_ROW_LIMIT,
-      });
-      const serviceDate = rows[0]?.service_date ?? null;
-      // Freshness belongs to the posted rows, not the time this GET happened to run.
-      const observedAt = rows.length ? Math.min(...rows.map(row => row.observed_at)) : null;
-      const validUntil = rows.length ? Math.min(...rows.map(row => row.valid_until)) : null;
-      const status = !serviceDate
-        ? 'unavailable'
-        : serviceDate === targetDate
-          ? (targetDate === todayDate ? 'today' : targetDate > todayDate ? 'upcoming' : 'previous')
-          : 'previous';
-      return { status: 200, body: {
-        requested_date: targetDate, service_date: serviceDate, status,
-        observed_at: observedAt, valid_until: validUntil, cadence_ms: menuCadenceMs,
-        state: ageState(observedAt, menuCadenceMs, now),
-        items: rows.map(row => ({ outlet: row.outlet, ...menuDish(row), allergens: row.allergens || [] })),
-      } };
+      return { status: 200, body: await buildMenuView(store, { date: url.searchParams.get('date'), now }) };
     }
     if (url.pathname === '/v1/weather/current' && method === 'GET') {
-      const weather = await getCachedWeather(store, { now });
-      const hours = weather?.forecast || [];
-      const hour = hours.filter(row => row.at <= now).at(-1) || hours[0];
-      return { status: 200, body: { temp_c: Number.isFinite(hour?.temp_c) ? Math.round(hour.temp_c) : null, observed_at: weather?.observed_at ?? null, state: weather?.state ?? 'unavailable' } };
+      return { status: 200, body: await buildWeatherView(store, { now }) };
     }
     if (url.pathname === '/v1/recommendations' && method === 'GET') {
       const { section, group } = calendarOptions(url.searchParams, now);

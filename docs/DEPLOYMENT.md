@@ -70,6 +70,11 @@ audience, expiry), so the `*.workers.dev` hostname or a route without a policy i
 - **Android fallback:** a Cloudflare Access service token remains supported for deployments that
   cannot use a browser login. Add a Service Auth policy for it to the Access application; the app
   sends `CF-Access-Client-Id` and `CF-Access-Client-Secret`.
+- **MCP:** `/mcp` is a Worker route and authenticates the same way, but agents are unattended
+  machines rather than browsers. The recommended deployment is a dedicated hostname with its own
+  Access application, a `Service Auth` policy, strict service-token authentication, and
+  `MCP_ACCESS_AUD` pinned to that application. See [MCP](MCP.md) for the topology, the standard
+  OAuth route through Managed OAuth, and the long-term connectivity analysis.
 - **Fails closed:** without `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, every `/v1` route answers 503.
   `ACCESS_DISABLED=1` turns the check off and exists only for `npm run worker:dev` and tests.
 - **Cross-site writes refused:** a non-GET with a foreign `Origin` or `Sec-Fetch-Site: cross-site`
@@ -86,10 +91,10 @@ Android's OAuth grant duration does not change the web cookie's configured sessi
 ### Web loads but cannot reach the backend
 
 The browser uses the same dashboard origin for `/v1/*`; no separate backend address or relay token
-is required on Cloudflare. The asset configuration must send `/v1/*`, `/healthz`, and
-`/oauth/android/callback` to the Worker first. With only the callback listed in `run_worker_first`,
-the SPA fallback returns HTML for API requests even after a successful Access login.
-Keep the corrected `wrangler.toml` when redeploying. Cloudflare explains this behavior in its
+is required on Cloudflare. The asset configuration must send `/v1/*`, `/healthz`, `/mcp`,
+`/.well-known/*`, and `/oauth/android/callback` to the Worker first. With only the callback listed in
+`run_worker_first`, the SPA fallback returns HTML for API requests even after a successful Access
+login. Keep the corrected `wrangler.toml` when redeploying. Cloudflare explains this behavior in its
 [Worker and static asset routing documentation](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/).
 
 Feeds saved in Connections live in the bound D1 database; Worker secrets are also supported.
@@ -101,6 +106,37 @@ does not need an Account ID or API token entered in Connections.
 Build the web client, then run `node --test test/deployment-routing.test.mjs` to check the real local
 Cloudflare asset router. It verifies API authentication, health, the Android callback, and the SPA
 shell together. This catches routing failures that direct calls to the Worker fetch handler miss.
+
+### MCP endpoint for AI agents
+
+`/mcp` serves read-only dashboard data to MCP clients. It is a Worker route (never the SPA shell),
+answers `401` with a JSON-RPC body rather than a redirect, and requires the same Access assertion as
+`/v1`. The recommended topology keeps machine auth away from human SSO:
+
+```text
+app.example.com  → Worker → Access app "Dashboard" → Allow (SSO)          → /v1, assets
+mcp.example.com  → Worker → Access app "MCP"       → Service Auth (token) → /mcp
+```
+
+Create the MCP Access application with a `Service Auth` / Service Token policy, turn on strict
+service-token authentication, create one service token per agent, and set that application's AUD tag
+as `MCP_ACCESS_AUD` in `wrangler.toml` (leave `ACCESS_AUD` for the dashboard). Interactive clients
+that require standard OAuth can use Access Managed OAuth on the MCP application instead; the
+Worker's JWT verification is unchanged either way because Access forwards
+`Cf-Access-Jwt-Assertion`.
+
+Full instructions — client configs, rotation runbook, and why each timeout exists — are in
+[MCP](MCP.md). Do not put `/mcp` behind a `Bypass` policy: bypass enforces no policy and logs no
+request.
+
+If you would rather not put Cloudflare Access in the agent path at all, set `MCP_AUTH_MODE=token`
+and mint application API keys from **Settings → MCP** on the deployed dashboard (or with
+`POST /v1/mcp-tokens` for automation). The plaintext is shown once, `GET` lists metadata, and the
+same tab revokes a key in place. Keys are stored as SHA-256 with a `mcp:read` scope and are
+attributed in the `mcp_audit` table. `token` mode means Access no longer gates `/mcp`, so serve it on
+a hostname Access does not cover and add a rate-limiting rule; use `both` if Access should remain in
+front. The local relay serves the same Settings flow, and `npm run mcp:token -- create --name <label>`
+remains available for a headless relay.
 
 ### Configure Managed OAuth for Android
 

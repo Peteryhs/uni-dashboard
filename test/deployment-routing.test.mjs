@@ -58,6 +58,27 @@ test('Wrangler assets routing sends API, health and OAuth paths to the Worker', 
     assert.match(api.headers.get('content-type') || '', /^application\/json/i);
     assert.equal((await api.json()).error, 'unauthorized');
 
+    // `/mcp` must be Worker-owned too: the SPA fallback would answer this GET with 200 HTML, while
+    // the stateless MCP transport answers 405 JSON for a non-POST request.
+    const mcp = await get('/mcp');
+    assert.equal(mcp.status, 405);
+    assert.match(mcp.headers.get('content-type') || '', /^application\/json/i);
+
+    // An unauthenticated MCP POST must be a JSON-RPC 401, never a redirect to the IdP or HTML.
+    const mcpPost = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(mcpPost.status, 401);
+    assert.match(mcpPost.headers.get('content-type') || '', /^application\/json/i);
+
+    // RFC 9728 metadata is public: no credential, and it names this origin's MCP resource.
+    const discovery = await get('/.well-known/oauth-protected-resource');
+    assert.equal(discovery.status, 200);
+    const metadata = await discovery.json();
+    assert.equal(metadata.resource, `${base}/mcp`);
+
     const health = await get('/healthz');
     assert.equal(health.status, 200);
     assert.match(health.headers.get('content-type') || '', /^application\/json/i);

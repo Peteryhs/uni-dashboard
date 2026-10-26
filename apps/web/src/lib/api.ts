@@ -30,6 +30,7 @@ import {
   type RecommendationResponse,
 } from './contract';
 import { checkRelayResponse, localRelayToken, readRelayJson, RelayError } from './relay-response.mjs';
+import type { McpToken, McpTokenList } from './mcp-tokens';
 export { RelayError } from './relay-response.mjs';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
@@ -495,4 +496,31 @@ export async function putOfficeHours(
     throw new RelayError(errJson.error || `Saving office hours failed with status ${res.status}`, res.status);
   }
   return res.json() as Promise<{ config: OfficeHoursConfig; rows_written: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// MCP API keys. The owner-only routes return the plaintext exactly once, on create.
+// ---------------------------------------------------------------------------
+
+export interface CreatedMcpToken extends McpToken {
+  token: string;
+  warning?: string;
+}
+
+export function fetchMcpTokens(signal?: AbortSignal): Promise<McpTokenList> {
+  return getJson<McpTokenList>('/v1/mcp-tokens', signal);
+}
+
+export async function createMcpToken(input: { name: string; expiresInDays: number | null }): Promise<CreatedMcpToken> {
+  const res = await fetchRelay('/v1/mcp-tokens', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: input.name, expires_in_days: input.expiresInDays }),
+  });
+  return readRelayJson(res);
+}
+
+export async function revokeMcpToken(id: string): Promise<void> {
+  const res = await fetchRelay(`/v1/mcp-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await readRelayJson(res);
 }

@@ -1,0 +1,300 @@
+/* MCP keys: flat groups and spacing, matching the settings drawer's quiet surfaces. */
+
+.mcp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+}
+
+.mcp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mcp-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcp-section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mcp-section-title {
+  margin: 0;
+  color: #aeb4bc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.mcp-section-copy,
+.mcp-note,
+.mcp-muted,
+.mcp-empty {
+  margin: 0;
+  color: #aeb4bc;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mcp-section-copy code {
+  color: #d9dde2;
+  font-size: 11.5px;
+}
+
+.mcp-note {
+  color: #8d939b;
+}
+
+.mcp-empty {
+  padding: 10px 0;
+}
+
+.mcp-error {
+  margin: 0;
+  color: #f0a3a3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mcp-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.mcp-auth-note {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid #494d55;
+  border-radius: 10px;
+  background: #24272c;
+  color: #aeb4bc;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.mcp-auth-note.is-warning {
+  border-color: rgba(232, 177, 92, 0.45);
+  background: rgba(232, 177, 92, 0.07);
+  color: #efcd9a;
+}
+
+.mcp-auth-note.is-active {
+  border-color: rgba(143, 223, 178, 0.32);
+  background: rgba(143, 223, 178, 0.06);
+  color: #b4e8cc;
+}
+
+.mcp-endpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #494d55;
+  border-radius: 10px;
+  background: #23262b;
+}
+
+.mcp-endpoint-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-label {
+  color: #8d939b;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.mcp-endpoint {
+  overflow-wrap: anywhere;
+  color: #f5f6f7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mcp-token-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(232, 177, 92, 0.45);
+  border-radius: 12px;
+  background: rgba(232, 177, 92, 0.06);
+}
+
+.mcp-reveal-title {
+  margin: 0;
+  color: #f2d3a2;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mcp-token-code {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid #3f444c;
+  border-radius: 8px;
+  background: #16181b;
+  color: #f5f6f7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.mcp-reveal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-key-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-key-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mcp-key-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #f5f6f7;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mcp-key-status {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.mcp-key-status.is-active { color: #8fdfb2; }
+.mcp-key-status.is-expired { color: #efcd9a; }
+.mcp-key-status.is-revoked { color: #8d939b; }
+
+.mcp-key-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  color: #aeb4bc;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-key-id {
+  color: #8d939b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+
+.mcp-key-revoke {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: #aeb4bc;
+}
+
+.mcp-key-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  color: #efcd9a;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.mcp-key-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp-create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 9.5rem auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.mcp-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcp-field-label {
+  color: #d9dde2;
+}
+
+.mcp-select {
+  width: 100%;
+  min-height: 40px;
+  font-size: 12px;
+}
+
+.mcp-create-button {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .mcp-create-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mcp-endpoint-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mcp-key-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

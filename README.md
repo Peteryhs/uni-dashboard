@@ -9,6 +9,7 @@ The first screen answers what needs your attention next. Recommendations use sav
 ## Features
 
 - Ranked daily recommendations with completion, dismissal, snooze, and source evidence shared across devices.
+- A read-only [MCP](docs/MCP.md) endpoint (`/mcp`) so an AI agent can query the same collected, ranked, freshness-scored data over Streamable HTTP, with the Cloudflare Access long-term connectivity story documented alongside it.
 - A unified calendar for classes, exams, LEARN deadlines, reviewed syllabus dates, and office hours. A moving Now line and muted past entries make today's schedule easier to scan.
 - Compact warning icons beside recommendation timing, with explanations on hover, focus, or touch.
 - Posted menus grouped by outlet and station, dietary indicators, saved preferences, and optional personalized dining rankings.
@@ -58,6 +59,20 @@ For web development, run these in separate terminals:
 npm run serve                        # Relay on port 8787
 npm run web:dev                      # Web on port 5173, with the API proxied to the relay
 ```
+
+### MCP for AI agents
+
+`npm run mcp` starts a stdio Model Context Protocol bridge over the local database, for desktop
+clients that launch a subprocess. The same ten read-only tools are served over HTTP at `/mcp` by
+both the local relay and the deployed Worker. For unattended agents, open **Settings → MCP** and
+create an application API key: it is shown once, stored only as a SHA-256 hash, scoped to `mcp:read`,
+revocable in place, and attributed in the audit table. `npm run mcp:token` and `POST /v1/mcp-tokens`
+remain available for headless hosts. Cloudflare Access service tokens remain the default path; set
+`MCP_AUTH_MODE` to choose. Point the bridge at a deployment with
+`--url https://mcp.example.com/mcp --header "Name: value"` when the client cannot send headers
+itself. The endpoint speaks both live MCP protocol eras and never writes, polls or runs AI. Client
+configurations, the Access topology and the long-term connectivity analysis are in
+[docs/MCP.md](docs/MCP.md).
 
 The relay binds to loopback by default. A non-loopback bind requires `RELAY_TOKEN`; enter that token at runtime in web Settings. Tokens must never be embedded in the web build. See [deployment](docs/DEPLOYMENT.md) for hosting and authentication details.
 
@@ -123,6 +138,8 @@ Tests use synthetic/captured fixtures and local databases. The local D1 row-budg
 
 One deployment is **one student's shared data space**, not separate profiles for every Access login. Any allowed Access identity can read and modify that instance. Host a separate Worker/database for another student.
 
+The MCP endpoint is an exception in one direction only: it is read-only. An authorised agent can query the same data but cannot dismiss, complete or configure anything. Every MCP credential still shares the single data space.
+
 Private feed URLs and API tokens stay on the backend. Cached schedule data and preferences stay on the client for offline use; use a trusted browser profile and clear its site data when handing a device to someone else. Android credentials use Keystore-backed encryption. Keep `.env`, `.dev.vars`, database files, and private calendar links out of Git.
 
 The web app can display saved data when requests fail after its shell has loaded. It does not yet have a service worker for a cold offline launch. Syllabus imports require readable/extracted text; scanned PDFs need OCR first. Source refreshes remain subject to upstream posting schedules and rate limits. Notifications depend on Android permissions, channels, and alarm timing.
@@ -139,6 +156,7 @@ The web app can display saved data when requests fail after its shell has loaded
 | `test`, `fixtures`, `tools` | Regression tests, source fixtures, development tools |
 
 - [Design contract](DESIGN.md)
+- [MCP server for agents](docs/MCP.md)
 - [Unified calendar API](docs/UNIFIED-CALENDAR.md)
 - [Daily recommendations and reviewed syllabi](docs/DAILY-GUIDANCE.md)
 - [Schedule changes](docs/SCHEDULE-CHANGES.md)

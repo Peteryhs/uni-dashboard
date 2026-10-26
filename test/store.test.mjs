@@ -162,3 +162,23 @@ test('the raw snapshot archive deduplicates identical bodies', () => {
   assert.equal(store.snapshotCount(), 1);
   assert.equal(store.getSnapshot(a).body, '<html>same</html>');
 });
+test('clearSource disconnects one source and keeps receipts as history', () => {
+  const store = new SqliteStore(':memory:');
+  const at = Date.now();
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-portal-ics', external_id: 'portal-1', observed_at: at, valid_until: at + 60_000, kind: 'class', title: 'Portal class', starts_at: at, ends_at: at + 1 },
+    { source_id: 'uw-learn-ics', external_id: 'learn-1', observed_at: at, valid_until: at + 60_000, kind: 'deadline', title: 'Learn deadline', starts_at: at, ends_at: at + 1 },
+  ]);
+  store.upsertRows('menu_item', [
+    { source_id: 'uw-food-daily-menu', external_id: 'dish-1', observed_at: at, valid_until: at + 60_000, outlet: 'REV', dish: 'Soup', service_date: '2026-09-21' },
+  ]);
+  store.scheduleJob('uw-portal-ics', at + 60_000);
+  store.insertRun({ source_id: 'uw-portal-ics', started_at: at, finished_at: at, outcome: 'ok' });
+
+  const removed = store.clearSource('uw-portal-ics');
+  assert.ok(removed >= 2);
+  assert.deepEqual(store.rows('timeline_event').map((row) => row.source_id), ['uw-learn-ics']);
+  assert.equal(store.rows('menu_item').length, 1, 'unrelated shapes and sources are untouched');
+  assert.deepEqual(store.jobs(), []);
+  assert.equal(store.recentRuns(10).length, 1, 'receipts remain as history');
+});

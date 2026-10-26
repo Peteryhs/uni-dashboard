@@ -128,9 +128,16 @@ test('local credentials reject non-object bodies and cleared values stay removed
   });
   const post = payload => fetch(`${root}/v1/credentials`, { method: 'POST', body: JSON.stringify(payload) });
   for (const value of [null, [], 'oops']) assert.equal((await post(value)).status, 400);
+  store.upsertRows('timeline_event', [
+    { source_id: 'uw-portal-ics', external_id: 'portal-row', observed_at: Date.now(), valid_until: Date.now() + 60_000, kind: 'class', title: 'Portal class', starts_at: Date.now(), ends_at: Date.now() + 1 },
+    { source_id: 'uw-learn-ics', external_id: 'learn-row', observed_at: Date.now(), valid_until: Date.now() + 60_000, kind: 'deadline', title: 'Learn deadline', starts_at: Date.now(), ends_at: Date.now() + 1 },
+  ]);
+  store.scheduleJob('uw-portal-ics', Date.now() + 60_000);
   for (const name of names) process.env[name] = name.endsWith('_ICS_URL') ? 'https://synthetic.test/old.ics' : 'old-token';
   writeFileSync(join(scratch, '.env'), '# keep this\r\nUNRELATED=value\r\n' + names.map(name => `${name}=${process.env[name]}`).join('\r\n') + '\r\nLEARN_ICS_URL=https://synthetic.test/duplicate.ics\r\n');
   assert.equal((await post(Object.fromEntries(names.map(name => [name, ''])))).status, 200);
+  assert.deepEqual(store.rows('timeline_event', {}), [], 'clearing a feed deletes the rows it contributed');
+  assert.deepEqual(store.jobs(), [], 'clearing a feed removes its schedule');
   const cleared = readFileSync(join(scratch, '.env'), 'utf8');
   if (process.platform !== 'win32') assert.equal(statSync(join(scratch, '.env')).mode & 0o777, 0o600);
   assert.match(cleared, /# keep this/);

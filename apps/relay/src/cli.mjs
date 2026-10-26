@@ -18,6 +18,7 @@ import { SqliteStore } from './store.mjs';
 import { runSource } from './runner.mjs';
 import { SOURCES, enabledSources, readiness, sourceById, dedupeGoogleSources } from '#sources/registry.mjs';
 import { buildDashboard } from './cards.mjs';
+import { ApiTokenInputError, createApiToken, listApiTokens, revokeApiToken } from './mcp/tokens.mjs';
 
 const [, , cmd = 'help', ...rest] = process.argv;
 
@@ -32,9 +33,12 @@ for (let i = 0; i < rest.length; i += 1) {
   const arg = rest[i];
   if (arg.startsWith('--')) {
     const [k, v] = arg.replace(/^--/, '').split('=');
-    if (v !== undefined) flags[k] = v;
-    else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith('--')) flags[k] = rest[++i];
-    else flags[k] = true;
+    const value = v !== undefined
+      ? v
+      : rest[i + 1] !== undefined && !rest[i + 1].startsWith('--') ? rest[++i] : true;
+    // --header is repeatable: a remote MCP endpoint needs both Access service-token headers.
+    if (k === 'header') (flags.header ??= []).push(value);
+    else flags[k] = value;
   } else {
     positional.push(arg);
   }
@@ -169,8 +173,60 @@ switch (cmd) {
     break;
   }
 
+  case 'mcp': {
+    const { runStdio } = await import('./mcp/stdio.mjs');
+    const headerValues = flags.header === undefined ? [] : Array.isArray(flags.header) ? flags.header : [flags.header];
+    await runStdio({
+      dbPath,
+      url: typeof flags.url === 'string' ? flags.url : null,
+      headers: headerValues.filter((value) => typeof value === 'string'),
+    });
+    break;
+  }
+
+  case 'mcp-token': {
+    // Local database only. The deployed Worker has its own /v1/mcp-tokens routes because it owns
+    // the remote D1 database; this command is for the local relay and for tests.
+    const subcommand = positional[0] ?? 'list';
+    const store = new SqliteStore(dbPath);
+    try {
+      if (subcommand === 'create') {
+        const scopeFlag = typeof flags.scope === 'string' ? flags.scope.split(/[\s,]+/).filter(Boolean) : undefined;
+        const created = await createApiToken(store, {
+          name: typeof flags.name === 'string' ? flags.name : '',
+          scopes: scopeFlag,
+          expiresInDays: flags.days === undefined ? null : numberFlag('days', 90, { min: 1, max: 3650 }),
+        });
+        out(created);
+      } else if (subcommand === 'list') {
+        out({ tokens: await listApiTokens(store) });
+      } else if (subcommand === 'revoke') {
+        const ok = await revokeApiToken(store, typeof flags.id === 'string' ? flags.id : '');
+        out({ ok, id: typeof flags.id === 'string' ? flags.id : '' });
+        if (!ok) process.exitCode = 1;
+      } else {
+        out('usage: cli.mjs mcp-token <create|list|revoke> [--name laptop] [--days 90] [--scope mcp:read] [--id <id>]');
+        process.exitCode = 2;
+      }
+    } catch (error) {
+      if (error instanceof ApiTokenInputError) {
+        console.error(`error: ${error.message}`);
+        process.exitCode = 2;
+      } else {
+        throw error;
+      }
+    } finally {
+      store.close();
+    }
+    break;
+  }
+
   default:
-    out(`usage: cli.mjs <sources|poll|bundle|health|runs|serve> [args]\n  flags take --name=value or --name value\n  SOURCES=${SOURCES.length} enabled=${enabledSources().length}`);
+    out(`usage: cli.mjs <sources|poll|bundle|health|runs|serve|mcp|mcp-token> [args]
+  flags take --name=value or --name value
+  mcp:       --url=<deployed /mcp> --header "CF-Access-Client-Id: ..." (or an API key via RELAY_TOKEN env)
+  mcp-token: create|list|revoke  --name <label> [--days 90] [--scope mcp:read] [--id <id>]
+  SOURCES=${SOURCES.length} enabled=${enabledSources().length}`);
 }
 } catch (e) {
   console.error(`error: ${e.message}`);

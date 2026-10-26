@@ -16,6 +16,8 @@
     "inspect": "node tools/inspect-db.mjs",
     "access:oauth": "node tools/configure-access-oauth.mjs",
     "serve": "node apps/relay/src/cli.mjs serve",
+    "mcp": "node apps/relay/src/cli.mjs mcp",
+    "mcp:token": "node apps/relay/src/cli.mjs mcp-token",
     "fixtures": "node tools/fetch-fixtures.mjs",
     "bench": "node tools/menu-parse-bench.mjs fixtures/food-$(date +%F).html 500",
     "web:install": "npm --prefix apps/web install",

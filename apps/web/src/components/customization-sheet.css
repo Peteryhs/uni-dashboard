@@ -766,3 +766,66 @@
     display: none;
   }
 }
+
+/* Feed disconnect: a text action beside the saved-state badge, with inline confirmation. */
+.feed-connection-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed-connection-origin {
+  color: #8d939b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.feed-remove-link,
+.feed-remove-action,
+.feed-remove-cancel {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #aeb4bc;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.feed-remove-link {
+  color: #d9dde2;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.feed-remove-link:hover { color: #f5f6f7; }
+
+.feed-remove-link:focus-visible,
+.feed-remove-action:focus-visible,
+.feed-remove-cancel:focus-visible {
+  outline: 2px solid #78adff;
+  outline-offset: 2px;
+}
+
+.feed-remove-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #efcd9a;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.feed-remove-action {
+  color: #f0a3a3;
+  font-weight: 600;
+}
+
+.feed-remove-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.feed-remove-cancel { color: #aeb4bc; }
+.feed-remove-cancel:hover { color: #f5f6f7; }

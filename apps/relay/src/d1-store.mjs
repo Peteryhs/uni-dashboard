@@ -172,6 +172,21 @@ export class D1Store {
     return (res.results || []).map((r) => paramsToRow(shape, r));
   }
 
+  /**
+   * Disconnect a feed source: its cached observations, change alerts and schedule go, so a removed
+   * URL cannot keep contributing events to the dashboard. Receipts stay because they are history,
+   * and the Status tab should still be able to say what the last attempt was.
+   */
+  async clearSource(sourceId) {
+    const statements = [
+      ...Object.keys(SHAPES).map((shape) => this.db.prepare(`DELETE FROM ${shape} WHERE source_id=?`).bind(sourceId)),
+      this.db.prepare('DELETE FROM calendar_change WHERE source_id=?').bind(sourceId),
+      this.db.prepare('DELETE FROM job WHERE source_id=?').bind(sourceId),
+    ];
+    const results = await this.db.batch(statements);
+    return results.reduce((sum, result) => sum + (result?.meta?.changes ?? 0), 0);
+  }
+
   async insertRun(run) {
     await this.db
       .prepare(
@@ -595,6 +610,58 @@ export class D1Store {
 
   async deleteSetting(name) {
     const res = await this.db.prepare('DELETE FROM setting WHERE name=?').bind(name).run();
+    return res?.meta?.changes ?? 0;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // MCP application API keys. Only the credential hash is ever stored; `apiTokens()` deliberately
+  // selects metadata only so a list response cannot leak what a key can be verified against.
+  // ---------------------------------------------------------------------------------------------
+
+  async insertApiToken({ id, name, tokenSha256, scopes, createdAt, expiresAt = null }) {
+    await this.db
+      .prepare(`INSERT INTO api_token (id, name, token_sha256, scopes, created_at, expires_at, last_used_at, revoked_at)
+        VALUES (?,?,?,?,?,?,NULL,NULL)`)
+      .bind(id, name, tokenSha256, scopes, createdAt, expiresAt)
+      .run();
+    return { id };
+  }
+
+  async apiTokenByHash(tokenSha256) {
+    return this.db.prepare('SELECT * FROM api_token WHERE token_sha256=?').bind(tokenSha256).first();
+  }
+
+  async apiTokens() {
+    const res = await this.db
+      .prepare('SELECT id, name, scopes, created_at, expires_at, last_used_at, revoked_at FROM api_token ORDER BY created_at DESC')
+      .all();
+    return res.results || [];
+  }
+
+  async revokeApiToken(id, now = Date.now()) {
+    const res = await this.db.prepare('UPDATE api_token SET revoked_at=? WHERE id=? AND revoked_at IS NULL').bind(now, id).run();
+    return res?.meta?.changes ?? 0;
+  }
+
+  /** Write only when the recorded use is stale, so a polling client does not cost a D1 write per call. */
+  async touchApiToken(id, now = Date.now(), staleBefore = now - 60_000) {
+    const res = await this.db
+      .prepare('UPDATE api_token SET last_used_at=? WHERE id=? AND (last_used_at IS NULL OR last_used_at < ?)')
+      .bind(now, id, staleBefore)
+      .run();
+    return res?.meta?.changes ?? 0;
+  }
+
+  async insertMcpAudit({ tokenId = null, identity = '', method, tool = '', ok = true, at = Date.now() }) {
+    const result = await this.db
+      .prepare('INSERT INTO mcp_audit (token_id, identity, method, tool, ok, at) VALUES (?,?,?,?,?,?)')
+      .bind(tokenId, identity, method, tool, ok ? 1 : 0, at)
+      .run();
+    return result?.meta?.last_row_id ?? null;
+  }
+
+  async pruneMcpAudit(beforeMs) {
+    const res = await this.db.prepare('DELETE FROM mcp_audit WHERE at < ?').bind(beforeMs).run();
     return res?.meta?.changes ?? 0;
   }
 }

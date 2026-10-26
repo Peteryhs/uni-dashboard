@@ -57,6 +57,7 @@ import { ScheduleTab } from './schedule-tab';
 import { CourseSettingsTab } from './course-settings-tab';
 import { SourcesPanel } from './sources-panel';
 import { RecommendationInsights } from './recommendation-insights';
+import { McpSettingsTab } from './mcp-settings-tab';
 import type { CalendarData, RecommendationResponse } from '@/lib/contract';
 import './customization-sheet.css';
 import { SetupGuide } from '@/components/setup-guide';
@@ -70,7 +71,15 @@ const DIETARY_OPTIONS: { id: DietaryPreference; label: string }[] = [
   { id: 'gluten', label: 'Gluten-free' },
 ];
 
-const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'status', 'recommendations', 'about'] as const;
+type FeedSetting = 'PORTAL_ICS_URL' | 'GOOGLE_CALENDAR_ICS_URL' | 'LEARN_ICS_URL';
+
+const FEED_INPUT_ID: Record<FeedSetting, string> = {
+  PORTAL_ICS_URL: 'portal-url',
+  GOOGLE_CALENDAR_ICS_URL: 'google-url',
+  LEARN_ICS_URL: 'learn-url',
+};
+
+const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'mcp', 'status', 'recommendations', 'about'] as const;
 type SettingsTab = typeof SETTINGS_TAB_ORDER[number];
 
 const AI_MODEL_OPTIONS: AiModelInfo[] = [
@@ -509,6 +518,10 @@ export function CustomizationSheet({
                 <KeyRound className="size-3.5 mr-1" /> Connections
               </TabsTrigger>
               <TabsTrigger
+                value="mcp"
+                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
+              >MCP</TabsTrigger>
+              <TabsTrigger
                 value="status"
                 className="settings-tab"
               >Status</TabsTrigger>
@@ -751,6 +764,21 @@ export function CustomizationSheet({
             </BlurFade>
           </TabsContent>
 
+          <TabsContent value="mcp" className="settings-panel pt-0">
+            <BlurFade
+              as="section"
+              className="settings-tab-panel space-y-6 pt-5"
+              delay={0.04}
+              duration={0.44}
+              offset={10}
+              blur="7px"
+              direction="up"
+              inView
+            >
+              <McpSettingsTab active={activeTab === 'mcp'} />
+            </BlurFade>
+          </TabsContent>
+
           <TabsContent value="schedule" className="settings-panel settings-schedule pt-0">
             <BlurFade
               as="section"
@@ -865,6 +893,8 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null,
   );
+  const [confirmRemove, setConfirmRemove] = useState<FeedSetting | null>(null);
+  const [removingFeed, setRemovingFeed] = useState<FeedSetting | null>(null);
 
   const loadStatus = async () => {
     try {
@@ -968,9 +998,38 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
     }
   };
 
+  /**
+   * Disconnect a saved feed. The backend deletes the URL, the source's cached rows, change alerts
+   * and its schedule, so the dashboard stops showing events from a connection the owner removed.
+   * A deployment secret is not removable from here: the UI hides Remove for that case.
+   */
+  const removeFeed = async (setting: FeedSetting) => {
+    setRemovingFeed(setting);
+    setFeedback(null);
+    try {
+      const payload: Partial<Record<FeedSetting, string>> = {};
+      payload[setting] = '';
+      await updateCredentials(payload);
+      if (setting === 'PORTAL_ICS_URL') setPortalUrl('');
+      if (setting === 'GOOGLE_CALENDAR_ICS_URL') setGoogleUrl('');
+      if (setting === 'LEARN_ICS_URL') setLearnUrl('');
+      await loadStatus();
+      await queryClient.invalidateQueries({ queryKey: ['setup-credentials'] });
+      await queryClient.invalidateQueries({ queryKey: ['setup-status'] });
+      await Promise.all(['dashboard', 'full-calendar', 'recommendations', 'health', 'setup-status'].map(key => queryClient.invalidateQueries({ queryKey: [key] })));
+      setConfirmRemove(null);
+      setFeedback({ type: 'success', message: 'Feed removed. Its cached events were cleared; paste a new URL and save to reconnect.' });
+      requestAnimationFrame(() => document.getElementById(FEED_INPUT_ID[setting])?.focus());
+    } catch (err) {
+      setFeedback({ type: 'error', message: err instanceof Error ? err.message : 'Could not remove the feed.' });
+    } finally {
+      setRemovingFeed(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">Connections are saved on your backend and kept across redeploys. Saved URLs stay hidden for privacy. Leave a field empty to keep its current value.</p>
+      <p className="text-sm text-muted-foreground">Connections are saved on your backend and kept across redeploys. Saved URLs stay hidden for privacy. Saving with a field empty keeps its current value; use Remove to disconnect a feed and delete the events it contributed, then paste a new URL to reconnect.</p>
       {feedback && (
         <div
           className={cn(
@@ -1010,11 +1069,16 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
                   </Label>
                   <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Google Calendar Feed URL">What’s this?</button>
                 </div>
-                {status?.google_calendar?.configured ? (
-                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
-                ) : (
-                  <span className="font-mono text-[10px] text-zinc-400">Optional</span>
-                )}
+                <FeedConnectionActions
+                  info={status?.google_calendar}
+                  setting="GOOGLE_CALENDAR_ICS_URL"
+                  missingLabel="Optional"
+                  confirm={confirmRemove}
+                  removing={removingFeed}
+                  onConfirm={setConfirmRemove}
+                  onCancel={() => setConfirmRemove(null)}
+                  onRemove={removeFeed}
+                />
               </div>
               <Input
                 id="google-url"
@@ -1038,11 +1102,16 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
                   </Label>
                   <button type="button" className="settings-context-help" onClick={() => onGuideRequest(0)} aria-label="What’s this? Waterloo Portal Feed URL">What’s this?</button>
                 </div>
-                {status?.portal?.configured ? (
-                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
-                ) : (
-                  <span className="font-mono text-[10px] text-zinc-400">Optional</span>
-                )}
+                <FeedConnectionActions
+                  info={status?.portal}
+                  setting="PORTAL_ICS_URL"
+                  missingLabel="Optional"
+                  confirm={confirmRemove}
+                  removing={removingFeed}
+                  onConfirm={setConfirmRemove}
+                  onCancel={() => setConfirmRemove(null)}
+                  onRemove={removeFeed}
+                />
               </div>
               <Input
                 id="portal-url"
@@ -1066,11 +1135,16 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
                     </Label>
                     <button type="button" className="settings-context-help" onClick={() => onGuideRequest(1)} aria-label="What’s this? LEARN Deliverables Feed URL">What’s this?</button>
                   </div>
-                {status?.learn.configured ? (
-                  <span className="font-mono text-[10px] text-emerald-400">Configured</span>
-                ) : (
-                  <span className="font-mono text-[10px] text-amber">Missing</span>
-                )}
+                <FeedConnectionActions
+                  info={status?.learn}
+                  setting="LEARN_ICS_URL"
+                  missingLabel="Missing"
+                  confirm={confirmRemove}
+                  removing={removingFeed}
+                  onConfirm={setConfirmRemove}
+                  onCancel={() => setConfirmRemove(null)}
+                  onRemove={removeFeed}
+                />
               </div>
               <Input
                 id="learn-url"
@@ -1147,6 +1221,67 @@ function CredentialsManager({ onGuideRequest, active }: { onGuideRequest: (step?
         </Button>
       </form>
     </div>
+  );
+}
+
+function FeedConnectionActions({
+  info,
+  setting,
+  missingLabel,
+  confirm,
+  removing,
+  onConfirm,
+  onCancel,
+  onRemove,
+}: {
+  info?: { configured: boolean; source?: string };
+  setting: FeedSetting;
+  missingLabel: string;
+  confirm: FeedSetting | null;
+  removing: FeedSetting | null;
+  onConfirm: (setting: FeedSetting) => void;
+  onCancel: () => void;
+  onRemove: (setting: FeedSetting) => void;
+}) {
+  if (!info?.configured) {
+    return (
+      <span className={cn('font-mono text-[10px]', missingLabel === 'Missing' ? 'text-amber' : 'text-zinc-400')}>
+        {missingLabel}
+      </span>
+    );
+  }
+  // A Worker secret is deployed, not saved by this screen. Removing it here would purge the cache
+  // while the secret quietly reconnects on the next poll, so say where it lives instead.
+  const removable = !info.source || info.source === 'saved in the app' || info.source === 'saved in .env';
+  if (!removable) {
+    return (
+      <span className="feed-connection-actions">
+        <span className="font-mono text-[10px] text-emerald-400">Configured</span>
+        <span className="feed-connection-origin" title="Set as a deployment secret; remove it in the Cloudflare dashboard.">deployment</span>
+      </span>
+    );
+  }
+  if (confirm === setting) {
+    return (
+      <span className="feed-remove-confirm" role="group" aria-label="Confirm removing this feed">
+        <span>Remove feed?</span>
+        <button
+          type="button"
+          className="feed-remove-action"
+          disabled={removing === setting}
+          onClick={() => onRemove(setting)}
+        >
+          {removing === setting ? 'Removing…' : 'Remove'}
+        </button>
+        <button type="button" className="feed-remove-cancel" onClick={onCancel}>Cancel</button>
+      </span>
+    );
+  }
+  return (
+    <span className="feed-connection-actions">
+      <span className="font-mono text-[10px] text-emerald-400">Configured</span>
+      <button type="button" className="feed-remove-link" onClick={() => onConfirm(setting)}>Remove</button>
+    </span>
   );
 }
 

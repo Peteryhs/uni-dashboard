@@ -21,6 +21,14 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ACCESS_TEAM_DOMAIN = "https://peterfat11.cloudflareaccess.com"
 ACCESS_AUD = "89094f50761aeba9685fa28a5bb0fb32bfddbbc4835411eed56020e7fff40ae3"
+# Optional: when `/mcp` is served on its own hostname with its own Access application, put that
+# application's AUD tag here. /mcp then accepts only assertions minted for the agent app, so a
+# dashboard session cannot open the MCP endpoint. See docs/MCP.md.
+# MCP_ACCESS_AUD = ""
+# Optional: how the MCP endpoint authenticates. "access" (default) requires the Cloudflare Access
+# assertion; "token" accepts application API keys minted by the owner and means Access is not
+# required for /mcp; "both" accepts either. See docs/MCP.md before choosing token mode.
+# MCP_AUTH_MODE = "access"
 
 # The Vite client, served from the same origin as /v1 so there is no CORS path anywhere.
 # single-page-application means unknown paths fall back to index.html instead of 404.
@@ -28,8 +36,10 @@ ACCESS_AUD = "89094f50761aeba9685fa28a5bb0fb32bfddbbc4835411eed56020e7fff40ae3"
 directory = "apps/web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-# APIs and the HTTPS OAuth handoff must reach the Worker instead of the SPA asset fallback.
-run_worker_first = ["/v1/*", "/healthz", "/oauth/android/callback"]
+# APIs, the HTTPS OAuth handoff and the MCP endpoint must reach the Worker instead of the SPA
+# asset fallback. The two RFC 9728 discovery paths are listed too: an MCP client reads them before
+# it holds any credential, so they must be served by the Worker rather than rendered as the shell.
+run_worker_first = ["/v1/*", "/healthz", "/oauth/android/callback", "/mcp", "/.well-known/*"]
 
 # Canonical rows. D1 is SQLite, which is the dialect the storage interface was written against.
 # The schema is created by D1Store.init() on first use (CREATE TABLE IF NOT EXISTS), so there is no

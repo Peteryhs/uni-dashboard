@@ -27,7 +27,18 @@ import { previewCourseImport, saveCourseResources } from './course-library.mjs';
 import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
+import { feedSourceId } from './feed-settings.mjs';
 import { accessConfig, isCrossSiteWrite, verifyAccessJwt } from './access.mjs';
+import { handleMcpHttp, unauthorizedResponse, forbiddenResponse, protectedResourceMetadata } from './mcp/http.mjs';
+import {
+  authenticateApiToken,
+  createApiToken,
+  listApiTokens,
+  revokeApiToken,
+  ApiTokenInputError,
+  bearerFrom,
+  MCP_SCOPES,
+} from './mcp/tokens.mjs';
 import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oauth-callback.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 import { buildHealth } from './health.mjs';
@@ -101,6 +112,87 @@ export async function pollDue(store, now = Date.now(), cap = MAX_SOURCES_PER_TIC
   return { receipts, deferred, repairs, pruned, prunedSnapshots };
 }
 
+/**
+ * `/mcp` authentication. Two credential lanes, chosen by `MCP_AUTH_MODE`:
+ *
+ *   - `access` (default): the `Cf-Access-Jwt-Assertion` the edge signs for a browser session, a
+ *     Managed OAuth access token or a service token. This is the historically safe path.
+ *   - `token` (and `both`): an application API key, `Authorization: Bearer udmcp_...`, minted by the
+ *     owner and stored as a hash in D1. Use it when the MCP hostname is not behind Access, or when
+ *     you want per-agent revocation and attribution without an IdP.
+ *   - `both` accepts either, which suits a hostname that Access protects while agents use keys.
+ *
+ * `ACCESS_DISABLED=1` still bypasses everything for `wrangler dev` and tests only.
+ *
+ * Returns `{ identity, kind, tokenId, scopes }` or `{ denied: Response }`. Every refusal is
+ * JSON-RPC, never HTML, so a machine client cannot mistake auth failure for a protocol bug.
+ */
+const MCP_AUTH_MODES = new Set(['access', 'token', 'both']);
+
+function mcpAuthMode(env) {
+  const configured = String(env.MCP_AUTH_MODE ?? '').trim().toLowerCase();
+  if (!configured) return 'access';
+  if (MCP_AUTH_MODES.has(configured)) return configured;
+  console.warn(`[mcp/access] unknown MCP_AUTH_MODE "${configured}"; falling back to access`);
+  return 'access';
+}
+
+async function authorizeMcpRequest(request, env, url, store) {
+  const access = accessConfig(env);
+  if (access.disabled) {
+    return { identity: 'access-disabled', kind: 'disabled', tokenId: null, scopes: [...MCP_SCOPES] };
+  }
+  const mode = mcpAuthMode(env);
+
+  if (mode !== 'token') {
+    /**
+     * `/mcp` normally lives on its own hostname with its own Access application. `MCP_ACCESS_AUD`
+     * pins the audience to that application, so an assertion minted for the human dashboard cannot
+     * open the agent endpoint even though both run on the same Worker.
+     */
+    const aud = String(env.MCP_ACCESS_AUD || access.aud || '').trim();
+    if (access.teamDomain && aud) {
+      let verdict;
+      try {
+        verdict = await verifyAccessJwt(request.headers.get('cf-access-jwt-assertion'), { teamDomain: access.teamDomain, aud });
+      } catch (error) {
+        console.error(`[mcp/access] ${error.message}`);
+        return { denied: json({ error: 'access verification unavailable' }, 503) };
+      }
+      if (verdict.ok) return { identity: verdict.identity, kind: 'access', tokenId: null, scopes: [...MCP_SCOPES] };
+    } else if (mode === 'access') {
+      const missing = [];
+      if (!access.teamDomain) missing.push('ACCESS_TEAM_DOMAIN');
+      if (!aud) missing.push('ACCESS_AUD or MCP_ACCESS_AUD');
+      return { denied: json({ error: 'access not configured', missing }, 503) };
+    }
+  }
+
+  if (mode !== 'access') {
+    const presented = bearerFrom(request);
+    if (presented) {
+      // Only the token lane needs the database, so an Access-authenticated deployment does not pay
+      // an extra `init()` probe before the credential is even resolved.
+      await store.init();
+      const token = await authenticateApiToken(store, presented);
+      if (token) {
+        if (!token.scopes.includes('mcp:read')) return { denied: forbiddenResponse({ requiredScope: 'mcp:read' }) };
+        return {
+          identity: `token:${token.name}#${token.id}`,
+          kind: 'token',
+          tokenId: token.id,
+          scopes: token.scopes,
+        };
+      }
+    }
+  }
+
+  console.warn(`[mcp/access] refused ${request.method} ${url.pathname}: no valid ${mode === 'access' ? 'Access assertion' : 'API key'}`);
+  return {
+    denied: unauthorizedResponse({ resourceMetadataUrl: `${url.origin}/.well-known/oauth-protected-resource` }),
+  };
+}
+
 async function handleFetch(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -111,37 +203,66 @@ async function handleFetch(request, env, ctx) {
   if (path === '/healthz') return json({ ok: true, uptime_s: Math.round((Date.now() - STARTED_AT) / 1000) });
 
   /**
-   * The Worker gates the data, not the shell. Access already covers the shell at the edge, and
-   * the bundle holds nothing personal: it is an empty renderer until a /v1 call answers.
+   * RFC 9728 discovery for MCP clients. Deliberately public: it names no secret and no data, and a
+   * client that cannot authenticate must still be able to read it. Name the Access team domain as
+   * the authorization server, because Cloudflare Access Managed OAuth publishes the companion
+   * RFC 8414 document there and already runs the authorization-code + PKCE flow this dashboard
+   * uses for Android. When Access is not configured the document does not exist.
    */
-  if (!path.startsWith('/v1/')) {
-    if (env.ASSETS) return env.ASSETS.fetch(request);
-    return json({ error: 'not found', routes: ['/healthz', '/v1/dashboard', '/v1/setup', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
+  if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') {
+    const metadata = protectedResourceMetadata(url.origin, [accessConfig(env).teamDomain]);
+    return metadata ? json(metadata) : json({ error: 'not found' }, 404);
   }
 
   /**
-   * Every /v1 route requires a request Cloudflare Access has signed: a browser login or the
-   * Android app's service token. Checked before the database is touched, so an unauthenticated
-   * request costs no D1 queries.
+   * The Worker gates the data, not the shell. Access already covers the shell at the edge, and
+   * the bundle holds nothing personal: it is an empty renderer until a /v1 call answers.
+   * `/mcp` is a Worker route and must not fall through to the SPA asset handler.
    */
-  const access = accessConfig(env);
-  if (!access.disabled) {
-    if (!access.configured) return json({ error: 'access not configured', missing: ['ACCESS_TEAM_DOMAIN', 'ACCESS_AUD'].filter((k) => !(env[k] || process.env[k])) }, 503);
-    let verdict;
-    try {
-      verdict = await verifyAccessJwt(request.headers.get('cf-access-jwt-assertion'), access);
-    } catch (error) {
-      console.error(`[access] ${error.message}`);
-      return json({ error: 'access verification unavailable' }, 503);
-    }
-    if (!verdict.ok) {
-      console.warn(`[access] refused ${request.method} ${path}: ${verdict.reason}`);
-      return json({ error: 'unauthorized' }, 401);
-    }
+  const isMcp = path === '/mcp';
+  if (!path.startsWith('/v1/') && !isMcp) {
+    if (env.ASSETS) return env.ASSETS.fetch(request);
+    return json({ error: 'not found', routes: ['/healthz', '/mcp', '/v1/dashboard', '/v1/setup', '/v1/calendar', '/v1/health/sources', '/v1/credentials', '/v1/poll?source=<id> (POST)', '/v1/snapshot/<sha>'] }, 404);
   }
-  if (isCrossSiteWrite(request, url)) return json({ error: 'cross-site request refused' }, 403);
 
-  const store = storeFor(env);
+  /**
+   * Build the store only where it is needed. `/v1` must answer 401 before touching D1 — including
+   * when no D1 binding exists at all — so its store is created after the Access gate, exactly as
+   * before the MCP work. `/mcp` needs the store up front only for the API-key lane.
+   */
+  let store = null;
+  let mcpAuth = null;
+  if (isMcp) {
+    store = storeFor(env);
+    mcpAuth = await authorizeMcpRequest(request, env, url, store);
+    if (mcpAuth?.denied) return mcpAuth.denied;
+  }
+
+  if (!isMcp) {
+    /**
+     * Every /v1 route requires a request Cloudflare Access has signed: a browser login or the
+     * Android app's service token. Checked before the database is touched, so an unauthenticated
+     * request costs no D1 queries.
+     */
+    const access = accessConfig(env);
+    if (!access.disabled) {
+      if (!access.configured) return json({ error: 'access not configured', missing: ['ACCESS_TEAM_DOMAIN', 'ACCESS_AUD'].filter((k) => !(env[k] || process.env[k])) }, 503);
+      let verdict;
+      try {
+        verdict = await verifyAccessJwt(request.headers.get('cf-access-jwt-assertion'), access);
+      } catch (error) {
+        console.error(`[access] ${error.message}`);
+        return json({ error: 'access verification unavailable' }, 503);
+      }
+      if (!verdict.ok) {
+        console.warn(`[access] refused ${request.method} ${path}: ${verdict.reason}`);
+        return json({ error: 'unauthorized' }, 401);
+      }
+    }
+    if (isCrossSiteWrite(request, url)) return json({ error: 'cross-site request refused' }, 403);
+  }
+
+  store ??= storeFor(env);
   await store.init();
 
   // Settings the owner saved from the app win over Worker secrets: the more recent explicit choice.
@@ -150,12 +271,81 @@ async function handleFetch(request, env, ctx) {
   const saved = settings
     .filter((row) => SETTING_KEYS.includes(row.name) && row.name !== 'OFFICE_HOURS_JSON' && row.value)
     .map((row) => row.name);
+
+  /**
+   * MCP API-key administration. These live under /v1 on purpose: they inherit the Access gate that
+   * protects every other owner-only route, so minting a key requires a human session (or a trusted
+   * admin service token), never an agent key itself. The plaintext token is returned exactly once.
+   */
+  if (path === '/v1/mcp-tokens') {
+    if (request.method === 'GET') {
+      return json({ tokens: await listApiTokens(store), auth: { mode: mcpAuthMode(env) } });
+    }
+    if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'invalid json' }, 400);
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Body must be a JSON object' }, 400);
+    try {
+      const created = await createApiToken(store, {
+        name: body.name,
+        scopes: body.scopes ?? undefined,
+        expiresInDays: body.expires_in_days ?? null,
+      });
+      return json({ ...created, warning: 'This is the only time this token is shown. Store it now.' }, 201);
+    } catch (error) {
+      if (error instanceof ApiTokenInputError) return json({ error: error.message }, 400);
+      throw error;
+    }
+  }
+
+  if (path.startsWith('/v1/mcp-tokens/') && request.method === 'DELETE') {
+    let id;
+    try {
+      id = decodeURIComponent(path.slice('/v1/mcp-tokens/'.length));
+    } catch {
+      return json({ error: 'invalid token id' }, 400);
+    }
+    try {
+      return (await revokeApiToken(store, id)) ? json({ ok: true }) : json({ error: 'no such token' }, 404);
+    } catch (error) {
+      if (error instanceof ApiTokenInputError) return json({ error: error.message }, 400);
+      throw error;
+    }
+  }
+
   return withRuntimeEnv(createRuntimeEnv(env, settings), async () => {
   const startAiJob = (job) => {
     const task = processAiJob(store, job, { cfEnv: env });
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
     else void task.catch((error) => console.error(`[ai-job] ${job.kind} ${error.message}`));
   };
+
+  /**
+   * MCP is served inside the same runtime-env scope as /v1: the tools read saved rows only, but the
+   * health tool asks the source registry whether each feed is configured, and that answer comes
+   * from the invocation-scoped environment view rather than process.env.
+   */
+  if (isMcp) {
+    return handleMcpHttp(request, {
+      store,
+      now: Date.now(),
+      identity: mcpAuth.identity,
+      authKind: mcpAuth.kind,
+      tokenId: mcpAuth.tokenId,
+      scopes: mcpAuth.scopes,
+      runtime: {
+        target: 'cloudflare',
+        uptime_scope: 'isolate',
+        uptime_s: Math.round((Date.now() - STARTED_AT) / 1000),
+        polling: 'scheduled',
+      },
+      log: (line) => console.log(line),
+    });
+  }
 
   /**
    * A read never polls. This block used to run `pollDue(...)` inside `ctx.waitUntil` for every
@@ -435,12 +625,16 @@ async function handleFetch(request, env, ctx) {
         const changedAt = Date.now();
         if (!trimmed) {
           await store.deleteSetting(name); // an empty value clears it, same as the local .env path
+          // A removed feed must stop contributing rows, not just stop being polled. The cache would
+          // otherwise keep showing events from a connection the owner just disconnected.
+          const sourceId = feedSourceId(name);
+          if (sourceId) await store.clearSource(sourceId);
           if (name !== 'OFFICE_HOURS_JSON') runtimeOverrides.set(name, '');
           if (valueChanged) {
             const marker = name === 'LEARN_ICS_URL' ? SETUP_LEARN_CHANGED_AT : (name === 'PORTAL_ICS_URL' || name === 'GOOGLE_CALENDAR_ICS_URL' ? SETUP_SCHEDULE_CHANGED_AT : null);
             if (marker) await store.setSetting(marker, String(changedAt), changedAt);
           }
-          stored.push({ name, cleared: true });
+          stored.push({ name, cleared: true, ...(sourceId ? { purged_source: sourceId } : {}) });
           continue;
         }
         await store.setSetting(name, trimmed, changedAt);

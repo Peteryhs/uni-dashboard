@@ -7,7 +7,7 @@
  */
 
 const CHUNK = 25; // rows per statement, keeps bound params well under any dialect's limit
-const INDEXES = ['idx_timeline_starts', 'idx_menu_date', 'idx_source_run_source_id', 'idx_source_run_finished', 'idx_source_run_body_sha', 'idx_raw_snapshot_fetched', 'idx_calendar_change_observed'];
+const INDEXES = ['idx_timeline_starts', 'idx_menu_date', 'idx_source_run_source_id', 'idx_source_run_finished', 'idx_source_run_body_sha', 'idx_raw_snapshot_fetched', 'idx_calendar_change_observed', 'idx_mcp_audit_at'];
 
 const SHAPES = {
   timeline_event: {
@@ -111,12 +111,41 @@ function ddlStatements() {
     reserved_neurons INTEGER NOT NULL DEFAULT 0,
     calls INTEGER NOT NULL DEFAULT 0
   );`);
+  /**
+   * Application API keys for the MCP endpoint. Deliberately separate from `setting`: a key is a
+   * credential with its own lifecycle (revocation, expiry, last use), not a configuration value.
+   * Only the SHA-256 of the token is stored; the plaintext exists once, in the mint response.
+   */
+  parts.push(`CREATE TABLE IF NOT EXISTS api_token (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    scopes TEXT NOT NULL DEFAULT 'mcp:read',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    last_used_at INTEGER,
+    revoked_at INTEGER
+  );`);
+  /**
+   * Per-call audit trail for the MCP endpoint. Identity is an Access email or `token:<name>#<id>`,
+   * never the credential. Kept small and pruned opportunistically by the writer.
+   */
+  parts.push(`CREATE TABLE IF NOT EXISTS mcp_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id TEXT,
+    identity TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL,
+    tool TEXT NOT NULL DEFAULT '',
+    ok INTEGER NOT NULL DEFAULT 1,
+    at INTEGER NOT NULL
+  );`);
   parts.push('CREATE INDEX IF NOT EXISTS idx_timeline_starts ON timeline_event (starts_at, deleted);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_menu_date ON menu_item (service_date, deleted);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_source_id ON source_run (source_id, id DESC);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_finished ON source_run (finished_at);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_source_run_body_sha ON source_run (body_sha256);');
   parts.push('CREATE INDEX IF NOT EXISTS idx_raw_snapshot_fetched ON raw_snapshot (fetched_at);');
+  parts.push('CREATE INDEX IF NOT EXISTS idx_mcp_audit_at ON mcp_audit (at);');
   return parts;
 }
 
@@ -299,6 +328,6 @@ const SHAPE_COLUMNS = SHAPES;
  * table would have missed exactly that case: the table exists, the new one does not, and the DDL
  * never runs again.
  */
-const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage', 'calendar_change'];
+const TABLES = [...Object.keys(SHAPES), 'source_run', 'raw_snapshot', 'job', 'setting', 'ai_usage', 'calendar_change', 'api_token', 'mcp_audit'];
 
 export { SHAPES, SHAPE_COLUMNS, ddl, ddlStatements, rowToParams, paramsToRow, rowsPerStatement, upsertSql, RUN_RETENTION_MS, RECEIPTS_PER_SOURCE, receiptLookup, lookupIds, MAX_LOOKUP_SOURCES, MAX_COMPOUND_TERMS, TABLES, INDEXES, CHUNK };

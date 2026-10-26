@@ -33,6 +33,46 @@ import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidan
 import { buildRecommendations } from './recommendations.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 import { buildHealth } from './health.mjs';
+import { feedSourceId } from './feed-settings.mjs';
+import { handleMcpHttp, unauthorizedResponse, forbiddenResponse } from './mcp/http.mjs';
+import { authenticateApiToken, bearerFrom, createApiToken, listApiTokens, revokeApiToken, ApiTokenInputError } from './mcp/tokens.mjs';
+
+/** Adapt a Node request to the Web Request the shared MCP handler takes. */
+function toWebRequest(req, url) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) for (const item of value) headers.append(name, item);
+    else headers.set(name, value);
+  }
+  const init = { method: req.method, headers };
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    // Node streams a request body only when the caller says the body is half-duplex.
+    init.body = req;
+    init.duplex = 'half';
+  }
+  return new Request(url, init);
+}
+
+/** Write a Web Response back to a Node response, preserving status and headers. */
+async function writeWebResponse(res, response) {
+  const headers = {};
+  response.headers.forEach((value, key) => { headers[key] = value; });
+  res.writeHead(response.status, headers);
+  res.end(Buffer.from(await response.arrayBuffer()));
+}
+
+/** Read a small JSON body (token names, not feeds). */
+async function readJsonBody(req, limit = 16_384) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new RangeError('body too large');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
 
 export function createServer({
   store,
@@ -94,6 +134,59 @@ export function createServer({
     if (url.pathname === '/healthz') return send(200, { ok: true, uptime_s: Math.round((Date.now() - started) / 1000) });
 
     /**
+     * The MCP endpoint: the same protocol and tool code the deployed Worker runs. This relay has no
+     * Cloudflare Access in front of it, so it accepts the operator's RELAY_TOKEN, an application API
+     * key minted into this database, or open loopback development with neither configured. It is
+     * routed before the static handler because `/mcp` has no file extension and the SPA fallback
+     * would otherwise answer with HTML.
+     */
+    if (url.pathname === '/mcp') {
+      const authorization = req.headers.authorization ?? '';
+      const relayOk = Boolean(token) && authorization === `Bearer ${token}`;
+      const presented = bearerFrom({ headers: { get: (name) => req.headers[name] } });
+      let identity = token ? 'relay-token' : 'loopback';
+      let tokenId = null;
+      let scopes = ['mcp:read'];
+      let authKind = token ? 'relay-token' : 'loopback';
+      if (!relayOk) {
+        if (presented) {
+          const apiToken = await authenticateApiToken(store, presented);
+          if (!apiToken) return writeWebResponse(res, unauthorizedResponse());
+          if (!apiToken.scopes.includes('mcp:read')) {
+            return writeWebResponse(res, forbiddenResponse({ requiredScope: 'mcp:read' }));
+          }
+          identity = `token:${apiToken.name}#${apiToken.id}`;
+          tokenId = apiToken.id;
+          scopes = apiToken.scopes;
+          authKind = 'token';
+        } else if (token) {
+          // A relay token is configured and the caller sent no credential at all.
+          return writeWebResponse(res, unauthorizedResponse());
+        }
+      }
+      try {
+        const response = await handleMcpHttp(toWebRequest(req, url), {
+          store,
+          now: Date.now(),
+          identity,
+          authKind,
+          tokenId,
+          scopes,
+          runtime: {
+            target: 'node',
+            uptime_scope: 'process',
+            uptime_s: Math.round((Date.now() - started) / 1000),
+            polling: automaticPolling ? 'interval' : 'manual',
+          },
+          log,
+        });
+        return writeWebResponse(res, response);
+      } catch (error) {
+        return send(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: error.message } });
+      }
+    }
+
+    /**
      * The token gates the data, not the shell.
      *
      * A browser cannot attach an Authorization header to the initial document request, so gating
@@ -124,6 +217,50 @@ export function createServer({
     }
 
     try {
+      /**
+       * MCP API-key administration, local parity with the Worker's /v1 routes so Settings → MCP
+       * works against this relay too. RELAY_TOKEN (when set) already gated every /v1 route above.
+       */
+      if (url.pathname === '/v1/mcp-tokens') {
+        if (req.method === 'GET') {
+          return send(200, { tokens: await listApiTokens(store), auth: { mode: 'local' } });
+        }
+        if (req.method !== 'POST') return send(405, { error: 'method not allowed' });
+        let body;
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          return send(400, { error: 'invalid json' });
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400, { error: 'Body must be a JSON object' });
+        try {
+          const created = await createApiToken(store, {
+            name: body.name,
+            scopes: body.scopes ?? undefined,
+            expiresInDays: body.expires_in_days ?? null,
+          });
+          return send(201, { ...created, warning: 'This is the only time this token is shown. Store it now.' });
+        } catch (error) {
+          if (error instanceof ApiTokenInputError) return send(400, { error: error.message });
+          throw error;
+        }
+      }
+
+      if (url.pathname.startsWith('/v1/mcp-tokens/') && req.method === 'DELETE') {
+        let id;
+        try {
+          id = decodeURIComponent(url.pathname.slice('/v1/mcp-tokens/'.length));
+        } catch {
+          return send(400, { error: 'invalid token id' });
+        }
+        try {
+          return (await revokeApiToken(store, id)) ? send(200, { ok: true }) : send(404, { error: 'no such token' });
+        } catch (error) {
+          if (error instanceof ApiTokenInputError) return send(400, { error: error.message });
+          throw error;
+        }
+      }
+
       // Local relay only: the temporary Vite diagnostics page can move the clock without
       // changing production Worker routes or fetching new data for a hypothetical date.
       if (url.pathname === '/v1/recommendations/preview') {
@@ -358,18 +495,21 @@ export function createServer({
           return send(200, {
             portal: {
               configured: Boolean(process.env.PORTAL_ICS_URL),
+              source: process.env.PORTAL_ICS_URL ? 'saved in .env' : 'not set',
               env_var: 'PORTAL_ICS_URL',
               name: 'Waterloo Portal Feed',
               role: 'Official class timetable, room locations and exams',
             },
             google_calendar: {
               configured: Boolean(process.env.GOOGLE_CALENDAR_ICS_URL),
+              source: process.env.GOOGLE_CALENDAR_ICS_URL ? 'saved in .env' : 'not set',
               env_var: 'GOOGLE_CALENDAR_ICS_URL',
               name: 'Google Calendar Feed',
               role: 'Google Calendar events, personal timetable or exported classes',
             },
             learn: {
               configured: Boolean(process.env.LEARN_ICS_URL),
+              source: process.env.LEARN_ICS_URL ? 'saved in .env' : 'not set',
               env_var: 'LEARN_ICS_URL',
               name: 'Waterloo LEARN Deadlines Feed',
               role: 'Upcoming assignments, quizzes, homework & project due dates',
@@ -446,6 +586,11 @@ export function createServer({
             }
           }
           const changedAt = Date.now();
+          // Disconnecting a feed also removes what it contributed. Without this, a cleared URL
+          // leaves its cached events visible until they age out. Receipts stay as history.
+          if (portalChanged && !process.env.PORTAL_ICS_URL) store.clearSource(feedSourceId('PORTAL_ICS_URL'));
+          if (googleChanged && !process.env.GOOGLE_CALENDAR_ICS_URL) store.clearSource(feedSourceId('GOOGLE_CALENDAR_ICS_URL'));
+          if (learnChanged && !process.env.LEARN_ICS_URL) store.clearSource(feedSourceId('LEARN_ICS_URL'));
           if (portalChanged || googleChanged) store.setSetting(SETUP_SCHEDULE_CHANGED_AT, String(changedAt), changedAt);
           if (learnChanged) store.setSetting(SETUP_LEARN_CHANGED_AT, String(changedAt), changedAt);
           if (portalChanged && process.env.PORTAL_ICS_URL) store.scheduleJob('uw-portal-ics', changedAt);
