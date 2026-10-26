@@ -25,10 +25,11 @@ ACCESS_AUD = "89094f50761aeba9685fa28a5bb0fb32bfddbbc4835411eed56020e7fff40ae3"
 # application's AUD tag here. /mcp then accepts only assertions minted for the agent app, so a
 # dashboard session cannot open the MCP endpoint. See docs/MCP.md.
 # MCP_ACCESS_AUD = ""
-# Optional: how the MCP endpoint authenticates. "access" (default) requires the Cloudflare Access
+# How the MCP endpoint authenticates: "access" (default) requires the Cloudflare Access
 # assertion; "token" accepts application API keys minted by the owner and means Access is not
-# required for /mcp; "both" accepts either. See docs/MCP.md before choosing token mode.
-# MCP_AUTH_MODE = "access"
+# required for /mcp; "both" accepts either. Set to "both" because the hub agent authenticates with
+# an application API key on an Access-bypassed /mcp path. See docs/MCP.md.
+MCP_AUTH_MODE = "both"
 
 # The Vite client, served from the same origin as /v1 so there is no CORS path anywhere.
 # single-page-application means unknown paths fall back to index.html instead of 404.
