@@ -412,3 +412,106 @@ test('rankDailyMenu clamps dish highlight why to 5 words max', async () => {
   const h2 = res.ranked_outlets[0].highlights[1];
   assert.equal(h2.why, 'Crispy spicy beef');
 });
+
+// Measured 2026-10-28: the default model reasons by default and reasoning is billed inside
+// max_tokens, so a 2048-token structured call returned empty content with finish_reason "length".
+const AI_JSON = JSON.stringify({
+  headline: 'Cafe fits today.',
+  top_outlet: 'Cafe',
+  ranked_outlets: [{ outlet: 'Cafe', rank: 1, match_score: 80, verdict: 'Good fit.', highlights: [] }],
+  tip: 'Go early.',
+});
+
+test('rankDailyMenu turns reasoning off for a model whose catalog flags it', async () => {
+  clearAiCache();
+  const payloads = [];
+  const res = await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: DEFAULT_AI_MODEL,
+    env: { AI: { run: async (_model, payload) => {
+      payloads.push(payload);
+      return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] };
+    } } },
+    force: true,
+    now: 7000,
+  });
+  assert.equal(payloads.length, 1);
+  assert.deepEqual(payloads[0].chat_template_kwargs, { enable_thinking: false });
+  assert.equal(res.top_outlet, 'Cafe');
+});
+
+test('a model with no reasoning flag keeps its request payload unchanged', async () => {
+  clearAiCache();
+  const payloads = [];
+  await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: '@cf/meta/llama-3.1-8b-instruct-fp8',
+    env: { AI: { run: async (_model, payload) => {
+      payloads.push(payload);
+      return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] };
+    } } },
+    force: true,
+    now: 7100,
+  });
+  assert.equal('chat_template_kwargs' in payloads[0], false);
+});
+
+test('an empty length-truncated reply is retried with reasoning off and a bigger cap', async () => {
+  clearAiCache();
+  const payloads = [];
+  const env = { AI: { run: async (_model, payload) => {
+    payloads.push(payload);
+    if (payloads.length === 1) {
+      // exact shape measured from the live model when it ran out of budget mid-thought
+      return { choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '', reasoning_content: 'x'.repeat(6951) } }] };
+    }
+    return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] };
+  } } };
+  const res = await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: DEFAULT_AI_MODEL,
+    env,
+    force: true,
+    now: 7200,
+  });
+  assert.equal(payloads.length, 2, 'the spent budget gets one dedicated retry, not the schema retry');
+  assert.equal(payloads[0].max_tokens, 2048);
+  assert.equal(payloads[1].max_tokens, 4096);
+  assert.deepEqual(payloads[1].chat_template_kwargs, { enable_thinking: false });
+  assert.match(payloads[1].messages.at(-1).content, /^[{[]|^You are an expert/, 'retry reuses the original prompt, not the schema-rejection prompt');
+  assert.equal(res.top_outlet, 'Cafe');
+});
+
+test('a reply that stays empty names the spent budget instead of claiming invalid JSON', async () => {
+  clearAiCache();
+  let calls = 0;
+  const env = { AI: { run: async () => {
+    calls++;
+    return { choices: [{ finish_reason: 'length', message: { content: '', reasoning_content: 'x'.repeat(6951) } }] };
+  } } };
+  await assert.rejects(rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: DEFAULT_AI_MODEL,
+    env,
+    force: true,
+    now: 7300,
+  }), (error) => {
+    assert.match(error.message, /AI returned no content after retry/);
+    assert.match(error.message, /finish_reason: length/);
+    assert.doesNotMatch(error.message, /not valid JSON/);
+    assert.equal(error.diagnostic.empty_content, true);
+    assert.equal(error.diagnostic.response_chars, 0);
+    assert.equal(error.diagnostic.reasoning_chars, 6951);
+    assert.equal(error.diagnostic.finish_reason, 'length');
+    return true;
+  });
+  assert.equal(calls, 3, 'budget retry then one schema retry, then stop');
+});

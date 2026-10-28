@@ -19,6 +19,22 @@ try {
 
 export const DEFAULT_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 
+/**
+ * Models that write reasoning tokens into the same completion budget as the answer. The catalog
+ * advertises them with `reasoning: true` and `reasoning_effort.default_enabled: true`, and a
+ * structured call then spends the whole `max_tokens` thinking and returns `message.content: ""`
+ * with `finish_reason: "length"`, so the JSON never arrives at all.
+ *
+ * Measured 2026-10-28 on the default model, one ranking prompt: at max_tokens 2048 the reasoning
+ * run reached 6951 characters and content was empty (63.9 neurons, zero usable output); the same
+ * prompt with `chat_template_kwargs.enable_thinking: false` answered in 432 completion tokens with
+ * valid JSON (19.9 neurons). Model discovery adds any model whose catalog properties say reasoning.
+ */
+const REASONING_MODELS = new Set([DEFAULT_AI_MODEL]);
+
+/** Upper bound for the one budget-escalated retry, kept inside the 4k the free tier pays for. */
+const MAX_ESCALATED_TOKENS = 4096;
+
 export const POPULAR_MODELS = [
   {
     id: '@cf/google/gemma-4-26b-a4b-it',
@@ -206,6 +222,9 @@ export async function getAvailableAiModels({
       // Exclude models that require a paid Workers plan
       const requirePaid = props.require_workers_paid === 'true' || props.require_workers_paid === true;
       if (requirePaid) continue;
+
+      // Remember which models reason inside the completion budget, so structured calls can turn it off.
+      if (props.reasoning === 'true' || props.reasoning === true) REASONING_MODELS.add(m.name);
 
       // Exclude LoRA adapters and safety/guardrail classifiers
       if (m.name.endsWith('-lora')) continue;
@@ -448,11 +467,21 @@ export function extractJson(str) {
   return null;
 }
 
+function aiFinishReason(rawResponse) {
+  return rawResponse?.choices?.[0]?.finish_reason ?? rawResponse?.finish_reason ?? '';
+}
+
 function safeResponseDiagnostic(rawResponse, rawText) {
   const trimmed = rawText.trim();
-  const finishReason = rawResponse?.choices?.[0]?.finish_reason ?? rawResponse?.finish_reason;
+  const message = rawResponse?.choices?.[0]?.message ?? null;
+  const reasoning = message?.reasoning_content ?? message?.reasoning;
+  const finishReason = aiFinishReason(rawResponse);
   return {
     response_chars: rawText.length,
+    // An empty reply with finish_reason "length" is a spent budget, not a malformed answer: say so,
+    // because "Response was not valid JSON" hid this cause for three consecutive live failures.
+    empty_content: trimmed.length === 0,
+    ...(typeof reasoning === 'string' ? { reasoning_chars: reasoning.length } : {}),
     starts_with_json: /^[\[{]/.test(trimmed),
     ends_with_json: /[\]}]$/.test(trimmed),
     has_ranking_key: /\b(?:ranked_outlets|rankedOutlets)\b/.test(rawText),
@@ -510,15 +539,18 @@ export async function runStructured({
     ? { type: 'json_schema', json_schema: jsonSchema }
     : { type: 'json_object' };
 
-  async function callAi(messages) {
-    if (beforeAiCall) await beforeAiCall({ model, messages, maxTokens, jsonSchema });
+  async function callAi(messages, { maxTokens: callMaxTokens = maxTokens, disableReasoning = REASONING_MODELS.has(model) } = {}) {
+    if (beforeAiCall) await beforeAiCall({ model, messages, maxTokens: callMaxTokens, jsonSchema });
+    const payload = {
+      messages,
+      response_format: responseFormat,
+      max_tokens: callMaxTokens,
+      // Reasoning is pure overhead for a structured reply and it is billed inside max_tokens.
+      ...(disableReasoning ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    };
     if (hasWorkerAi) {
       try {
-        return await effectiveEnv.AI.run(model, {
-          messages,
-          response_format: responseFormat,
-          max_tokens: maxTokens,
-        });
+        return await effectiveEnv.AI.run(model, payload);
       } catch (err) {
         const msg = err?.message || String(err);
         if (msg.includes("JSON Mode couldn't be met") || msg.includes('json mode')) {
@@ -539,11 +571,7 @@ export async function runStructured({
           Authorization: `Bearer ${apiToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages,
-          response_format: responseFormat,
-          max_tokens: maxTokens,
-        }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     } catch (err) {
@@ -576,6 +604,23 @@ export async function runStructured({
   }
 
   let rawText = unwrapAiResponseText(rawResponse);
+
+  // A model that spends the whole budget thinking answers with empty content and finish_reason
+  // "length". The schema retry below cannot help that, so it gets its own retry: reasoning forced
+  // off and a bigger cap, which also covers a reasoning model whose catalog flag we have not learned.
+  if (!rawText.trim() && aiFinishReason(rawResponse) === 'length') {
+    try {
+      rawResponse = await callAi(messages, {
+        maxTokens: Math.min(maxTokens * 2, MAX_ESCALATED_TOKENS),
+        disableReasoning: true,
+      });
+      rawText = unwrapAiResponseText(rawResponse);
+    } catch (err) {
+      if (!err.status) err.status = 502;
+      throw err;
+    }
+  }
+
   let parsedObj = parseJsonFromAiText(rawText);
   let transformError = '';
   const applyTransform = (value) => {
@@ -631,9 +676,12 @@ export async function runStructured({
       const secondError = validation.error
         ? validation.error.issues.map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ')
         : !parsedObj ? 'Response was not valid JSON' : transformError || 'Response JSON did not match the expected structure';
-      const err = new Error(`AI response failed schema validation after retry: ${secondError}`);
+      const diagnostic = safeResponseDiagnostic(rawResponse, rawText);
+      const err = new Error(diagnostic.empty_content
+        ? `AI returned no content after retry (finish_reason: ${diagnostic.finish_reason || 'unknown'}); the model spent its whole output budget without writing a reply`
+        : `AI response failed schema validation after retry: ${secondError}`);
       err.raw = rawText;
-      err.diagnostic = safeResponseDiagnostic(rawResponse, rawText);
+      err.diagnostic = diagnostic;
       err.status = 502;
       throw err;
     }

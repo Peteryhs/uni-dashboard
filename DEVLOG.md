@@ -9,6 +9,37 @@ Chronological record of architectural changes, technical decisions, benchmarks, 
 
 ---
 
+## 2026-10-28 — the dining advisor that spent its whole budget thinking
+
+The AI dining card went `attempt_limited` / `repeated_failures` with `response_chars: 0` and
+`finish_reason: length`, and the stored error read "Response was not valid JSON" - which is a lie about
+what happened, because the model wrote nothing at all.
+
+Cause: the default model `@cf/google/gemma-4-26b-a4b-it` advertises `reasoning: true` with
+`reasoning_effort.default_enabled: true`, and reasoning tokens are billed inside the same `max_tokens`
+the answer is meant to come out of. `rankDailyMenu` passes 2048 tokens. Measured 2026-10-28 against the
+live model over the REST API, with a realistic 882-character taste profile and today's 21 dishes: the
+reasoning run reached 6951 characters, `message.content` came back empty with `finish_reason: "length"`,
+2048 completion tokens spent, 63.9 neurons, zero usable output. Retrying at the same budget reproduced
+it exactly, so three polls later the signature froze.
+
+Measured alternatives on the same prompt: `chat_template_kwargs.enable_thinking: false` at 2048 tokens
+answered in 432 completion tokens with valid JSON for 19.9 neurons. A successful reasoning call needs
+3315 tokens at a 4096 cap for 98.5 neurons - five times the cost for a four-row ranking, so reasoning
+buys nothing here and structured calls now turn it off.
+
+Fix, all in `ai.mjs`: a `REASONING_MODELS` set (seeded with the default model, extended by model
+discovery whenever the catalog advertises reasoning) makes `runStructured` send
+`chat_template_kwargs.enable_thinking: false`; an empty reply with `finish_reason: "length"` gets its own
+retry at a doubled cap (4096) instead of the schema retry, which could never help; and the diagnostic
+carries `empty_content` and `reasoning_chars`, so the next failure names itself.
+
+Two things worth carrying forward. The failure mode is silent and total: an empty string parses as
+"invalid JSON" and says nothing about why, and the schema retry spends a second call to hit the same
+wall. And the stored state does not clear itself - a frozen signature stays `attempt_limited` until the
+menu or the profile changes, so the first card after this deploy needs `POST /v1/ai/rank-food` from the
+app. Any model swap needs the same check: if it reasons by default, its thinking eats the answer budget.
+
 ## 2026-10-09 — the read that polled itself out of its CPU budget
 
 Hours after the five-term fix deployed, the same six routes came back as 503 `outcome: exceededCpu`,
