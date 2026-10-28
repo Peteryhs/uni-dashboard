@@ -580,3 +580,18 @@ test('a model that can only be dialled down is sent reasoning_effort low', async
   assert.equal(payloads[0].reasoning_effort, 'low');
   assert.equal('chat_template_kwargs' in payloads[0], false);
 });
+
+test('a saved choice of an uncontrollable reasoning model falls back to the default', async () => {
+  const { cleanFoodProfile } = await import('../apps/relay/src/food-recommendation.mjs');
+  const cleaned = cleanFoodProfile({ bio: 'high protein', selectedAiModel: '@cf/qwen/qwen3-30b-a3b-fp8' });
+  assert.equal(cleaned.selectedAiModel, DEFAULT_AI_MODEL);
+  // a model that can be turned down keeps the owner's choice
+  assert.equal(cleanFoodProfile({ selectedAiModel: '@cf/zai-org/glm-4.7-flash' }).selectedAiModel, '@cf/zai-org/glm-4.7-flash');
+  assert.equal(cleanFoodProfile({ selectedAiModel: '@cf/openai/gpt-oss-20b' }).selectedAiModel, '@cf/openai/gpt-oss-20b');
+});
+
+test('the curated model list never offers a model that cannot stop reasoning', async () => {
+  const { POPULAR_MODELS, canAnswerStructuredRequests } = await import('../apps/relay/src/ai.mjs');
+  const offered = POPULAR_MODELS.filter((m) => !canAnswerStructuredRequests(m.id)).map((m) => m.id);
+  assert.deepEqual(offered, [], 'every curated model is offered to the owner');
+});

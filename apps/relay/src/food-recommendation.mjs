@@ -1,6 +1,6 @@
 /** Persistent dining recommendation shared by the Worker, local relay, and clients. */
 import { MENU_ROW_LIMIT } from './menu.mjs';
-import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS } from './ai.mjs';
+import { rankDailyMenu, DEFAULT_AI_MODEL, POPULAR_MODELS, canAnswerStructuredRequests } from './ai.mjs';
 import { aiBudgetGuard } from './ai-budget.mjs';
 import { todayInToronto } from '#sources/food/source.mjs';
 
@@ -34,10 +34,12 @@ export function foodRecommendationSignature(serviceDate, profile, menuItems) {
 
 export function cleanFoodProfile(input = {}) {
   const profile = input && typeof input === 'object' ? input : {};
-  const model = typeof profile.selectedAiModel === 'string' && (
-    profile.selectedAiModel.startsWith('@cf/') ||
-    POPULAR_MODELS.some((item) => item.id === profile.selectedAiModel)
-  ) ? profile.selectedAiModel : DEFAULT_AI_MODEL;
+  const requested = typeof profile.selectedAiModel === 'string' &&
+    (profile.selectedAiModel.startsWith('@cf/') || POPULAR_MODELS.some((item) => item.id === profile.selectedAiModel))
+    ? profile.selectedAiModel : null;
+  // A model that cannot stop reasoning never returns an answer, so a saved choice of one falls back
+  // to the default instead of leaving the card stuck on an error the owner cannot clear from the card.
+  const model = requested && canAnswerStructuredRequests(requested) ? requested : DEFAULT_AI_MODEL;
   const legacySpice = typeof profile.spiceLevel === 'string' && profile.spiceLevel !== 'none' ? `${profile.spiceLevel.replace('-', ' ')} spice` : '';
   const legacyGoals = Array.isArray(profile.dietaryGoals)
     ? profile.dietaryGoals.filter((goal) => typeof goal === 'string').slice(0, 12).map((goal) => goal.slice(0, 80).replace(/[-_]+/g, ' '))

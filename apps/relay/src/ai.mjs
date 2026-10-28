@@ -58,6 +58,11 @@ function reasoningFields(model) {
   return {};
 }
 
+/** False for a model that writes its whole reply into reasoning and leaves the answer empty. */
+export function canAnswerStructuredRequests(model) {
+  return REASONING_CONTROL.get(model) !== 'always';
+}
+
 /** Upper bound for the one budget-escalated retry, kept inside the 4k the free tier pays for. */
 const MAX_ESCALATED_TOKENS = 4096;
 
@@ -83,11 +88,6 @@ export const POPULAR_MODELS = [
     tag: 'Fast & Cheap · $0.05/M',
   },
   {
-    id: '@cf/qwen/qwen3-30b-a3b-fp8',
-    name: 'Qwen3 (30B-A3B)',
-    tag: 'Dense & MoE · $0.05/M',
-  },
-  {
     id: '@cf/meta/llama-3.1-8b-instruct-fp8',
     name: 'Meta Llama 3.1 (8B)',
     tag: 'Standard 8B · Free Tier',
@@ -101,11 +101,6 @@ export const POPULAR_MODELS = [
     id: '@cf/meta/llama-4-scout-17b-16e-instruct',
     name: 'Meta Llama 4 Scout (17B)',
     tag: '16-Expert MoE',
-  },
-  {
-    id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
-    name: 'DeepSeek-R1 Distill (32B)',
-    tag: 'Reasoning Specialist',
   },
 ];
 
@@ -257,6 +252,8 @@ export async function getAvailableAiModels({
         else if (effort && effort.mandatory === true) REASONING_CONTROL.set(m.name, supported.includes('low') ? 'effort-low' : 'always');
         else REASONING_CONTROL.set(m.name, 'always');
       }
+      // A model that cannot stop reasoning cannot answer a structured request, so never offer it.
+      if (REASONING_CONTROL.get(m.name) === 'always') continue;
 
       // Exclude LoRA adapters and safety/guardrail classifiers
       if (m.name.endsWith('-lora')) continue;

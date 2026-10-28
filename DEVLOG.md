@@ -33,8 +33,15 @@ discovery whenever the catalog advertises reasoning) makes `runStructured` send
 `chat_template_kwargs.enable_thinking: false`; an empty reply gets its own retry at a doubled cap
 (4096) instead of the schema retry, which could never help; and the diagnostic carries `empty_content`
 and `reasoning_chars`, so the next failure names itself. The empty-reply trigger is not narrowed to
-`finish_reason: "length"`: qwen3-30b-a3b answers `stop` with 1541 characters of reasoning and no content,
+`finish_reason: "length"`: qwen3-30b-a3b answers `stop` with 1552 characters of reasoning and no content,
 which is the same failure wearing a different label.
+
+Models fall into three buckets by what the catalog lets you turn down, and the two that cannot be
+switched off cleanly are handled rather than left selectable: gpt-oss gets `reasoning_effort: low`
+(27.6 neurons for a valid answer, against nothing at all at its default `medium`), and a model with no
+`reasoning_effort` field at all is refused with `AI_MODEL_REASONS_UNCONTROLLABLY`, hidden from the
+Settings list, and replaced with the default if it was already saved. qwen3-30b-a3b was in the curated
+list for that reason and is gone from it.
 
 Two things worth carrying forward. The failure mode is silent and total: an empty string parses as
 "invalid JSON" and says nothing about why, and the schema retry spends a second call to hit the same
