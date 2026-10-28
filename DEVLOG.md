@@ -30,9 +30,11 @@ buys nothing here and structured calls now turn it off.
 
 Fix, all in `ai.mjs`: a `REASONING_MODELS` set (seeded with the default model, extended by model
 discovery whenever the catalog advertises reasoning) makes `runStructured` send
-`chat_template_kwargs.enable_thinking: false`; an empty reply with `finish_reason: "length"` gets its own
-retry at a doubled cap (4096) instead of the schema retry, which could never help; and the diagnostic
-carries `empty_content` and `reasoning_chars`, so the next failure names itself.
+`chat_template_kwargs.enable_thinking: false`; an empty reply gets its own retry at a doubled cap
+(4096) instead of the schema retry, which could never help; and the diagnostic carries `empty_content`
+and `reasoning_chars`, so the next failure names itself. The empty-reply trigger is not narrowed to
+`finish_reason: "length"`: qwen3-30b-a3b answers `stop` with 1541 characters of reasoning and no content,
+which is the same failure wearing a different label.
 
 Two things worth carrying forward. The failure mode is silent and total: an empty string parses as
 "invalid JSON" and says nothing about why, and the schema retry spends a second call to hit the same

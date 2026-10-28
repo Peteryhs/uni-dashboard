@@ -20,17 +20,43 @@ try {
 export const DEFAULT_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 
 /**
- * Models that write reasoning tokens into the same completion budget as the answer. The catalog
- * advertises them with `reasoning: true` and `reasoning_effort.default_enabled: true`, and a
- * structured call then spends the whole `max_tokens` thinking and returns `message.content: ""`
- * with `finish_reason: "length"`, so the JSON never arrives at all.
+ * Models that write reasoning tokens into the same completion budget as the answer, and how far that
+ * can be turned down. Values measured from the catalog on 2026-10-28 (`reasoning_effort` per model)
+ * and confirmed against the live model with one ranking prompt each.
  *
- * Measured 2026-10-28 on the default model, one ranking prompt: at max_tokens 2048 the reasoning
- * run reached 6951 characters and content was empty (63.9 neurons, zero usable output); the same
- * prompt with `chat_template_kwargs.enable_thinking: false` answered in 432 completion tokens with
- * valid JSON (19.9 neurons). Model discovery adds any model whose catalog properties say reasoning.
+ * - `toggle`     the catalog says `mandatory: false`, so `chat_template_kwargs.enable_thinking: false`
+ *                really turns it off: gemma-4 answered in 432 completion tokens with valid JSON for
+ *                19.9 neurons, against 2048 tokens and empty content with reasoning on.
+ * - `effort-low` `mandatory: true` with `low` supported: it cannot be off, so dial it down.
+ *                gpt-oss-20b at `low` answered in 419 tokens for 27.6 neurons; at its default it spent
+ *                2048 tokens on reasoning and returned nothing.
+ * - `always`     no `reasoning_effort` at all, so nothing can be turned down. qwen3-30b-a3b-fp8 wrote
+ *                1552 characters of reasoning and zero content twice, at 2048 and 4096 tokens, with the
+ *                toggle set. It cannot answer a structured request, so it is refused instead of paying
+ *                for three calls that all come back empty.
+ *
+ * Model discovery overwrites these entries from the live catalog, so a new model lands in the right
+ * bucket without a code change.
  */
-const REASONING_MODELS = new Set([DEFAULT_AI_MODEL]);
+const REASONING_CONTROL = new Map([
+  [DEFAULT_AI_MODEL, 'toggle'],
+  ['@cf/zai-org/glm-4.7-flash', 'toggle'],
+  ['@cf/qwen/qwen3.8-27b', 'toggle'],
+  ['@cf/openai/gpt-oss-20b', 'effort-low'],
+  ['@cf/openai/gpt-oss-120b', 'effort-low'],
+  ['@cf/qwen/qwen3-30b-a3b-fp8', 'always'],
+  ['@cf/qwen/qwq-32b', 'always'],
+  ['@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', 'always'],
+  ['@cf/nvidia/nemotron-3-120b-a12b', 'always'],
+]);
+
+/** The request fields that turn this model's reasoning down, if it has any. */
+function reasoningFields(model) {
+  const control = REASONING_CONTROL.get(model);
+  if (control === 'toggle') return { chat_template_kwargs: { enable_thinking: false } };
+  if (control === 'effort-low') return { reasoning_effort: 'low' };
+  return {};
+}
 
 /** Upper bound for the one budget-escalated retry, kept inside the 4k the free tier pays for. */
 const MAX_ESCALATED_TOKENS = 4096;
@@ -223,8 +249,14 @@ export async function getAvailableAiModels({
       const requirePaid = props.require_workers_paid === 'true' || props.require_workers_paid === true;
       if (requirePaid) continue;
 
-      // Remember which models reason inside the completion budget, so structured calls can turn it off.
-      if (props.reasoning === 'true' || props.reasoning === true) REASONING_MODELS.add(m.name);
+      // Keep the reasoning bucket current from the live catalog, so a new model needs no code change.
+      if (props.reasoning === 'true' || props.reasoning === true) {
+        const effort = props.reasoning_effort;
+        const supported = Array.isArray(effort?.supported_efforts) ? effort.supported_efforts : [];
+        if (effort && effort.mandatory === false) REASONING_CONTROL.set(m.name, 'toggle');
+        else if (effort && effort.mandatory === true) REASONING_CONTROL.set(m.name, supported.includes('low') ? 'effort-low' : 'always');
+        else REASONING_CONTROL.set(m.name, 'always');
+      }
 
       // Exclude LoRA adapters and safety/guardrail classifiers
       if (m.name.endsWith('-lora')) continue;
@@ -527,6 +559,15 @@ export async function runStructured({
     );
   }
 
+  // Measured: a model with no reasoning control writes its whole reply into reasoning and returns an
+  // empty content field, at any budget. Refuse up front rather than pay for three empty calls.
+  if (REASONING_CONTROL.get(model) === 'always') {
+    const error = new Error(`${model} cannot turn its reasoning off, so it answers structured requests with no content. Choose a different model.`);
+    error.status = 400;
+    error.code = 'AI_MODEL_REASONS_UNCONTROLLABLY';
+    throw error;
+  }
+
   // Check cache
   if (cacheKey && !force) {
     const cached = aiCache.get(cacheKey);
@@ -539,14 +580,14 @@ export async function runStructured({
     ? { type: 'json_schema', json_schema: jsonSchema }
     : { type: 'json_object' };
 
-  async function callAi(messages, { maxTokens: callMaxTokens = maxTokens, disableReasoning = REASONING_MODELS.has(model) } = {}) {
+  async function callAi(messages, { maxTokens: callMaxTokens = maxTokens } = {}) {
     if (beforeAiCall) await beforeAiCall({ model, messages, maxTokens: callMaxTokens, jsonSchema });
     const payload = {
       messages,
       response_format: responseFormat,
       max_tokens: callMaxTokens,
       // Reasoning is pure overhead for a structured reply and it is billed inside max_tokens.
-      ...(disableReasoning ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+      ...reasoningFields(model),
     };
     if (hasWorkerAi) {
       try {
@@ -605,14 +646,14 @@ export async function runStructured({
 
   let rawText = unwrapAiResponseText(rawResponse);
 
-  // A model that spends the whole budget thinking answers with empty content and finish_reason
-  // "length". The schema retry below cannot help that, so it gets its own retry: reasoning forced
-  // off and a bigger cap, which also covers a reasoning model whose catalog flag we have not learned.
-  if (!rawText.trim() && aiFinishReason(rawResponse) === 'length') {
+  // An empty reply is a spent or misdirected budget, not a malformed answer, so it gets its own retry:
+  // reasoning forced off and a bigger cap. Both measured shapes need this - gemma-4 truncates with
+  // finish_reason "length", while qwen3 answers `stop` having written 1541 characters of reasoning and
+  // no content. The schema retry below would only spend a second call hitting the same wall.
+  if (!rawText.trim()) {
     try {
       rawResponse = await callAi(messages, {
         maxTokens: Math.min(maxTokens * 2, MAX_ESCALATED_TOKENS),
-        disableReasoning: true,
       });
       rawText = unwrapAiResponseText(rawResponse);
     } catch (err) {

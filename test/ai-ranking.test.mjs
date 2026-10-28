@@ -515,3 +515,68 @@ test('a reply that stays empty names the spent budget instead of claiming invali
   });
   assert.equal(calls, 3, 'budget retry then one schema retry, then stop');
 });
+
+test('an empty reply that stopped early is also recovered with reasoning off', async () => {
+  clearAiCache();
+  const payloads = [];
+  const env = { AI: { run: async (_model, payload) => {
+    payloads.push(payload);
+    if (payloads.length === 1) {
+      // measured qwen3-30b-a3b shape: writes reasoning then stops with no content and finish_reason "stop"
+      return { choices: [{ finish_reason: 'stop', message: { content: '', reasoning_content: 'y'.repeat(1541) } }] };
+    }
+    return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] };
+  } } };
+  const res = await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: DEFAULT_AI_MODEL,
+    env,
+    force: true,
+    now: 7400,
+  });
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[1].max_tokens, 4096);
+  assert.equal(res.top_outlet, 'Cafe');
+});
+
+test('a model whose reasoning cannot be turned down is refused before spending a call', async () => {
+  clearAiCache();
+  let calls = 0;
+  const env = { AI: { run: async () => { calls++; return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] }; } } };
+  // qwen3-30b-a3b-fp8 has no reasoning_effort in the catalog and wrote zero content at 2048 and 4096.
+  await assert.rejects(rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: '@cf/qwen/qwen3-30b-a3b-fp8',
+    env,
+    force: true,
+    now: 7500,
+  }), (error) => {
+    assert.match(error.message, /cannot turn its reasoning off/);
+    assert.equal(error.code, 'AI_MODEL_REASONS_UNCONTROLLABLY');
+    return true;
+  });
+  assert.equal(calls, 0);
+});
+
+test('a model that can only be dialled down is sent reasoning_effort low', async () => {
+  clearAiCache();
+  const payloads = [];
+  await rankDailyMenu({
+    menuItems: [{ outlet: 'Cafe', dish: 'Soup', diet: [], station: '' }],
+    serviceDate: '2026-09-24',
+    tasteProfile: { bio: 'high protein' },
+    model: '@cf/openai/gpt-oss-20b',
+    env: { AI: { run: async (_model, payload) => {
+      payloads.push(payload);
+      return { choices: [{ finish_reason: 'stop', message: { content: AI_JSON } }] };
+    } } },
+    force: true,
+    now: 7600,
+  });
+  assert.equal(payloads[0].reasoning_effort, 'low');
+  assert.equal('chat_template_kwargs' in payloads[0], false);
+});
