@@ -16,6 +16,7 @@ interface BlurFadeDisclosureProps extends Omit<React.ComponentProps<'details'>, 
   summary: React.ReactNode;
   children: React.ReactNode;
   contentClassName?: string;
+  defaultOpen?: boolean;
 }
 
 /** Keeps a native disclosure open until its content has finished blurring away. */
@@ -24,9 +25,10 @@ export function BlurFadeDisclosure({
   children,
   className,
   contentClassName,
+  defaultOpen = false,
   ...props
 }: BlurFadeDisclosureProps) {
-  const [phase, setPhase] = React.useState<Phase>('closed');
+  const [phase, setPhase] = React.useState<Phase>(defaultOpen ? 'open' : 'closed');
   const closeTimer = React.useRef<number | null>(null);
 
   React.useEffect(() => {

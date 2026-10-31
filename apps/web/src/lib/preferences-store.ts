@@ -1,5 +1,24 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
+export const DASHBOARD_PANELS = [
+  { id: 'recommendations', label: 'Recommendations' },
+  { id: 'transit', label: 'Transit' },
+  { id: 'calendar', label: 'Calendar' },
+  { id: 'due-work', label: 'Due work' },
+  { id: 'menu', label: 'Dining menu' },
+  { id: 'study-spaces', label: 'Study spaces' },
+  { id: 'courses', label: 'Courses' },
+] as const;
+export type DashboardPanelId = typeof DASHBOARD_PANELS[number]['id'];
+export const DEFAULT_PANEL_ORDER = DASHBOARD_PANELS.map(panel => panel.id);
+
+// Keep valid choices and append any panels introduced in later versions.
+export function normalizePanelOrder(value: unknown): DashboardPanelId[] {
+  const saved = Array.isArray(value) ? value : [];
+  return [...new Set([...saved.filter((id): id is DashboardPanelId =>
+    DEFAULT_PANEL_ORDER.includes(id)), ...DEFAULT_PANEL_ORDER])];
+}
+
 export type LayoutDensity = 'detailed' | 'compact';
 export type DietaryPreference = 'all' | 'halal' | 'vegan' | 'vegetarian' | 'dairy' | 'gluten';
 export type SpiceLevel = 'none' | 'mild' | 'medium' | 'hot' | 'extra-hot';
@@ -42,6 +61,7 @@ export function migrateTasteProfile(profile: Partial<TasteProfile> | null | unde
 }
 
 export interface UserPreferences {
+  panelOrder: DashboardPanelId[];
   density: LayoutDensity;
   dietaryFilter: DietaryPreference;
   favoriteDishes: string[];
@@ -57,6 +77,7 @@ export interface UserPreferences {
 const STORAGE_KEY = 'uni-dashboard:preferences:v3';
 
 const DEFAULT_PREFERENCES: UserPreferences = {
+  panelOrder: DEFAULT_PANEL_ORDER,
   density: 'detailed',
   dietaryFilter: 'all',
   favoriteDishes: [],
@@ -80,6 +101,7 @@ function readPreferences(): UserPreferences {
     return {
       ...DEFAULT_PREFERENCES,
       ...parsed,
+      panelOrder: normalizePanelOrder(parsed.panelOrder),
       dismissedTasks: Array.isArray(parsed.dismissedTasks) ? parsed.dismissedTasks : [],
       section: typeof parsed.section === 'number' ? parsed.section : null,
       groupNumber: typeof parsed.groupNumber === 'number' ? parsed.groupNumber : null,
@@ -145,6 +167,33 @@ function setPreferences(updater: (prev: UserPreferences) => UserPreferences) {
 
 export function usePreferences() {
   const preferences = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const movePanel = useCallback((id: DashboardPanelId, direction: -1 | 1) => {
+    setPreferences(prev => {
+      const panelOrder = [...prev.panelOrder];
+      const index = panelOrder.indexOf(id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= panelOrder.length) return prev;
+      [panelOrder[index], panelOrder[target]] = [panelOrder[target], panelOrder[index]];
+      return { ...prev, panelOrder };
+    });
+  }, []);
+
+  const resetPanelOrder = useCallback(() => {
+    setPreferences(prev => ({ ...prev, panelOrder: [...DEFAULT_PANEL_ORDER] }));
+  }, []);
+
+  const movePanelTo = useCallback((id: DashboardPanelId, targetId: DashboardPanelId) => {
+    setPreferences(prev => {
+      const from = prev.panelOrder.indexOf(id);
+      const to = prev.panelOrder.indexOf(targetId);
+      if (from < 0 || to < 0 || from === to) return prev;
+      const panelOrder = [...prev.panelOrder];
+      panelOrder.splice(from, 1);
+      panelOrder.splice(to, 0, id);
+      return { ...prev, panelOrder };
+    });
+  }, []);
 
   const setDensity = useCallback((density: LayoutDensity) => {
     setPreferences((prev) => ({ ...prev, density }));
@@ -245,6 +294,9 @@ export function usePreferences() {
 
   return {
     preferences,
+    movePanel,
+    movePanelTo,
+    resetPanelOrder,
     setDensity,
     setDietaryFilter,
     setDishSearchQuery,

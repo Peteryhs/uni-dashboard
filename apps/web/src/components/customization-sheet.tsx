@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useSlidingIndicator } from '@/hooks/use-sliding-indicator';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,8 +13,8 @@ import {
   Bot,
   GraduationCap,
   X,
-  Info,
   ChevronDown,
+  GripVertical,
 } from 'lucide-react';
 import {
   Sheet,
@@ -32,6 +32,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { BlurFade } from '@/components/ui/blur-fade';
+import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import {
   fetchCredentialsStatus,
   updateCredentials,
@@ -47,10 +48,13 @@ import {
 import {
   usePreferences,
   DEFAULT_TASTE_PROFILE,
+  DASHBOARD_PANELS,
+  DEFAULT_PANEL_ORDER,
   migrateTasteProfile,
   type DietaryPreference,
   type TasteProfile,
   type UserPreferences,
+  type DashboardPanelId,
 } from '@/lib/preferences-store';
 import { cn } from '@/lib/utils';
 import { ScheduleTab } from './schedule-tab';
@@ -82,7 +86,7 @@ const FEED_INPUT_ID: Record<FeedSetting, string> = {
   LEARN_ICS_URL: 'learn-url',
 };
 
-const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'transit', 'credentials', 'mcp', 'status', 'recommendations', 'about'] as const;
+const SETTINGS_TAB_ORDER = ['taste', 'layout', 'courses', 'schedule', 'credentials', 'status', 'recommendations'] as const;
 type SettingsTab = typeof SETTINGS_TAB_ORDER[number];
 
 const AI_MODEL_OPTIONS: AiModelInfo[] = [
@@ -180,12 +184,77 @@ export function CustomizationSheet({
   updateTasteProfile: (patch: Partial<TasteProfile>) => void;
   resetPreferences: () => void;
 }) {
-  const { undismissTask } = usePreferences();
+  const { undismissTask, movePanel, movePanelTo, resetPanelOrder } = usePreferences();
+  const [layoutAnnouncement, setLayoutAnnouncement] = useState('');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('taste');
+  const [draggedPanel, setDraggedPanel] = useState<DashboardPanelId | null>(null);
+  const dragPointer = useRef<number | null>(null);
+  const panelListRef = useRef<HTMLOListElement>(null);
+  const panelPositions = useRef(new Map<string, number>());
+  const [mcpExpanded, setMcpExpanded] = useState(false);
+  useLayoutEffect(() => {
+    const rows = Array.from(panelListRef.current?.children ?? []) as HTMLElement[];
+    const positions = new Map<string, number>();
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    for (const row of rows) {
+      const id = row.dataset.panelId!;
+      const top = row.offsetTop;
+      const previous = panelPositions.current.get(id);
+      positions.set(id, top);
+      row.getAnimations().forEach(animation => animation.cancel());
+      if (!reduceMotion && id !== draggedPanel && previous !== undefined && previous !== top) {
+        row.animate([{ transform: `translateY(${previous - top}px)` }, { transform: 'translateY(0)' }], {
+          duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        });
+      }
+    }
+    panelPositions.current = positions;
+  }, [preferences.panelOrder, draggedPanel, open, activeTab]);
+  const panelOrderRef = useRef(preferences.panelOrder);
+  panelOrderRef.current = preferences.panelOrder;
+  useEffect(() => {
+    if (!draggedPanel) return;
+    const label = DASHBOARD_PANELS.find(panel => panel.id === draggedPanel)!.label;
+    const move = (event: PointerEvent) => {
+      if (dragPointer.current !== event.pointerId) return;
+      const list = panelListRef.current;
+      if (!list) return;
+      const listBounds = list.getBoundingClientRect();
+      if (event.clientX < listBounds.left || event.clientX > listBounds.right) return;
+      const pointerY = event.clientY - listBounds.top;
+      // Use layout positions so rows animating into place cannot change the drop target.
+      const row = (Array.from(list.children) as HTMLElement[]).find(item => pointerY >= item.offsetTop && pointerY <= item.offsetTop + item.offsetHeight);
+      const target = row?.dataset.panelId as DashboardPanelId | undefined;
+      if (!row || !target || target === draggedPanel) return;
+      const order = panelOrderRef.current;
+      const index = order.indexOf(draggedPanel);
+      const targetIndex = order.indexOf(target);
+      const midpoint = row.offsetTop + row.offsetHeight / 2;
+      if ((index < targetIndex && pointerY < midpoint) || (index > targetIndex && pointerY > midpoint)) return;
+      movePanelTo(draggedPanel, target);
+      setLayoutAnnouncement(`${label}, position ${targetIndex + 1} of ${order.length}.`);
+    };
+    const finish = (event: PointerEvent) => {
+      if (dragPointer.current !== event.pointerId) return;
+      dragPointer.current = null;
+      setDraggedPanel(null);
+    };
+    const cancel = () => { dragPointer.current = null; setDraggedPanel(null); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', cancel);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', cancel);
+    };
+  }, [draggedPanel, movePanelTo]);
   const [guideOpen, setGuideOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'mobile');
   const [guideStart, setGuideStart] = useState<number | undefined>(() => new URLSearchParams(window.location.search).get('setup') === 'mobile' ? 3 : undefined);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('taste');
   const offline = useOffline();
-  useEffect(() => { if (transitRequest) setActiveTab('transit'); }, [transitRequest]);
+  useEffect(() => { if (transitRequest) setActiveTab('schedule'); }, [transitRequest]);
   const tabIndicator = useSlidingIndicator(activeTab, '[aria-selected="true"]');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
@@ -508,6 +577,9 @@ export function CustomizationSheet({
                 <Bot className="size-3.5 mr-1 text-[#3478eb]" /> Dining
               </TabsTrigger>
               <TabsTrigger
+                value="layout" className="settings-tab"
+              >Layout</TabsTrigger>
+              <TabsTrigger
                 value="courses"
                 className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
               >
@@ -519,17 +591,12 @@ export function CustomizationSheet({
               >
                 <Calendar className="size-3.5 mr-1" /> Schedule
               </TabsTrigger>
-              <TabsTrigger value="transit" className="settings-tab">Transit</TabsTrigger>
               <TabsTrigger
                 value="credentials"
                 className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
               >
                 <KeyRound className="size-3.5 mr-1" /> Connections
               </TabsTrigger>
-              <TabsTrigger
-                value="mcp"
-                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-              >MCP</TabsTrigger>
               <TabsTrigger
                 value="status"
                 className="settings-tab"
@@ -538,14 +605,49 @@ export function CustomizationSheet({
                 value="recommendations"
                 className="settings-tab"
               >Recommendations</TabsTrigger>
-              <TabsTrigger
-                value="about"
-                className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
-              >
-                <Info className="size-3.5 mr-1" /> About
-              </TabsTrigger>
             </TabsList>
           </BlurFade>
+
+          <TabsContent value="layout" className="settings-panel pt-0">
+            <section className="settings-tab-panel panel-order-settings" aria-labelledby="panel-order-heading">
+              <div className="panel-order-heading">
+                <h3 id="panel-order-heading">Panel order</h3>
+                <button type="button" className="section-control" disabled={preferences.panelOrder.every((id, index) => id === DEFAULT_PANEL_ORDER[index])} onClick={() => { resetPanelOrder(); setLayoutAnnouncement('Default panel order restored.'); }}>Restore default</button>
+              </div>
+              <p className="panel-order-description" id="panel-order-help">Drag panels into the order you want to see them. Changes save automatically on this browser.</p>
+              <p className="sr-only" id="panel-order-keyboard">Use the up and down arrow keys on a drag handle to move a panel.</p>
+              <ol ref={panelListRef} className="panel-order-list" aria-label="Dashboard panel order">
+                {preferences.panelOrder.map((id, index) => {
+                  const label = DASHBOARD_PANELS.find(panel => panel.id === id)!.label;
+                  return <li key={id} data-panel-id={id} className={draggedPanel === id ? 'is-dragging' : undefined}>
+                    <span className="panel-order-name">{label}</span>
+                    <button type="button" className="section-control panel-drag-handle" aria-label={`Reorder ${label}`} aria-describedby="panel-order-help panel-order-keyboard"
+                      onKeyDown={event => {
+                        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                        event.preventDefault();
+                        const direction = event.key === 'ArrowUp' ? -1 : 1;
+                        const position = Math.max(0, Math.min(preferences.panelOrder.length - 1, index + direction));
+                        movePanel(id, direction);
+                        setLayoutAnnouncement(`${label}, position ${position + 1} of ${preferences.panelOrder.length}.`);
+                      }}
+                      onPointerDown={event => {
+                        if (!event.isPrimary || event.button !== 0) return;
+                        event.preventDefault();
+                        event.currentTarget.focus();
+                        dragPointer.current = event.pointerId;
+                        setDraggedPanel(id);
+                      }}
+                    ><GripVertical size={18} /></button>
+                  </li>;
+                })}
+              </ol>
+              <p className="sr-only" role="status">{layoutAnnouncement}</p>
+            </section>
+
+              <BlurFadeDisclosure className="settings-disclosure settings-merged-group" summary={<><span>About this dashboard</span><ChevronDown size={16} /></>}>
+                <AboutTab />
+              </BlurFadeDisclosure>
+          </TabsContent>
 
           {/* Tab 1: AI Taste Profile */}
           <TabsContent value="taste" className="settings-panel pt-0">
@@ -742,6 +844,9 @@ export function CustomizationSheet({
               inView
             >
             <CredentialsManager onGuideRequest={openGuideAt} active={!guideOpen} />
+            <BlurFadeDisclosure className="settings-disclosure settings-merged-group" summary={<><span>Agent access (MCP)</span><ChevronDown size={16} /></>} onToggle={event => setMcpExpanded(event.currentTarget.open)}>
+              <McpSettingsTab active={activeTab === 'credentials' && mcpExpanded && !guideOpen} />
+            </BlurFadeDisclosure>
             <button type="button" className="settings-help-row" aria-label="Open setup guide" onClick={() => openGuideAt()}>
               <span><strong>Setup guide</strong><span>Help with calendar feeds, preferences, and Android sign-in.</span></span>
               <span className="settings-help-action">Open guide</span>
@@ -773,23 +878,6 @@ export function CustomizationSheet({
             </BlurFade>
           </TabsContent>
 
-          <TabsContent value="transit" className="settings-panel pt-5">
-            <TransitSettings active={activeTab === 'transit'} cached={recommendations?.transit} />
-          </TabsContent>
-          <TabsContent value="mcp" className="settings-panel pt-0">
-            <BlurFade
-              as="section"
-              className="settings-tab-panel space-y-6 pt-5"
-              delay={0.04}
-              duration={0.44}
-              offset={10}
-              blur="7px"
-              direction="up"
-              inView
-            >
-              <McpSettingsTab active={activeTab === 'mcp'} />
-            </BlurFade>
-          </TabsContent>
 
           <TabsContent value="schedule" className="settings-panel settings-schedule pt-0">
             <BlurFade
@@ -802,6 +890,9 @@ export function CustomizationSheet({
               direction="up"
               inView
             >
+            <BlurFadeDisclosure key={transitRequest} defaultOpen={Boolean(transitRequest)} className="settings-disclosure settings-merged-group" summary={<><span>Transit and commutes</span><ChevronDown size={16} /></>}>
+              <TransitSettings active={activeTab === 'schedule' && !guideOpen} cached={recommendations?.transit} />
+            </BlurFadeDisclosure>
             <ScheduleTab />
 
             <section className="space-y-3">
@@ -869,20 +960,6 @@ export function CustomizationSheet({
               inView
             >
               <RecommendationInsights response={recommendations} pending={recommendationsPending} error={recommendationsError} onRetry={onRetryRecommendations} />
-            </BlurFade>
-          </TabsContent>
-          <TabsContent value="about" className="settings-panel settings-about pt-0">
-            <BlurFade
-              as="section"
-              className="settings-tab-panel space-y-6 pt-5"
-              delay={0.04}
-              duration={0.44}
-              offset={10}
-              blur="7px"
-              direction="up"
-              inView
-            >
-              <AboutTab />
             </BlurFade>
           </TabsContent>
         </Tabs>

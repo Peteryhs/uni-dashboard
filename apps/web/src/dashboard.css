@@ -441,3 +441,6 @@
   .menu-station-head { padding-inline: 18px; }
   .menu-notice { gap: 8px; padding: 9px 10px; }
 }
+.dashboard-recommendations { margin-top: var(--dash-section-gap); }
+.dashboard-panels > :first-child { margin-top: 0; }
+.dashboard-recommendations .undo-toast { margin: 10px 0 0; }

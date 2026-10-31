@@ -866,6 +866,11 @@ export default function App() {
         {connectionError.message}{' '}
         <RefreshButton label="Reload dashboard" refreshing={dashboardFetching || recs.isFetching || calendar.isFetching || setup.isFetching} onRefresh={() => { void Promise.all([refetch(), recs.refetch(), calendar.refetch(), setup.refetch()]); }} showLabel />
       </div>}
+    </section>
+    <OfflineStatus />
+    <div className="dashboard-panels">
+    {preferences.panelOrder.map(panel => <Fragment key={panel}>
+      {panel === 'recommendations' && <section className="dashboard-recommendations" aria-label="Recommendations">
       {recs.isPending && <BlurFade as="div" className="state-panel hero-loading" duration={0.42} offset={10} blur="5px" aria-busy="true">Finding your next move…</BlurFade>}
       {recs.isError && !recs.data && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px" role="alert">Recommendations are unavailable. <RefreshButton label="Reload recommendations" refreshing={recs.isFetching} onRefresh={() => void recs.refetch()} showLabel /></BlurFade>}
       {recs.data && !featured && <BlurFade as="div" className="state-panel" duration={0.42} offset={10} blur="5px">{recs.data.headline}.</BlurFade>}
@@ -910,14 +915,15 @@ export default function App() {
       />
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}
-    </section>
-    <OfflineStatus />
-    <TransitSection data={recs.data?.transit} now={now} onManage={() => { setTransitRequest(n => n + 1); setSettingsOpen(true); }} />
-    <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />
-    <DueWorkSection data={dueWork} />
-    <MenuSection now={now} />
-    <StudySpacesSection data={studySpacesCard?.data as StudySpacesData | undefined} state={studySpacesCard?.state} observedAt={studySpacesCard?.observed_at} now={now} />
-    <CoursesSection data={settingsCalendar.data} pending={settingsCalendar.isPending} error={settingsCalendar.isError} onManageCourse={(course) => { setSettingsCourse(course); setSettingsOpen(true); }} />
+      </section>}
+      {panel === 'transit' && <TransitSection data={recs.data?.transit} now={now} onManage={() => { setTransitRequest(n => n + 1); setSettingsOpen(true); }} />}
+      {panel === 'calendar' && <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />}
+      {panel === 'due-work' && <DueWorkSection data={dueWork} />}
+      {panel === 'menu' && <MenuSection now={now} />}
+      {panel === 'study-spaces' && <StudySpacesSection data={studySpacesCard?.data as StudySpacesData | undefined} state={studySpacesCard?.state} observedAt={studySpacesCard?.observed_at} now={now} />}
+      {panel === 'courses' && <CoursesSection data={settingsCalendar.data} pending={settingsCalendar.isPending} error={settingsCalendar.isError} onManageCourse={(course) => { setSettingsCourse(course); setSettingsOpen(true); }} />}
+    </Fragment>)}
+    </div>
   </main>
   <CustomizationSheet
     open={settingsOpen}

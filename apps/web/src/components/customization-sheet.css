@@ -829,3 +829,36 @@
 
 .feed-remove-cancel { color: #aeb4bc; }
 .feed-remove-cancel:hover { color: #f5f6f7; }
+.panel-order-settings { padding-top: 20px; }
+.panel-order-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-order-heading h3 { margin: 0; color: #f5f6f7; font-size: 14px; font-weight: 600; }
+.panel-order-description { margin: 6px 0 18px; color: #aeb4bc; font-size: 13px; line-height: 1.55; }
+.panel-order-list { position: relative; margin: 0; padding: 0; list-style: none; }
+.panel-order-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; padding: 6px 0; }
+.panel-order-name { min-width: 0; color: #f5f6f7; font-size: 13px; font-weight: 550; }
+.settings-sheet .panel-drag-handle svg { display: block !important; }
+.panel-drag-handle { flex: none; justify-content: center; width: 44px; min-height: 44px; touch-action: none; cursor: grab !important; }
+.panel-order-list .is-dragging { background: #343840; border-radius: 8px; }
+.panel-order-list .is-dragging .panel-drag-handle { cursor: grabbing !important; color: #f5f6f7; }
+.panel-order-list li { padding-left: 10px; }
+.settings-panel[data-state='active'] { animation: settings-panel-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* One transition per tab; avoid stacking the old section entrance on top. */
+.settings-panel > .blur-fade { opacity: 1; filter: none; transform: none; transition: none; }
+@keyframes settings-panel-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.settings-merged-group { margin-top: 24px; }
+.settings-merged-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; color: #d2d6dc; font-size: 13px; font-weight: 550; }
+.settings-merged-group > summary:hover { color: #f5f6f7; }
+.settings-sheet .settings-merged-group > summary svg { display: block !important; flex: none; transition: transform 220ms ease; }
+.settings-merged-group[data-expanded='true'] > summary svg { transform: rotate(180deg); }
+.settings-merged-group .blur-fade-disclosure__inner { padding-top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel[data-state='active'] { animation: none; }
+  .settings-sheet .settings-merged-group > summary svg { transition: none; }
+}
+@media (max-width: 600px) {
+  .panel-order-heading .section-control { min-height: 44px; }
+  .panel-order-list li { gap: 6px; }
+}
