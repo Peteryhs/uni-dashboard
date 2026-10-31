@@ -19,8 +19,10 @@ import java.util.Base64
 
 /** Errors that the OAuth UI can translate without exposing protocol secrets to the user. */
 sealed class OAuthException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    class Discovery(message: String) : OAuthException(message)
-    class Registration(message: String) : OAuthException(message)
+    /** [notADashboard] means the address answered, but not with sign-in metadata (404 or HTML). */
+    class Discovery(message: String, val notADashboard: Boolean = false) : OAuthException(message)
+    /** [status] and [reason] carry the authorization server's own RFC 7591 error, when it sent one. */
+    class Registration(message: String, val status: Int? = null, val reason: String? = null) : OAuthException(message)
     class Exchange(message: String) : OAuthException(message)
     class InvalidGrant(message: String = "the refresh token is no longer valid") : OAuthException(message)
     class Network(cause: IOException) : OAuthException("network unavailable", cause)
@@ -259,15 +261,15 @@ class OAuthClient(
         if (result.code !in 200..299) {
             val message = "$operation endpoint returned ${result.code}"
             throw when (operation) {
-                "dynamic registration" -> OAuthException.Registration(message)
+                "dynamic registration" -> OAuthException.Registration(message, result.code, oauthErrorReason(result.text))
                 "token exchange" -> OAuthException.Exchange(message)
-                else -> OAuthException.Discovery(message)
+                else -> OAuthException.Discovery(message, notADashboard = result.code == 404)
             }
         }
         if (operation != "dynamic registration" && operation != "token exchange" &&
             !result.contentType.contains("json", ignoreCase = true)
         ) {
-            throw OAuthException.Discovery("$operation endpoint did not return JSON")
+            throw OAuthException.Discovery("$operation endpoint did not return JSON", notADashboard = true)
         }
         return result.text
     }
@@ -283,6 +285,14 @@ class OAuthClient(
             HttpResult(it.code, text, it.header("content-type").orEmpty())
         }
     }
+
+    /** Reads `error_description` (or `error`) from an OAuth error body; never throws. */
+    private fun oauthErrorReason(body: String): String? = runCatching {
+        val obj = ContractJson.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject ?: return null
+        listOf("error_description", "error").firstNotNullOfOrNull { key ->
+            (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        }?.take(200)
+    }.getOrNull()
 
     private inline fun <reified T> parse(text: String, description: String): T = runCatching {
         ContractJson.decodeFromString<T>(text)

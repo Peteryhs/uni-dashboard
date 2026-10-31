@@ -46,7 +46,18 @@ enum class Session { Loading, SignedOut, SignedIn }
 data class BrowserAuthState(
     val busy: Boolean = false,
     val error: String? = null,
+    /** Who can fix [error]: drives which recovery the setup screen offers. */
+    val problem: SignInProblem = SignInProblem.Retry,
 )
+
+enum class SignInProblem {
+    /** The address is wrong or unreachable; the person signing in can fix it. */
+    Address,
+    /** The dashboard's Cloudflare Access app is missing the Android sign-in setup. */
+    OwnerSetup,
+    /** Transient or cancelled; trying again is the right action. */
+    Retry,
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as UniDashApp
@@ -155,6 +166,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Drops a finished attempt's error, e.g. after the address it was about has been changed. */
+    fun clearSignInError() {
+        if (!_browserState.value.busy) _browserState.value = BrowserAuthState()
+    }
+
     /** Verifies the credentials against the Worker before storing them. */
     suspend fun signIn(url: String, clientId: String, secret: String): Result<Unit> {
         // The manual path replaces any browser attempt. Fence it before validation so an old
@@ -234,7 +250,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 throw error
             } catch (error: Throwable) {
                 if (attempt == browserAttempt.get()) {
-                    _browserState.value = BrowserAuthState(error = describe(error))
+                    _browserState.value = BrowserAuthState(error = describeSignIn(error), problem = signInProblem(error))
                     app.credentialStore.clearPending()
                 }
             }
@@ -355,7 +371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ((callbackState != null && callbackState == pending.state) ||
                         (callbackState == null && launchedState != null && launchedState == pending.state))
                 if (!stale && ownsPending) app.credentialStore.clearPending()
-                if (!stale && attempt == browserAttempt.get()) _browserState.value = BrowserAuthState(error = describe(error))
+                if (!stale && attempt == browserAttempt.get()) _browserState.value = BrowserAuthState(error = describeSignIn(error), problem = signInProblem(error))
             }
         }
         // Keep callback handling separate from the prepare job. A stale callback can finish while
@@ -466,5 +482,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> e.message ?: "Something went wrong"
         }
 
+        /** Plain-language sign-in errors. Protocol detail stays in [describe] for diagnostics. */
+        fun describeSignIn(e: Throwable): String = when {
+            e is OAuthException.Network || e is RelayError.Offline ->
+                "Can't reach that address. Check it and your internet connection."
+            e is OAuthException.Discovery && e.notADashboard ->
+                "That address isn't a UniDash dashboard, or it isn't protected by Cloudflare Access."
+            e is OAuthException.Registration && e.status == 400 ->
+                "Cloudflare refused to register this app" + (e.reason?.let { ": $it." } ?: ".")
+            e is OAuthException.Discovery || e is OAuthException.Registration ->
+                "Browser sign-in isn't turned on for this dashboard yet."
+            e is RelayError.Unauthorized ->
+                "You signed in, but this dashboard didn't accept the session. Check that your account is allowed by its Access policy."
+            else -> describe(e)
+        }
+
+        fun signInProblem(e: Throwable): SignInProblem = when {
+            e is OAuthException.Network || e is RelayError.Offline -> SignInProblem.Address
+            e is OAuthException.Discovery && e.notADashboard -> SignInProblem.Address
+            e is OAuthException.Discovery || e is OAuthException.Registration -> SignInProblem.OwnerSetup
+            else -> SignInProblem.Retry
+        }
     }
 }

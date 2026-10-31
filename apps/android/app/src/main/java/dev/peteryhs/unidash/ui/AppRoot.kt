@@ -40,8 +40,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
-import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
-import dev.peteryhs.unidash.ui.setup.hasSeenMobileGuide
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -88,8 +86,6 @@ fun AppRoot(
 
 @Composable
 private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
-    val context = LocalContext.current
-    var guideOpen by rememberSaveable { mutableStateOf(!hasSeenMobileGuide(context)) }
     val snapshot by vm.snapshot.collectAsStateWithLifecycle()
     val baseUrl by vm.baseUrl.collectAsStateWithLifecycle()
     val managedOAuth by vm.managedOAuth.collectAsStateWithLifecycle()
@@ -145,8 +141,6 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
             }
         }
     }
-
-    if (guideOpen) MobileSetupGuide(dashboardAddress = baseUrl, onDismiss = { guideOpen = false })
 
     NavigationFrame(selected = tab, onSelect = selectTab, todayBadge = alertBadge, content = content)
 }

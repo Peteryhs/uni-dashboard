@@ -94,7 +94,8 @@ same origin that the user enters. Other dashboard origins need their own exact c
 ### Connect the phone
 
 After the owner setup is complete, the end user only needs the public HTTPS dashboard address.
-Open UniDash, enter that dashboard address, and tap **Sign in**. The system browser opens the
+Open UniDash, enter that dashboard address, tap **Continue**, then tap **Sign in with Cloudflare**.
+Setup has two steps and resumes at the same step if the app is closed. The system browser opens the
 Cloudflare Access login; finish authentication there and allow the browser to return to UniDash.
 The app verifies the connection and stores its refresh credential in Android Keystore-backed
 storage. It never asks the phone user for a Cloudflare API token.

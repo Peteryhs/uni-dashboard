@@ -47,14 +47,15 @@ import dev.peteryhs.unidash.data.Credentials
 import dev.peteryhs.unidash.ui.theme.Spacing
 
 private const val GUIDE_PREFS = "setup_guide_v1"
-fun hasSeenMobileGuide(context: Context): Boolean = context.getSharedPreferences(GUIDE_PREFS, Context.MODE_PRIVATE).getBoolean("seen", false)
 
-/** A resumable instruction surface. No credential or URL is persisted with guide progress. */
+/**
+ * Reference walkthrough opened from Settings once the phone is connected. Sign-in itself lives on
+ * [SetupScreen]; this never opens on its own. No credential or URL is persisted with its progress.
+ */
 @Composable
 fun MobileSetupGuide(
     dashboardAddress: String?,
     onDismiss: () -> Unit,
-    onUseAddress: ((String) -> Unit)? = null,
     onNotifications: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -66,7 +67,7 @@ fun MobileSetupGuide(
     val uriHandler = LocalUriHandler.current
     val effects = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
     val exit = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
-    LaunchedEffect(step) { prefs.edit().putBoolean("seen", true).putInt("step", step).apply() }
+    LaunchedEffect(step) { prefs.edit().putInt("step", step).apply() }
 
     fun openLink(url: String) {
         try { uriHandler.openUri(url); linkError = null }
@@ -123,10 +124,9 @@ fun MobileSetupGuide(
                                         GuideText("If you do not manage Cloudflare, ask the dashboard owner to complete this step. Advanced service-token fields are only for older deployments without browser sign-in.")
                                     }
                                     2 -> {
-                                        GuideText("Use the dashboard’s public HTTPS address below, not the Cloudflare admin console. A pasted page address is reduced to its origin, and the dashboard must be reachable from this phone.")
-                                        GuideText("Return to Connect your dashboard, then tap Sign in. Complete Cloudflare Access in the system browser and allow it to return to UniDash. Wait for the app to verify the connection.")
-                                        GuideText("If you cancel, you can try again. If sign-in is unavailable, check the address and ask the owner to confirm the one-time Managed OAuth setup and exact /oauth/android/callback redirect. Do not paste a Cloudflare API token into this screen.")
-                                        if (onUseAddress == null) GuideText("This phone is already configured. Use Sign in again in Settings if Cloudflare requests a new login.")
+                                        GuideText("This phone is already connected. To connect another phone, open UniDash on it, enter the dashboard’s public HTTPS address, tap Continue, then tap Sign in with Cloudflare.")
+                                        GuideText("Sign-in uses the same Cloudflare Access login as the web dashboard. No token, key or password is entered in the app.")
+                                        GuideText("If Cloudflare asks you to sign in again later, use Sign in again in Settings → Connections.")
                                     }
                                     3 -> {
                                         GuideText("After connecting, open Settings → Notifications to turn on reminders and choose channels. On supported Android versions, allow on-time reminders if offered.")
@@ -149,7 +149,6 @@ fun MobileSetupGuide(
                                 supportingText = { Text(if (address.isNotBlank() && origin == null) "Enter a valid HTTPS dashboard address." else "Your web dashboard address, not the Cloudflare admin console.") },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            if (step == 2 && onUseAddress != null) Button(onClick = { origin?.let { onUseAddress(it); onDismiss() } }, enabled = origin != null) { Text("Use this address") }
                             TextButton(onClick = { origin?.let { openLink("$it/?setup=mobile") } }, enabled = origin != null) { Text("Open web setup guide") }
                         }
                         linkError?.let { Text(it, color = MaterialTheme.colorScheme.error) }

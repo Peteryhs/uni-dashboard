@@ -188,8 +188,8 @@ export function SetupGuide({ onExit, onSettings, initialStep }: { onExit: () => 
         </div>
         {address && !origin && <p role="alert" className="guide-error">Enter a valid HTTPS dashboard address.</p>}
         <ol className="guide-instructions">
-          <li>Install the Android app. Paste this address into Dashboard address.</li>
-          <li>Tap Sign in. Complete Cloudflare Access sign-in in your system browser, then allow the return to UniDash.</li>
+          <li>Install the Android app. Paste this address into Dashboard address and tap Continue.</li>
+          <li>Tap Sign in with Cloudflare. Complete Cloudflare Access sign-in in your system browser, then allow the return to UniDash. No token is entered in the app.</li>
           <li>Once connected, check your schedule. In the app’s Settings, turn on reminders if you want them.</li>
         </ol>
         <p className="guide-note">No Client ID or secret is needed for browser sign-in. If sign-in discovery fails, the dashboard owner needs to enable Managed OAuth below. Browser cookies have a separate session duration.</p>
