@@ -1,5 +1,6 @@
 import { CommuteInput, TransitView, departureTimes, leaveGuidance, transitDate } from '#contract/transit.mjs';
-import { FEEDS, GRT_BASE, importSchedule, scheduledJourneys, decodeRealtime, applyRealtime, relevantAlerts, stopData } from './transit-gtfs.mjs';
+import { FEEDS, GRT_BASE, GTFS_SCHEMA, importSchedule, scheduledJourneys, decodeRealtime, applyRealtime, relevantAlerts, stopData } from './transit-gtfs.mjs';
+import { rankStops, searchEntry, sortRoutes } from './transit-search.mjs';
 
 const DAY = 86_400_000;
 export function cloudTransit(env) { return env.TRANSIT ? env.TRANSIT.get(env.TRANSIT.idFromName('grt')) : null; }
@@ -37,30 +38,49 @@ export class TransitEngine {
     }
   }
   commutes() { return this.store.get('commutes') || []; }
-  stops(q = '', origin = '') {
-    const text = q.trim().toLowerCase().slice(0, 80);
-    const all = Object.keys(FEEDS).flatMap(mode => { const meta = this.store.get(`feed:${mode}`); return meta?.generation ? Object.values(this.store.get(`gtfs:${mode}:${meta.generation}:stops`) || {}) : []; });
-    let reachable = null, from = null, meta = null, mode = null;
-    if (origin) {
-      let id; [mode, id] = origin.split(':'); meta = this.store.get(`feed:${mode}`);
-      if (!meta?.generation) return [];
-      from = stopData(this.store, mode, meta.generation, id);
-      // The small stop search catalog is cached per generation; full stop rows are not read here.
-      const targets = this.store.get(`reachable:${origin}:${meta.generation}`);
-      if (targets) reachable = new Set(targets);
-      else {
-        // Reachability is computed at import time for saved origins; for new origins use route
-        // membership as a search prefilter and validate exact trip order on save.
-        const routes = new Set(Object.values(from.trips).map(t => t[0]));
-        const stopRoutes = this.store.get(`gtfs:${mode}:${meta.generation}:stop-routes`) || {};
-        reachable = new Set(all.filter(s => s.mode === mode && (stopRoutes[s.id.split(':')[1]] || []).some(r => routes.has(r))).map(s => s.id));
-      }
+  /** Tokenized stop catalog, rebuilt only when a feed generation or import schema changes. */
+  searchIndex() {
+    const feeds = Object.keys(FEEDS).map(mode => ({ mode, meta: this.store.get(`feed:${mode}`) })).filter(f => f.meta?.generation);
+    const key = feeds.map(f => `${f.mode}:${f.meta.generation}:${f.meta.schema || 1}`).join('|');
+    if (this.index?.key === key) return this.index;
+    const entries = [], routeNames = {};
+    for (const { mode, meta } of feeds) {
+      const prefix = `gtfs:${mode}:${meta.generation}:`;
+      const stops = this.store.get(`${prefix}stops`) || {}, stopRoutes = this.store.get(`${prefix}stop-routes`) || {};
+      routeNames[mode] = this.store.get(`${prefix}routes`) || {};
+      // Parent stations and stops without scheduled service cannot be boarded, so they are not offered.
+      for (const [id, stop] of Object.entries(stops)) if (stopRoutes[id]?.length) entries.push({ ...searchEntry(stop), routeIds: stopRoutes[id] });
     }
-    const candidates = all.filter(s => s.id !== origin && (!reachable || reachable.has(s.id)) && (!text || s.name.toLowerCase().includes(text) || s.code.includes(text)));
-    if (!from) return candidates.slice(0, 30);
+    this.index = { key, entries, routeNames };
+    return this.index;
+  }
+  stops(q = '', origin = '') {
+    const index = this.searchIndex();
+    const names = (mode, ids) => sortRoutes(ids.map(id => index.routeNames[mode]?.[id] ?? id));
+    const shape = (result, routes) => { const { stop } = result.entry; return { id: stop.id, name: stop.name, code: stop.code, mode: stop.mode, routes, hint: result.hint }; };
+    if (!origin) return rankStops(index.entries, q).slice(0, 30).map(r => shape(r, names(r.entry.stop.mode, r.entry.routeIds)));
+    const [mode, id] = origin.split(':'), meta = this.store.get(`feed:${mode}`);
+    if (!meta?.generation) return [];
+    const from = stopData(this.store, mode, meta.generation, id);
+    const targets = this.store.get(`reachable:${origin}:${meta.generation}`);
+    // Reachability is computed at import time for saved origins; for new origins use route
+    // membership as a search prefilter and validate exact trip order below and on save.
+    const routes = new Set(Object.values(from.trips).map(t => t[0]));
+    const reachable = targets ? new Set(targets) : null;
+    const pool = index.entries.filter(e => e.stop.id !== origin && e.stop.mode === mode && (reachable ? reachable.has(e.stop.id) : e.routeIds.some(r => routes.has(r))));
     const boardable = new Map();
     for (const row of from.entries) if (row[4] === 0) boardable.set(row[0], Math.min(boardable.get(row[0]) ?? Infinity, row[1]));
-    return candidates.slice(0, 120).filter(s => stopData(this.store, mode, meta.generation, s.id.split(':')[1], false).entries.some(r => r[5] === 0 && r[1] > (boardable.get(r[0]) ?? Infinity))).slice(0, 30);
+    const results = [];
+    for (const result of rankStops(pool, q).slice(0, 120)) {
+      // Only routes with a trip that boards at the origin and later drops off here are direct.
+      const direct = new Set();
+      for (const row of stopData(this.store, mode, meta.generation, result.entry.stop.id.split(':')[1], false).entries) {
+        if (row[5] === 0 && row[1] > (boardable.get(row[0]) ?? Infinity) && from.trips[row[0]]) direct.add(from.trips[row[0]][0]);
+      }
+      if (direct.size) results.push(shape(result, names(mode, [...direct])));
+      if (results.length >= 30) break;
+    }
+    return results;
   }
   save(input, id = null) {
     const parsed = CommuteInput.parse(input), list = this.commutes();
@@ -125,18 +145,21 @@ export class TransitEngine {
       // One static import per invocation keeps peak memory bounded and leaves time for alarms.
       for (const [mode, id] of Object.entries(FEEDS)) {
         const meta = this.store.get(`feed:${mode}`);
-        if (!meta || now - meta.checked_at >= DAY) {
+        // A catalog written by an older importer lacks fields; fetch it again without the ETag once.
+        const outdated = Boolean(meta?.generation) && (meta.schema || 1) < GTFS_SCHEMA;
+        if (!meta || outdated || now - meta.checked_at >= DAY) {
           try {
-          const { res, bytes } = await this.upstream(`static:${mode}`, now, () => download(`${GRT_BASE}/staticfeeds/${id}`, meta?.etag ? { 'if-none-match': meta.etag } : {}));
+          const { res, bytes } = await this.upstream(`static:${mode}`, now, () => download(`${GRT_BASE}/staticfeeds/${id}`, meta?.etag && !outdated ? { 'if-none-match': meta.etag } : {}));
           if (bytes) {
             const generation = await digest(bytes);
-            if (generation !== meta?.generation) {
-              this.store.prune(`gtfs:${mode}:${generation}:`);
+            if (generation !== meta?.generation || outdated) {
+              // Clearing inside the transaction lets a failed re-import of the same generation roll
+              // back to the catalog it was replacing.
               let imported;
-              try { imported = this.store.batch(() => importSchedule(this.store, bytes, mode, generation)); }
-              catch (error) { this.store.prune(`gtfs:${mode}:${generation}:`); throw error; }
+              try { imported = this.store.batch(() => { this.store.prune(`gtfs:${mode}:${generation}:`); return importSchedule(this.store, bytes, mode, generation); }); }
+              catch (error) { if (generation !== meta?.generation) this.store.prune(`gtfs:${mode}:${generation}:`); throw error; }
               this.store.put(`feed:${mode}`, { ...imported, etag: res.headers.get('etag'), checked_at: now });
-              if (meta?.generation) this.store.prune(`gtfs:${mode}:${meta.generation}:`);
+              if (meta?.generation && meta.generation !== generation) this.store.prune(`gtfs:${mode}:${meta.generation}:`);
             } else this.store.put(`feed:${mode}`, { ...meta, checked_at: now });
           } else this.store.put(`feed:${mode}`, { ...meta, checked_at: now });
           this.store.put('status', { updated_at: now, error: null });

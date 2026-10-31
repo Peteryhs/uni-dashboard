@@ -17,7 +17,7 @@ data class TransitCommute(
     @SerialName("arrival_buffer_minutes") val arrivalBufferMinutes: Int = 10,
 )
 @Serializable
-data class TransitStop(val id: String, val name: String, val code: String, val mode: String)
+data class TransitStop(val id: String, val name: String, val code: String, val mode: String, val routes: List<String> = emptyList(), val hint: String? = null)
 @Serializable
 data class TransitStopList(val stops: List<TransitStop> = emptyList())
 @Serializable

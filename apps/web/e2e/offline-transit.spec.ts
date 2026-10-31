@@ -36,14 +36,19 @@ test('commute editor searches stops and persists buffers', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Manage commutes' }).click();
   await page.getByRole('button', { name: 'Add commute', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Boarding stop' }).fill('res');
+  await page.getByRole('option', { name: /Residence.*ION/ }).click();
+  // A building code finds the stop beside it even though the stop name never mentions E7.
+  await page.getByRole('combobox', { name: 'Destination stop' }).fill('E7');
+  await expect(page.getByText('Near E7 · Engineering 7')).toBeVisible();
+  await page.getByRole('option', { name: /Campus.*ION/ }).click();
+  await expect(page.getByRole('button', { name: 'Any direct route' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('spinbutton', { name: 'Walk to stop (minutes)' }).fill('7');
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('ION to campus');
-  await page.getByRole('textbox', { name: 'Boarding stop' }).fill('res');
-  await page.getByRole('button', { name: /Residence.*ION/ }).click();
-  await page.getByRole('textbox', { name: 'Destination stop' }).fill('camp');
-  await page.getByRole('button', { name: /Campus.*ION/ }).click();
-  await page.getByRole('spinbutton', { name: 'Walk to stop (min)' }).fill('7');
+  await page.screenshot({ path: shot('transit-settings-editor'), fullPage: true });
   await page.getByRole('button', { name: 'Save commute', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ION to campus' })).toBeVisible();
+  await expect(page.getByText('Any direct route · 7 min to the stop · 5 min after · 10 min early')).toBeVisible();
   await page.screenshot({ path: shot('transit-settings'), fullPage: true });
 });
 

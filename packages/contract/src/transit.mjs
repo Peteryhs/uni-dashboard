@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 export const TRANSIT_ZONE = 'America/Toronto';
 export const PREDICTION_MAX_AGE_MS = 90_000;
-export const TransitStop = z.object({ id: z.string(), name: z.string(), code: z.string(), mode: z.enum(['bus', 'ion']) });
+// routes: short names serving the stop (for a destination search, only routes direct from the origin).
+// hint: why a stop matched when its name does not show it, such as "Near E7 · Engineering 7".
+export const TransitStop = z.object({ id: z.string(), name: z.string(), code: z.string(), mode: z.enum(['bus', 'ion']),
+  routes: z.array(z.string()).default([]), hint: z.string().nullable().default(null) });
 export const CommuteInput = z.object({
   name: z.string().trim().min(1).max(80),
   origin: z.string().regex(/^(bus|ion):[^\s:]{1,100}$/),

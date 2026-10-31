@@ -1,27 +1,155 @@
-.transit-panel { padding: 4px 20px 12px; }
-.transit-commute { padding: 16px 0; }
-.transit-commute h3, .transit-form h3 { font-size: 15px; font-weight: 600; margin: 0; }
-.transit-commute p, .transit-guidance p { margin: 5px 0; font-size: 13px; color: var(--dash-muted, #aeb4bc); }
-.transit-commute-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.transit-departure { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; font-size: 14px; }
-.transit-departure strong { font-size: 16px; }
-.transit-departure small, .transit-stop-results small { display: block; font-size: 12px; color: #aeb4bc; margin-top: 3px; }
-.transit-departure time { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.transit-guidance { display: flex; gap: 12px; padding: 16px 0; }
-.transit-guidance > svg { flex-shrink: 0; margin-top: 2px; }
-.transit-guidance small, .transit-target { font-size: 12px; color: #aeb4bc; }
-.transit-alert { font-size: 13px; color: #f3c477; margin: 10px 0; }
-.transit-actions { display: flex; gap: 16px; margin-top: 12px; }
-.transit-form { margin-top: 16px; }
-.transit-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.transit-form label { display: block; font-size: 13px; color: #aeb4bc; margin-top: 16px; }
-.transit-form input { display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 10px 12px; background: #1d1f23; color: #f5f6f7; border: 1px solid #494d55; border-radius: 8px; font: inherit; }
-.transit-form input:focus-visible, .transit-stop-results button:focus-visible { outline: 2px solid #78adff; outline-offset: 2px; }
-.transit-buffers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.transit-stop-results { max-height: 240px; overflow: auto; margin-top: 8px; }
-.transit-stop-results button { display: block; text-align: left; width: 100%; padding: 10px 12px; min-height: 48px; background: transparent; color: #f5f6f7; border: 0; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
-.transit-stop-results button:hover, .transit-stop-results button[aria-pressed=true] { background: #292c32; }
-.transit-settings .quiet-action, .transit-form .quiet-action { min-height: 44px; }
-.transit-panel button:disabled, .transit-settings button:disabled { cursor: not-allowed; opacity: .5; }
+/* Transit on Today: a leave-by lead when a trip is active, then one card per saved commute. */
+#transit { scroll-margin-top: 24px; }
+.transit-head-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 14px; margin-left: auto; }
+.transit-status { font-variant-numeric: tabular-nums; }
+.transit-status.is-saved { color: #e8bd86; }
+
+.transit-empty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px 20px; }
+.transit-empty p { max-width: 60ch; margin: 0; line-height: 1.5; }
+
+.transit-lead { display: grid; gap: 4px; margin-bottom: 16px; padding: 22px 24px; border: 1px solid var(--dash-line); border-radius: 16px; background: var(--dash-panel); }
+.transit-lead-label { color: var(--dash-muted); font-size: 12px; font-weight: 560; overflow-wrap: anywhere; }
+.transit-lead h3 { margin: 0; color: #fff; font-size: clamp(24px, 3.2vw, 34px); font-weight: 630; letter-spacing: -.045em; line-height: 1.08; font-variant-numeric: tabular-nums; text-wrap: balance; }
+.transit-lead-detail { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; color: #d3d8df; font-size: 13px; font-variant-numeric: tabular-nums; }
+.transit-lead-detail .transit-basis { color: var(--dash-muted); }
+.transit-lead small { margin-top: 6px; color: #aeb5be; font-size: 12px; line-height: 1.5; }
+
+.transit-target { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 16px; padding: 12px 18px; border: 1px solid var(--dash-line); border-radius: 12px; background: var(--dash-panel); }
+.transit-target span { color: var(--dash-muted); font-size: 11px; }
+.transit-target strong { color: #f0f2f5; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.transit-target small { color: #bdc4cd; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.transit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.transit-grid.is-single { grid-template-columns: minmax(0, 1fr); }
+.transit-commute { min-width: 0; padding: 18px 20px 8px; border: 1px solid var(--dash-line); border-radius: 16px; background: var(--dash-panel); }
+.transit-commute.is-active { border-color: #858b94; }
+.transit-commute-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.transit-commute-title { min-width: 0; }
+.transit-commute h3 { margin: 0; color: #f5f6f7; font-size: 17px; font-weight: 600; letter-spacing: -.025em; line-height: 1.3; overflow-wrap: anywhere; }
+.transit-commute-title p { margin: 4px 0 0; color: var(--dash-muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.transit-commute-heading .quiet-action { flex: none; min-height: 34px; }
+.transit-panel button:disabled, .transit-commute button:disabled { cursor: not-allowed; opacity: .5; }
+
+/* Service alerts use the dashboard's reserved amber, inside the commute they affect. */
+.transit-alerts { display: flex; gap: 9px; margin: 14px 0 2px; padding: 10px 12px; border: 1px solid #6e5b3f; border-radius: 10px; background: #302b24; color: #ecd29e; font-size: 12px; line-height: 1.5; }
+.transit-alerts > svg { flex: none; margin-top: 2px; color: #e8bd86; }
+.transit-alerts-copy { display: grid; gap: 4px; min-width: 0; }
+.transit-alerts-copy p { margin: 0; overflow-wrap: anywhere; }
+.transit-alerts-more > summary { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; color: #f0d9ad; cursor: pointer; list-style: none; text-decoration: underline; text-underline-offset: 3px; }
+.transit-alerts-more > summary::-webkit-details-marker { display: none; }
+.transit-alerts-more summary svg { transition: transform 170ms ease; }
+.transit-alerts-more[data-expanded='true'] summary svg { transform: rotate(90deg); }
+.transit-alerts-more p + p { margin-top: 6px; }
+
+.transit-departures { margin: 8px 0 0; padding: 0; list-style: none; }
+.transit-departure { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 56px; padding: 10px 0; border-top: 1px solid #41454c; }
+.transit-departure:first-child { border-top: 0; }
+.transit-route { display: inline-flex; align-items: center; justify-content: center; justify-self: start; min-width: 40px; height: 28px; padding: 0 7px; border: 1px solid #646a72; border-radius: 7px; color: #f5f6f7; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.transit-departure-copy { display: grid; gap: 2px; min-width: 0; }
+.transit-departure-copy strong { color: #edf0f3; font-size: 13px; font-weight: 560; line-height: 1.4; overflow-wrap: anywhere; }
+.transit-departure-copy small { color: #acb4bf; font-size: 11px; font-variant-numeric: tabular-nums; }
+.transit-departure-time { display: grid; justify-items: end; gap: 2px; text-align: right; }
+.transit-departure-time time { color: #fff; font-size: 17px; font-weight: 620; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transit-departure-time small { color: var(--dash-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transit-none { margin: 12px 0 10px; color: #aeb5bd; font-size: 12px; line-height: 1.5; }
+.transit-action-error { margin: 12px 0 0; }
+
+.transit-about { margin-top: 16px; border-top: 1px solid #4a4f56; color: #b9c0c9; font-size: 12px; }
+.transit-about > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 10px 0; color: #c5ccd5; cursor: pointer; list-style: none; }
+.transit-about > summary::-webkit-details-marker { display: none; }
+.transit-about summary svg { color: #9ca5b0; transition: transform 170ms ease; }
+.transit-about[data-expanded='true'] summary svg { transform: rotate(90deg); }
+.transit-about p { max-width: 68ch; margin: 0 0 10px; line-height: 1.55; }
+.transit-about a { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 12px; color: #e1e6ed; text-decoration: underline; text-underline-offset: 3px; }
+.transit-failures { margin: 0 0 10px; padding-left: 18px; color: #e8c592; line-height: 1.55; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .transit-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .transit-head-meta { justify-content: space-between; width: 100%; margin-left: 0; }
+  .transit-lead { padding: 18px; }
+  .transit-target { padding: 12px 16px; }
+  .transit-grid { gap: 12px; }
+  .transit-commute { padding: 16px 16px 6px; }
+  .transit-commute-heading { flex-direction: column; align-items: stretch; gap: 12px; }
+  .transit-commute-heading .quiet-action { width: 100%; min-height: 44px; }
+  .transit-departure { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; }
+  .transit-alerts-more > summary, .transit-about a { min-height: 44px; }
+  .transit-empty .quiet-action { width: 100%; }
+}
+
+/* Settings → Transit: flat groups matching the drawer's other tabs. Icons are hidden in Settings. */
+.transit-settings { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+.transit-settings-section, .transit-editor { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.transit-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.transit-settings-heading h3 { margin: 0; color: #aeb4bc; font-size: 12px; font-weight: 600; letter-spacing: .06em; line-height: 1.4; text-transform: uppercase; }
+.transit-settings-heading span { color: #8d939b; font-size: 11px; font-variant-numeric: tabular-nums; }
+.transit-settings-copy, .transit-settings-empty, .transit-settings-meta { margin: 0; color: #aeb4bc; font-size: 12px; line-height: 1.55; }
+.transit-settings-empty { padding: 6px 0; }
+.transit-settings-note { margin: 0; color: #8d939b; font-size: 11.5px; line-height: 1.55; }
+.transit-settings-note a { color: #c5ccd5; text-decoration: underline; text-underline-offset: 2px; }
+.transit-settings-notice { margin: 0; padding: 9px 12px; border: 1px solid rgba(232, 177, 92, .45); border-radius: 10px; background: rgba(232, 177, 92, .07); color: #efcd9a; font-size: 12px; line-height: 1.55; }
+.transit-settings-error { margin: 0; color: #f0a3a3; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.transit-settings-done { margin: 0; color: #b4e8cc; font-size: 12px; line-height: 1.5; }
+.transit-settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+
+.transit-commute-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.transit-commute-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 6px 12px 14px; border: 1px solid #3f434a; border-radius: 10px; background: #292c32; }
+.transit-commute-row-copy { display: grid; gap: 3px; min-width: 0; }
+.transit-commute-row h4 { margin: 0; color: #f5f6f7; font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.transit-commute-row p { margin: 0; color: #d9dde2; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.transit-commute-row small { color: #aeb4bc; font-size: 11px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.transit-row-actions { display: flex; flex: none; gap: 2px; }
+.transit-confirm { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; color: #efcd9a; font-size: 11.5px; line-height: 1.5; }
+.transit-confirm > div { display: flex; gap: 6px; }
+.transit-timetable-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 6px 8px 12px; border: 1px solid #494d55; border-radius: 10px; background: #23262b; color: #d9dde2; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.transit-editor-fields { display: flex; flex-direction: column; gap: 20px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.transit-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.transit-field-label { padding: 0; color: #d9dde2; font-size: 12px; font-weight: 500; line-height: 1.5; }
+legend.transit-field-label { margin-bottom: 6px; }
+.transit-field-help { margin: 0; color: #8d939b; font-size: 11.5px; line-height: 1.5; }
+.transit-selected-stop { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 8px 6px 8px 12px; border: 1px solid #494d55; border-radius: 10px; background: #292c32; }
+.transit-selected-stop > span { display: grid; gap: 2px; min-width: 0; }
+.transit-selected-stop strong { color: #f5f6f7; font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.transit-selected-stop small { color: #aeb4bc; font-size: 11px; line-height: 1.4; }
+
+.transit-stop-results { max-height: 300px; overflow: auto; padding: 4px; border: 1px solid #494d55; border-radius: 10px; background: #1f2125; overscroll-behavior: contain; }
+.transit-stop-results ul { margin: 0; padding: 0; list-style: none; }
+.transit-stop-option { display: grid; gap: 2px; min-height: 44px; padding: 8px 10px; border-radius: 7px; color: #f5f6f7; cursor: pointer; }
+.transit-stop-option[aria-selected='true'] { background: #343840; }
+.transit-stop-option strong { font-size: 13px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.transit-stop-option small { color: #aeb4bc; font-size: 11px; line-height: 1.4; }
+.transit-stop-group { display: block; margin: 0; padding: 10px 10px 4px; color: #8d939b; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; line-height: 1.4; text-transform: uppercase; }
+.transit-stop-state { margin: 0; padding: 10px; color: #aeb4bc; font-size: 12px; line-height: 1.5; }
+.transit-stop-state.is-error { color: #f0a3a3; }
+
+.transit-route-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.transit-route-option { min-height: 32px; padding: 0 11px; border: 1px solid #494d55; border-radius: 8px; background: transparent; color: #cbd2da; font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; cursor: pointer; transition: background 150ms ease, color 150ms ease; }
+.transit-route-option:not([aria-pressed='true']):hover { background: #343840; color: #f5f6f7; }
+.transit-route-option[aria-pressed='true'] { border-color: #e6e9ed; background: #e6e9ed; color: #202328; }
+.transit-route-option:focus-visible { outline: 2px solid #78adff; outline-offset: 2px; }
+.transit-route-option:disabled { cursor: not-allowed; opacity: .5; }
+
+.transit-buffers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.transit-buffer { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: #cbd2da; font-size: 12px; }
+.transit-buffer small { color: #8d939b; font-size: 11px; line-height: 1.4; }
+.transit-minutes { position: relative; display: block; }
+.transit-minutes input { width: 100%; padding-right: 40px !important; font-variant-numeric: tabular-nums; }
+.transit-minutes > span { position: absolute; top: 50%; right: 12px; color: #8d939b; font-size: 12px; pointer-events: none; transform: translateY(-50%); }
+.transit-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.transit-editor-fields:disabled .transit-stop-option { cursor: default; }
+
 fieldset.offline-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
-@media (max-width: 600px) { .transit-commute-heading { flex-direction: column; gap: 4px; } .transit-buffers { grid-template-columns: 1fr; gap: 0; } .transit-panel { padding-inline: 16px; } }
+
+@media (max-width: 520px) {
+  .transit-commute-row { flex-direction: column; gap: 6px; padding-right: 12px; }
+  .transit-row-actions { margin-left: -8px; }
+  .transit-confirm { align-items: flex-start; }
+  .transit-stop-option { min-height: 48px; }
+  .transit-route-option { min-height: 44px; }
+  .transit-settings [data-slot='button'] { min-height: 44px; }
+  .transit-buffers { gap: 8px; }
+  .transit-buffer small { display: none; }
+}

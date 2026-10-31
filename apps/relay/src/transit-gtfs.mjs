@@ -5,6 +5,8 @@ import { serviceEpoch, transitDate } from '#contract/transit.mjs';
 
 export const FEEDS = { bus: 1, ion: 2 };
 export const GRT_BASE = 'https://webapps.regionofwaterloo.ca/api/grt-routes/api';
+/** Bump when importSchedule stores new fields, so an unchanged feed is imported again once. 2 adds stop coordinates. */
+export const GTFS_SCHEMA = 2;
 const FILES = ['stops.txt', 'routes.txt', 'trips.txt', 'stop_times.txt', 'calendar.txt', 'calendar_dates.txt'];
 const MAX_CHUNK = 400_000;
 const MIN = 60_000;
@@ -33,7 +35,13 @@ export function importSchedule(store, bytes, mode, generation) {
   if (!files['calendar.txt'] && !files['calendar_dates.txt']) throw new Error('Missing service dates');
   const prefix = `gtfs:${mode}:${generation}:`;
   const stops = {}, routes = {}, trips = {}, services = {}, byStop = new Map();
-  rows(files, 'stops.txt', r => { if (r.stop_id && r.stop_name) stops[r.stop_id] = { id: `${mode}:${r.stop_id}`, name: r.stop_name, code: r.stop_code || r.stop_id, mode }; });
+  rows(files, 'stops.txt', r => {
+    if (!r.stop_id || !r.stop_name) return;
+    const lat = Number(r.stop_lat), lon = Number(r.stop_lon);
+    stops[r.stop_id] = { id: `${mode}:${r.stop_id}`, name: r.stop_name, code: r.stop_code || r.stop_id, mode,
+      // Coordinates let stop search rank stops near a campus building; they are rounded to about 1 m.
+      ...(r.stop_lat && r.stop_lon && Number.isFinite(lat) && Number.isFinite(lon) ? { lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5 } : {}) };
+  });
   rows(files, 'routes.txt', r => { routes[r.route_id] = r.route_short_name || r.route_long_name || r.route_id; });
   rows(files, 'trips.txt', r => { trips[r.trip_id] = [r.route_id, r.service_id, r.trip_headsign || '', r.direction_id || '']; });
   rows(files, 'calendar.txt', r => { services[r.service_id] = { start: r.start_date, end: r.end_date, days: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].map(d => r[d] === '1'), exceptions: {} }; });
@@ -65,7 +73,7 @@ export function importSchedule(store, bytes, mode, generation) {
   for (const [stop, entries] of byStop) { stopRoutes[stop] = [...new Set(entries.map(r => trips[r[0]][0]))]; store.put(`${prefix}routes:${stop}`, stopRoutes[stop]); }
   store.put(`${prefix}stop-routes`, stopRoutes);
   store.put(`${prefix}stops`, stops); store.put(`${prefix}routes`, routes); store.put(`${prefix}services`, services);
-  return { generation, count, stops: Object.keys(stops).length, chunks };
+  return { generation, schema: GTFS_SCHEMA, count, stops: Object.keys(stops).length, chunks };
 }
 
 export function stopData(store, mode, generation, stop, withTrips = true) {

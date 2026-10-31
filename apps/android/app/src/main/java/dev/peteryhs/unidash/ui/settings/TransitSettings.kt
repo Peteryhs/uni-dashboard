@@ -250,7 +250,9 @@ private fun StopSearch(label: String, selected: String, origin: String, enabled:
     message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     stops.forEach { stop ->
         TextButton(enabled = enabled, onClick = { onSelect(stop); query = ""; stops = emptyList() }, shapes = ButtonDefaults.shapes()) {
-            Text("${stop.name} · ${if (stop.mode == "ion") "ION" else "Bus"} ${stop.code}")
+            val routes = if (stop.mode == "ion" || stop.routes.isEmpty()) "" else " · " + (if (stop.routes.size == 1) "Route " else "Routes ") + stop.routes.joinToString(", ")
+            val kind = if (stop.mode == "ion") "ION station" else "Bus stop ${stop.code}"
+            Text("${stop.name} · $kind$routes" + (stop.hint?.let { "\n$it" } ?: ""))
         }
     }
 }

@@ -17,10 +17,12 @@ for (const [i, trip] of ['T1', 'T2'].entries()) {
 }
 const store = new SqliteStore(':memory:');
 const transitStore = new TransitStore((sql, ...args) => store.db.prepare(sql).all(...args));
-seedTransit(transitStore, now, transitZip({ 'stop_times.txt': stopTimes, 'calendar_dates.txt': 'service_id,date,exception_type\n' }));
+// Coordinates put Residence by Ron Eydt Village and Campus beside E7, so building search can be previewed.
+const stops = 'stop_id,stop_code,stop_name,stop_lat,stop_lon\n1,100,Residence,43.4716,-80.5554\n2,200,Campus,43.4744,-80.5394\n3,300,Other,43.45,-80.49\n';
+seedTransit(transitStore, now, transitZip({ 'stops.txt': stops, 'stop_times.txt': stopTimes, 'calendar_dates.txt': 'service_id,date,exception_type\n' }));
 const engine = new TransitEngine(transitStore), commute = engine.save(commuteDraft);
 const planned = scheduledJourneys(transitStore, commute, now);
-transitStore.put(`journey:${commute.id}`, { ...planned, generation: 'fixture', date, alerts: [], alerts_at: now });
+transitStore.put(`journey:${commute.id}`, { ...planned, generation: 'fixture', date, alerts: ['Route 13 detour: Columbia St. is closed between Phillip and Albert; use the temporary stop on Hagey Blvd.'], alerts_at: now });
 transitStore.put('status', { updated_at: now, error: null });
 store.upsertRows('timeline_event', [{ source_id: 'uw-portal-ics', external_id: 'preview-class', kind: 'class', title: 'ECE 150 LEC 001', location: 'E7 2317', starts_at: now + 100 * 60_000, ends_at: now + 160 * 60_000, observed_at: now, valid_until: now + 6 * 3_600_000, all_day: false }]);
 store.insertRun({ source_id: 'uw-portal-ics', started_at: now, finished_at: now, outcome: 'ok' });
