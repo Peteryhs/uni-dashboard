@@ -294,8 +294,8 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
         modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.itemGap),
     ) {
         Column(
-            Modifier.padding(if (emphasize) Spacing.heroInset else Spacing.inset),
-            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            Modifier.padding(if (emphasize) LeadInset else Spacing.inset),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
             Text(label, style = MaterialTheme.typography.labelLarge)
             Text(
@@ -333,7 +333,7 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
                 )
             }
             next.following?.let { f ->
-                HorizontalDivider(color = contentColor.copy(alpha = 0.2f))
+                HorizontalDivider(color = contentColor.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = Spacing.xs))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Then", modifier = Modifier.size(18.dp))
                     Text(
@@ -413,6 +413,8 @@ private fun RecommendationCard(
     val containerColor by animateColorAsState(
         targetValue = when {
             isLead -> MaterialTheme.colorScheme.primaryContainer
+            // Opening always changes the whole card's colour: that is the tap feedback.
+            expanded -> MaterialTheme.colorScheme.surfaceContainerHigh
             highlighted -> MaterialTheme.colorScheme.surfaceContainer
             else -> MaterialTheme.colorScheme.surfaceContainerLow
         },
@@ -459,12 +461,13 @@ private fun RecommendationCard(
                 Column(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.fillMaxWidth()
-                            .disclosureToggle(expanded, toggle)
-                            .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
+                            .disclosureToggle(expanded, toggle, ripple = false)
+                            // Open, the details continue the summary, so the bottom gap shrinks.
+                            .padding(start = Spacing.inset, end = Spacing.ms, top = Spacing.rowVertical, bottom = if (expanded) Spacing.s else Spacing.rowVertical),
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                     ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(rec.title, style = MaterialTheme.typography.titleMediumEmphasized)
                             RecommendationMetadata(
                                 timing = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · "),
@@ -474,15 +477,16 @@ private fun RecommendationCard(
                             )
                             RecommendationEvidence(rec, progress, contentColor, isLead = false)
                         }
-                        // The chevron sits in a touch-target-sized box so it lines up with the title.
-                        Box(Modifier.size(Layout.touchTarget, 24.dp), contentAlignment = Alignment.Center) {
+                        // The whole row is the target, so the chevron only needs its own width.
+                        // A 24dp box keeps it on the title's first line.
+                        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                             DisclosureIcon(expanded, tint = mutedColor)
                         }
                     }
                     AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
                         RecommendationDetails(
                             rec, presentation, isLead = false, done = done, snooze = snooze, dismiss = dismiss, uri = uri,
-                            modifier = Modifier.padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.rowVertical),
+                            modifier = Modifier.padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.ms),
                         )
                     }
                 }
@@ -490,6 +494,9 @@ private fun RecommendationCard(
         }
     }
 }
+
+/** Inside padding of Today's emphasized cards: a step above list rows, below the 24dp hero inset. */
+private val LeadInset = 20.dp
 
 @Composable
 private fun LeadRecommendation(
@@ -508,16 +515,18 @@ private fun LeadRecommendation(
     val textActionColors = ButtonDefaults.textButtonColors(contentColor = colors.onPrimaryContainer)
     val detailsLabel = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
     Column(
-        Modifier.fillMaxWidth().padding(start = Spacing.heroInset, end = Spacing.heroInset, top = Spacing.heroInset, bottom = Spacing.m),
-        verticalArrangement = Arrangement.spacedBy(Spacing.ms),
+        // 20dp sides keep the hero distinct from list rows (16dp) without wasting a phone's width.
+        // The bottom is shorter: the action row's buttons carry their own touch padding.
+        Modifier.fillMaxWidth().padding(start = LeadInset, end = LeadInset, top = LeadInset, bottom = Spacing.ms),
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
         // Kind and course form an overline beside a compact functional icon, not a row of their own.
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.ms)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
             ShapedIcon(
                 icon = recommendationIcon(rec.kind),
                 container = colors.primary,
                 content = colors.onPrimary,
-                size = 40.dp,
+                size = 32.dp,
             )
             Text(
                 listOfNotNull(recommendationKindLabel(rec.kind), rec.course).joinToString(" · "),
@@ -526,7 +535,7 @@ private fun LeadRecommendation(
                 modifier = Modifier.weight(1f),
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 rec.title,
                 // Long assignment names step down a size instead of wrapping into a wall of display type.
@@ -577,7 +586,7 @@ private fun RecommendationEvidence(rec: Recommendation, progress: EventProgress?
     val room = rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
     val unconfirmed = rec.change?.takeIf { !it.confirmed }
     if (room == null && rec.change == null && progress == null && !rec.state.isStale) return
-    Column(verticalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs), modifier = Modifier.padding(top = 2.dp)) {
         room?.let { IconText(Icons.Outlined.Place, it) }
         // A change is drawn as blocks; its sentence body would only repeat them.
         rec.change?.let { ChangeBlocks(it) }
@@ -616,7 +625,7 @@ private fun RecommendationDetails(
         (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
     val showBody = presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)
     val showReason = rec.reason.isNotBlank() && rec.reason != presentation.body
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.ms)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
         if (showBody || showReason) {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 if (showBody) Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
@@ -657,14 +666,28 @@ private fun RecommendationDetails(
                     Text("Dismiss", Modifier.padding(start = ButtonDefaults.IconSpacing))
                 }
             }
-            rec.action?.let { a -> SourceButton(a.label, a.url, uri, ButtonDefaults.textButtonColors(contentColor = accent)) }
+            if (isLead) rec.action?.let { a -> SourceButton(a.label, a.url, uri, ButtonDefaults.textButtonColors(contentColor = accent)) }
+        }
+        // On list rows the link gets its own line, flush with the text above it, instead of
+        // wrapping under the buttons with the text button's inset.
+        if (!isLead) rec.action?.let { a ->
+            SourceButton(
+                a.label, a.url, uri, ButtonDefaults.textButtonColors(contentColor = accent),
+                contentPadding = PaddingValues(start = 0.dp, end = Spacing.ms),
+            )
         }
     }
 }
 
 @Composable
-private fun SourceButton(label: String, url: String, uri: UriHandler, colors: androidx.compose.material3.ButtonColors) {
-    TextButton(onClick = { uri.openUri(url) }, shapes = ButtonDefaults.shapes(), colors = colors) {
+private fun SourceButton(
+    label: String,
+    url: String,
+    uri: UriHandler,
+    colors: androidx.compose.material3.ButtonColors,
+    contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
+) {
+    TextButton(onClick = { uri.openUri(url) }, shapes = ButtonDefaults.shapes(), colors = colors, contentPadding = contentPadding) {
         Text(label)
         Icon(
             Icons.AutoMirrored.Outlined.OpenInNew,
@@ -745,7 +768,7 @@ private fun LazyListScope.dueSoon(
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 val summary: @Composable () -> Unit = {
-                    Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(item.title, style = MaterialTheme.typography.titleMediumEmphasized)
                     Text(
                         listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
@@ -762,9 +785,9 @@ private fun LazyListScope.dueSoon(
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
                     ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             summary()
                             if (url != null) DueSourceButton(item.title, url, sourceLabel, uri)
                         }
@@ -772,7 +795,7 @@ private fun LazyListScope.dueSoon(
                             Format.relative(item.startsAt, now),
                             style = MaterialTheme.typography.labelLargeEmphasized,
                             color = relativeColor,
-                            modifier = Modifier.padding(top = Spacing.xs),
+                            modifier = Modifier.padding(top = 2.dp),
                         )
                     }
                 }

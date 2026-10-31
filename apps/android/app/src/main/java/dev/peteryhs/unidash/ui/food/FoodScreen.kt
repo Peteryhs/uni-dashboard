@@ -30,7 +30,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.NoMeals
 import androidx.compose.material.icons.outlined.Restaurant
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -165,7 +169,9 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
         },
         onStatus = onStatus,
     ) {
-        if (food != null || pick != null || rankingBusy) {
+        // With nothing served there is nothing to rank; the empty state stands alone.
+        val hasMenu = food?.let { f -> (f.pinned + f.others).any { it.serving || it.dishCount > 0 } } == true
+        if (hasMenu || pick != null || rankingBusy) {
             item(key = "pick") {
                 AiSummaryCard(
                     pick = pick,
@@ -206,8 +212,13 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
         }?.outlet ?: serving.firstOrNull()?.outlet
         if (serving.isEmpty()) {
             item(key = "none") {
-                FreshnessLabel(foodCard.state, foodCard.observedAt, now, Modifier.padding(horizontal = Spacing.m))
-                EmptyNote(food.error ?: "No menu published for today.")
+                NoMenuState(
+                    error = food.error,
+                    isToday = menuIsToday,
+                    dayLabel = serviceDate?.let { Format.dayHeader(it) },
+                    freshness = { FreshnessLabel(foodCard.state, foodCard.observedAt, now) },
+                    onOpenMenu = serviceDate?.let { date -> { uri.openUri("https://uwaterloo.ca/food-services/daily-menu?date=$date") } },
+                )
             }
         }
         if (serving.isNotEmpty()) {
@@ -252,6 +263,59 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
                 EmptyNote(
                     "Not serving: ${closed.joinToString { it.outlet.substringBefore(" - ") }}",
                     Modifier.padding(top = Spacing.s),
+                )
+            }
+        }
+    }
+}
+
+/** Weekends and holidays: a centred, deliberate empty state instead of a stray line of text. */
+@Composable
+private fun NoMenuState(
+    error: String?,
+    isToday: Boolean,
+    dayLabel: String?,
+    freshness: @Composable () -> Unit,
+    onOpenMenu: (() -> Unit)?,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.xl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
+    ) {
+        ShapedIcon(
+            Icons.Outlined.NoMeals,
+            container = colors.secondaryContainer,
+            content = colors.onSecondaryContainer,
+            size = 96.dp,
+            shape = MaterialShapes.Cookie9Sided,
+        )
+        Spacer(Modifier.height(Spacing.s))
+        Text(
+            if (error != null) "Menu unavailable" else if (isToday) "No menu today" else "No menu posted",
+            style = MaterialTheme.typography.headlineSmallEmphasized,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            error ?: listOfNotNull(
+                "Food Services hasn't posted a menu" + (dayLabel?.let { " for $it" } ?: "") + ".",
+                "Campus dining usually posts menus on weekdays.",
+            ).joinToString(" "),
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 320.dp),
+        )
+        freshness()
+        onOpenMenu?.let { open ->
+            OutlinedButton(onClick = open, shapes = ButtonDefaults.shapes(), modifier = Modifier.padding(top = Spacing.s)) {
+                Text("Check Food Services")
+                Icon(
+                    Icons.AutoMirrored.Outlined.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.padding(start = ButtonDefaults.IconSpacing).size(ButtonDefaults.IconSize),
                 )
             }
         }
@@ -552,7 +616,7 @@ private fun OutletCard(
         Column {
             Row(
                 Modifier.fillMaxWidth()
-                    .disclosureToggle(expanded, onToggle = { onExpandedChange(!expanded) })
+                    .disclosureToggle(expanded, onToggle = { onExpandedChange(!expanded) }, ripple = false)
                     .semantics { heading() }
                     .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
                 verticalAlignment = Alignment.CenterVertically,

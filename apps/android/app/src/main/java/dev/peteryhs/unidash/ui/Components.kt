@@ -188,12 +188,30 @@ fun SectionHeader(
  * TalkBack reads the merged row, its expanded state, and a "show/hide details" action label.
  * Pair with a trailing [DisclosureIcon]; the icon itself is decorative.
  */
-fun Modifier.disclosureToggle(expanded: Boolean, onToggle: () -> Unit, state: String? = null): Modifier = this
-    .clickable(
-        role = Role.Button,
-        onClickLabel = if (expanded) "Hide details" else "Show details",
-        onClick = onToggle,
-    )
+fun Modifier.disclosureToggle(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    state: String? = null,
+    /**
+     * Off for a summary row inside a card that grows when opened: the ripple would cover only the
+     * summary, not the details that appear under it. Such cards change their whole container
+     * colour instead, so the feedback spans the card as it expands.
+     */
+    ripple: Boolean = true,
+): Modifier = this
+    .let { base ->
+        if (ripple) base.clickable(
+            role = Role.Button,
+            onClickLabel = if (expanded) "Hide details" else "Show details",
+            onClick = onToggle,
+        ) else base.clickable(
+            interactionSource = null,
+            indication = null,
+            role = Role.Button,
+            onClickLabel = if (expanded) "Hide details" else "Show details",
+            onClick = onToggle,
+        )
+    }
     .semantics(mergeDescendants = true) {
         stateDescription = listOfNotNull(state, if (expanded) "Expanded" else "Collapsed").joinToString(", ")
     }

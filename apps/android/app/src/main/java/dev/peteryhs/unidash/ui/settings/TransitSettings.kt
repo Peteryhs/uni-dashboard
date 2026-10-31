@@ -12,6 +12,24 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DirectionsBus
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tram
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextOverflow
+import dev.peteryhs.unidash.ui.ShapedIcon
+import dev.peteryhs.unidash.ui.theme.Corners
+import dev.peteryhs.unidash.ui.today.RoutePill
+import dev.peteryhs.unidash.ui.today.transitIcon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -100,27 +118,42 @@ fun TransitSettings(vm: MainViewModel, snapshot: Snapshot) {
                         shape = groupedShape(index, commutes.size),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Column(Modifier.padding(start = Spacing.inset, end = Spacing.xs, top = Spacing.rowVertical, bottom = Spacing.xs)) {
-                            Text(commute.name, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${commute.originName} → ${commute.destinationName}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = muted,
+                        Row(
+                            Modifier.padding(start = Spacing.inset, end = Spacing.xs, top = Spacing.ms, bottom = Spacing.ms),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ShapedIcon(
+                                transitIcon(commute.route),
+                                container = MaterialTheme.colorScheme.primaryContainer,
+                                content = MaterialTheme.colorScheme.onPrimaryContainer,
+                                size = 40.dp,
+                                shape = MaterialShapes.Cookie9Sided,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                                TextButton(
-                                    enabled = !offline && !busy,
-                                    onClick = { draft = commute; editing = true; error = null },
-                                    shapes = ButtonDefaults.shapes(),
-                                    contentPadding = PaddingValues(horizontal = 0.dp),
-                                ) { Text("Edit") }
-                                TextButton(
-                                    enabled = !offline && !busy,
-                                    onClick = { removing = commute },
-                                    shapes = ButtonDefaults.shapes(),
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                                ) { Text("Remove") }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(commute.name, style = MaterialTheme.typography.titleMediumEmphasized)
+                                Text(
+                                    "${commute.originName} → ${commute.destinationName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = muted,
+                                )
+                                val buffers = "Walk ${commute.walkToMinutes} + ${commute.walkFromMinutes} min · arrive ${commute.arrivalBufferMinutes} min early"
+                                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                                    if (commute.route.isNotBlank()) RoutePill(commute.route)
+                                    Text(buffers, style = MaterialTheme.typography.labelSmall, color = muted)
+                                }
                             }
+                            IconButton(
+                                enabled = !offline && !busy,
+                                onClick = { draft = commute; editing = true; error = null },
+                                shapes = IconButtonDefaults.shapes(),
+                            ) { Icon(Icons.Outlined.Edit, contentDescription = "Edit ${commute.name}") }
+                            IconButton(
+                                enabled = !offline && !busy,
+                                onClick = { removing = commute },
+                                shapes = IconButtonDefaults.shapes(),
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            ) { Icon(Icons.Outlined.DeleteOutline, contentDescription = "Remove ${commute.name}") }
                         }
                     }
                 }
@@ -165,10 +198,14 @@ fun TransitSettings(vm: MainViewModel, snapshot: Snapshot) {
                     StopSearch("Boarding stop", draft.originName, "", fieldsEnabled, vm) { stop -> draft = draft.copy(origin = stop.id, originName = stop.name, destination = "", destinationName = "") }
                     StopSearch("Destination stop", draft.destinationName, draft.origin, fieldsEnabled && draft.origin.isNotBlank(), vm) { stop -> draft = draft.copy(destination = stop.id, destinationName = stop.name) }
                     OutlinedTextField(value = draft.route, onValueChange = { draft = draft.copy(route = it.take(40)) }, label = { Text("Route filter (optional)") }, enabled = fieldsEnabled, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    MinuteField("Walk to stop (min)", draft.walkToMinutes, fieldsEnabled) { draft = draft.copy(walkToMinutes = it) }
-                    MinuteField("Walk after arrival (min)", draft.walkFromMinutes, fieldsEnabled) { draft = draft.copy(walkFromMinutes = it) }
-                    MinuteField("Arrive early (min)", draft.arrivalBufferMinutes, fieldsEnabled) { draft = draft.copy(arrivalBufferMinutes = it) }
-                    Row(Modifier.padding(top = Spacing.xs), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Text("Minutes", style = MaterialTheme.typography.labelLarge, color = muted, modifier = Modifier.padding(top = Spacing.s))
+                    // Three short numbers read better side by side than as three full-width fields.
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        MinuteField("Walk to stop", draft.walkToMinutes, fieldsEnabled, Modifier.weight(1f)) { draft = draft.copy(walkToMinutes = it) }
+                        MinuteField("Walk after", draft.walkFromMinutes, fieldsEnabled, Modifier.weight(1f)) { draft = draft.copy(walkFromMinutes = it) }
+                        MinuteField("Arrive early", draft.arrivalBufferMinutes, fieldsEnabled, Modifier.weight(1f)) { draft = draft.copy(arrivalBufferMinutes = it) }
+                    }
+                    Row(Modifier.padding(top = Spacing.s), horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
                         Button(
                             enabled = fieldsEnabled && draft.name.isNotBlank() && draft.origin.isNotBlank() && draft.destination.isNotBlank(),
                             shapes = ButtonDefaults.shapes(),
@@ -227,9 +264,10 @@ fun TransitSettings(vm: MainViewModel, snapshot: Snapshot) {
 }
 
 @Composable
-private fun MinuteField(label: String, value: Int, enabled: Boolean, onChange: (Int) -> Unit) {
-    OutlinedTextField(value = value.toString(), onValueChange = { text -> if (text.isEmpty()) onChange(0) else text.toIntOrNull()?.takeIf { it in 0..120 }?.let(onChange) }, label = { Text(label) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+private fun MinuteField(label: String, value: Int, enabled: Boolean, modifier: Modifier = Modifier, onChange: (Int) -> Unit) {
+    OutlinedTextField(value = value.toString(), onValueChange = { text -> if (text.isEmpty()) onChange(0) else text.toIntOrNull()?.takeIf { it in 0..120 }?.let(onChange) },
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }, suffix = { Text("min") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = enabled, singleLine = true, modifier = modifier)
 }
 
 @Composable
@@ -245,14 +283,56 @@ private fun StopSearch(label: String, selected: String, origin: String, enabled:
         catch (e: CancellationException) { throw e }
         catch (e: Throwable) { message = MainViewModel.describe(e) }
     }
-    OutlinedTextField(value = query, onValueChange = { query = it.take(80) }, label = { Text(label) }, placeholder = { Text("Search name or stop number") }, enabled = enabled, modifier = Modifier.fillMaxWidth(), singleLine = true)
-    if (selected.isNotBlank()) Text("Selected: $selected", style = MaterialTheme.typography.bodySmall)
-    message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    stops.forEach { stop ->
-        TextButton(enabled = enabled, onClick = { onSelect(stop); query = ""; stops = emptyList() }, shapes = ButtonDefaults.shapes()) {
-            val routes = if (stop.mode == "ion" || stop.routes.isEmpty()) "" else " · " + (if (stop.routes.size == 1) "Route " else "Routes ") + stop.routes.joinToString(", ")
-            val kind = if (stop.mode == "ion") "ION station" else "Bus stop ${stop.code}"
-            Text("${stop.name} · $kind$routes" + (stop.hint?.let { "\n$it" } ?: ""))
+    val colors = MaterialTheme.colorScheme
+    OutlinedTextField(
+        value = query, onValueChange = { query = it.take(80) }, label = { Text(label) },
+        placeholder = { Text("Search name or stop number") },
+        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+        enabled = enabled, modifier = Modifier.fillMaxWidth(), singleLine = true,
+    )
+    if (selected.isNotBlank()) {
+        // The chosen stop reads as a filled selection, not a stray caption.
+        Surface(color = colors.secondaryContainer, contentColor = colors.onSecondaryContainer, shape = CircleShape) {
+            Row(
+                Modifier.padding(start = Spacing.s, end = Spacing.ms, top = Spacing.xs, bottom = Spacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(selected, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+    message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+    if (stops.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.joined)) {
+            stops.forEachIndexed { index, stop ->
+                val ion = stop.mode == "ion"
+                val routes = if (ion || stop.routes.isEmpty()) null else (if (stop.routes.size == 1) "Route " else "Routes ") + stop.routes.joinToString(", ")
+                Surface(
+                    onClick = { onSelect(stop); query = ""; stops = emptyList() },
+                    enabled = enabled,
+                    color = colors.surfaceContainerHigh,
+                    shape = groupedShape(index, stops.size, outer = Corners.tile + 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = Spacing.ms, vertical = Spacing.s),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(if (ion) Icons.Outlined.Tram else Icons.Outlined.DirectionsBus, contentDescription = null, tint = colors.primary)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(stop.name, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                listOfNotNull(if (ion) "ION station" else "Stop ${stop.code}", routes, stop.hint).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

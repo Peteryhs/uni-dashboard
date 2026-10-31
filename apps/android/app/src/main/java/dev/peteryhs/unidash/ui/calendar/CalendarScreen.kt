@@ -256,7 +256,7 @@ private fun AgendaDayHeader(dateValue: String, count: Int, isToday: Boolean) {
     Surface(color = colors.surface, contentColor = colors.onSurface, modifier = Modifier.fillMaxWidth()) {
         Row(
             // More room above than below: the header belongs to the events that follow it.
-            Modifier.fillMaxWidth().padding(start = Spacing.gutter, end = Spacing.gutter, top = Spacing.m, bottom = Spacing.s)
+            Modifier.fillMaxWidth().padding(start = Spacing.gutter, end = Spacing.gutter, top = Spacing.ms, bottom = Spacing.s)
                 .clearAndSetSemantics {
                     contentDescription = "${if (isToday) "Today. " else ""}$weekday, $fullDate. $count ${if (count == 1) "event" else "events"}."
                     heading()
@@ -355,8 +355,8 @@ private fun EventRow(
                         past -> "Past event"
                         happening -> "Happening now"
                         else -> null
-                    })
-                    .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
+                    }, ripple = false)
+                    .padding(start = Spacing.inset, end = Spacing.ms, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
             ) {
                 // A 411dp phone keeps the time column; 360dp phones and enlarged text stack instead.
                 val compact = maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.3f
@@ -366,11 +366,12 @@ private fun EventRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
                 ) {
                     if (!compact) {
-                        Column(Modifier.width(76.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        // Fits "10:30 a.m." in labelLarge; wider only pushed the title right.
+                        Column(Modifier.width(72.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             EventTimeContent(ev, timeColor, compact = false)
                         }
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -386,7 +387,7 @@ private fun EventRow(
                         }
                         alerts.forEach { ChangeBlocks(it.detail, Modifier.padding(top = Spacing.xs)) }
                     }
-                    Box(Modifier.size(40.dp, 24.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                         DisclosureIcon(expanded, tint = mutedColor)
                     }
                 }
@@ -488,8 +489,8 @@ private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChan
         .distinctBy { it.url }
 
     Column(
-        Modifier.fillMaxWidth().padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.m),
-        verticalArrangement = Arrangement.spacedBy(Spacing.ms),
+        Modifier.fillMaxWidth().padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.ms),
+        verticalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (ev.category == "opens" && ev.dueAt != null) DetailLine("Due", Format.dayTime(ev.dueAt))
@@ -593,7 +594,7 @@ private fun SyllabusReadings(readings: List<String>) {
 
 @Composable
 private fun DetailLine(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium)
     }

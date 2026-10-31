@@ -120,9 +120,11 @@ fun ScreenScaffold(
                 listState.firstVisibleItemScrollOffset == 0
         }
     }
-    // Pinned controls share the app bar's scrolled tint so the two read as one header.
-    val headerScrolled by remember(scroll.state) {
-        derivedStateOf { scroll.state.collapsedFraction > 0.5f || scroll.state.overlappedFraction > 0.01f }
+    // Pinned controls share the app bar's scrolled tint so the two read as one header. The tint
+    // follows the list's real position: the app bar's accumulated offset drifts (programmatic
+    // scrolls, item animations) and could leave the tint on after returning to the top.
+    val headerScrolled by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 }
     }
     val headerColor by animateColorAsState(
         targetValue = if (tintHeaderOnScroll && headerScrolled) MaterialTheme.colorScheme.surfaceContainer

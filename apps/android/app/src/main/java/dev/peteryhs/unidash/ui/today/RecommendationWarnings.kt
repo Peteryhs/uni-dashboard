@@ -24,6 +24,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import dev.peteryhs.unidash.ui.theme.Spacing
@@ -82,7 +84,13 @@ private fun RecommendationWarningButton(warning: RecommendationWarning, modifier
     ) {
         IconButton(
             onClick = { scope.launch { state.show() } },
-            modifier = Modifier.semantics {
+            // Keep the 48dp touch target, but let the line take only the icon's 24dp of height,
+            // so a warning glyph doesn't push the text below it down.
+            modifier = Modifier.layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val height = 24.dp.roundToPx().coerceAtMost(placeable.height)
+                layout(placeable.width, height) { placeable.place(0, (height - placeable.height) / 2) }
+            }.semantics {
                 contentDescription = "${warning.label}. ${warning.detail}"
             },
         ) {
