@@ -1,6 +1,15 @@
 package dev.peteryhs.unidash.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
@@ -51,7 +60,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import dev.peteryhs.unidash.ui.theme.Layout
 import dev.peteryhs.unidash.data.Snapshot
 import dev.peteryhs.unidash.data.summaryAt
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
@@ -62,6 +76,11 @@ enum class ScreenHeaderSize { Compact, Medium, Large }
 /**
  * Daily destinations use flexible headings; nested settings keep a compact app bar. Every frame
  * retains one source-status action, actual connection errors, and user-requested refresh feedback.
+ *
+ * Edge to edge: the app bar owns the status bar; this frame owns the remaining safe-drawing
+ * insets the navigation frame has not consumed. Side insets pad the content, and the bottom inset
+ * is list padding, so content scrolls behind a transparent gesture bar but always ends above it.
+ * On wide windows the list fills the screen (so the margins scroll too) and centres a readable column.
  */
 @Composable
 fun ScreenScaffold(
@@ -81,11 +100,17 @@ fun ScreenScaffold(
     headerSize: ScreenHeaderSize = ScreenHeaderSize.Medium,
     tintHeaderOnScroll: Boolean = true,
     listState: LazyListState = rememberLazyListState(),
+    /** Controls that stay under the app bar while the list scrolls, such as a category filter. */
+    pinnedContent: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val pull = rememberPullToRefreshState()
     val showBanner = showConnectionBanner && (onStatus == null || snapshot.error != null)
+    // Landscape phones cannot spare a two-row header; the title stays, the extra height goes.
+    val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    val shortWindow = windowHeight < Layout.compactHeaderHeight
+    val header = if (shortWindow) ScreenHeaderSize.Compact else headerSize
     // A collapsed app bar owns the first downward drag. Disable the pull modifier itself until
     // both scroll positions are at rest so it cannot consume that drag before the bar expands.
     val atTop by remember(scroll.state, listState) {
@@ -95,17 +120,27 @@ fun ScreenScaffold(
                 listState.firstVisibleItemScrollOffset == 0
         }
     }
+    // Pinned controls share the app bar's scrolled tint so the two read as one header.
+    val headerScrolled by remember(scroll.state) {
+        derivedStateOf { scroll.state.collapsedFraction > 0.5f || scroll.state.overlappedFraction > 0.01f }
+    }
+    val headerColor by animateColorAsState(
+        targetValue = if (tintHeaderOnScroll && headerScrolled) MaterialTheme.colorScheme.surfaceContainer
+            else MaterialTheme.colorScheme.surface,
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Pinned header color",
+    )
     val canRefresh = pullToRefreshEnabled && !refreshing && atTop
+    val layoutDirection = LocalLayoutDirection.current
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
-        // The navigation bar outside this scaffold already consumes the bottom inset.
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
         containerColor = MaterialTheme.colorScheme.surface,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             Column {
                 val titleContent: @Composable () -> Unit = {
-                    Text(title, fontWeight = when (headerSize) {
+                    Text(title, fontWeight = when (header) {
                         ScreenHeaderSize.Compact -> MaterialTheme.typography.titleLargeEmphasized.fontWeight
                         ScreenHeaderSize.Medium -> MaterialTheme.typography.headlineMediumEmphasized.fontWeight
                         ScreenHeaderSize.Large -> MaterialTheme.typography.displaySmallEmphasized.fontWeight
@@ -116,27 +151,46 @@ fun ScreenScaffold(
                     actions()
                     onStatus?.let { StatusAction(snapshot, now, onClick = it) }
                 }
+                // The bar paints nothing itself; one tinted band spans the window behind the bar and
+                // any pinned controls. On wide windows the title and actions centre in the same
+                // readable column as the content, instead of drifting to the far edges.
                 val colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    scrolledContainerColor = if (tintHeaderOnScroll) MaterialTheme.colorScheme.surfaceContainer
-                        else MaterialTheme.colorScheme.surface,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                 )
-                when (headerSize) {
-                    ScreenHeaderSize.Compact -> TopAppBar(
-                        title = titleContent, subtitle = subtitleContent ?: {},
-                        actions = actionContent, navigationIcon = navigationIcon,
-                        colors = colors, scrollBehavior = scroll,
-                    )
-                    ScreenHeaderSize.Medium -> MediumFlexibleTopAppBar(
-                        title = titleContent, subtitle = subtitleContent,
-                        actions = actionContent, navigationIcon = navigationIcon,
-                        colors = colors, scrollBehavior = scroll,
-                    )
-                    ScreenHeaderSize.Large -> LargeFlexibleTopAppBar(
-                        title = titleContent, subtitle = subtitleContent,
-                        actions = actionContent, navigationIcon = navigationIcon,
-                        colors = colors, scrollBehavior = scroll,
-                    )
+                Box(
+                    Modifier.fillMaxWidth().background(headerColor)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    Box(Modifier.widthIn(max = Layout.contentMaxWidth).fillMaxWidth()) {
+                        when (header) {
+                            ScreenHeaderSize.Compact -> TopAppBar(
+                                title = titleContent, subtitle = subtitleContent ?: {},
+                                actions = actionContent, navigationIcon = navigationIcon,
+                                colors = colors, scrollBehavior = scroll,
+                            )
+                            ScreenHeaderSize.Medium -> MediumFlexibleTopAppBar(
+                                title = titleContent, subtitle = subtitleContent,
+                                actions = actionContent, navigationIcon = navigationIcon,
+                                colors = colors, scrollBehavior = scroll,
+                            )
+                            ScreenHeaderSize.Large -> LargeFlexibleTopAppBar(
+                                title = titleContent, subtitle = subtitleContent,
+                                actions = actionContent, navigationIcon = navigationIcon,
+                                colors = colors, scrollBehavior = scroll,
+                            )
+                        }
+                    }
+                }
+                pinnedContent?.let { pinned ->
+                    Box(
+                        Modifier.fillMaxWidth().background(headerColor)
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        Box(Modifier.widthIn(max = Layout.contentMaxWidth).fillMaxWidth()) { pinned() }
+                    }
                 }
                 if (showBanner) ConnectionBanner(snapshot, now, onStatus = null)
             }
@@ -147,7 +201,11 @@ fun ScreenScaffold(
             isRefreshing = pullToRefreshEnabled && refreshing,
             onRefresh = { if (canRefresh) onRefresh() },
             state = pull,
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(
+                top = padding.calculateTopPadding(),
+                start = padding.calculateStartPadding(layoutDirection),
+                end = padding.calculateEndPadding(layoutDirection),
+            ),
             indicator = {
                 PullToRefreshDefaults.LoadingIndicator(
                     state = pull,
@@ -156,12 +214,12 @@ fun ScreenScaffold(
                 )
             },
         ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val side = ((maxWidth - Layout.contentMaxWidth) / 2).coerceAtLeast(0.dp)
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .widthIn(max = 720.dp)
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         .let { base ->
                             if (pullToRefreshEnabled) base.semantics {
                                 customActions = listOf(
@@ -174,7 +232,12 @@ fun ScreenScaffold(
                                 )
                             } else base
                         },
-                    contentPadding = PaddingValues(top = Spacing.s, bottom = Spacing.xl),
+                    contentPadding = PaddingValues(
+                        start = side,
+                        end = side,
+                        top = Spacing.s,
+                        bottom = padding.calculateBottomPadding() + Spacing.listEnd,
+                    ),
                     content = content,
                 )
             }

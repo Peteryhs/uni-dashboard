@@ -54,7 +54,7 @@ Native rendering remains unverified: this workspace has no connected phone, inst
 
 - A poll that already holds a lease can finish using its captured old feed after a connection is changed. Request-scoped configuration fixes cross-request leakage, but does not fence results against a newer feed configuration. Add a configuration-generation fence if immediate rotation guarantees are required; the setup flow still requires a successful sync after a change.
 - Client caches belong to a trusted browser/device and the personal deployment. Clear browser site data when handing a profile to someone else.
-- The web shell has no service worker for a cold offline start. Saved data can still appear after the shell loads and a request fails.
+- The production web shell now supports cold offline launch after a successful online visit. Cached information is read-only while offline; see [transit and offline use](TRANSIT-OFFLINE.md). A first-ever offline visit still needs a connection.
 - Scanned syllabus PDFs need OCR/extracted text before import. Source cadence, upstream rate limits and Android notification permissions continue to affect availability.
 - The [Cloudflare usage audit](CLOUDFLARE-USAGE.md) measures a local scenario of one continuously open browser plus one phone at about 4.23 million D1 reads/day. It is not a guarantee for arbitrary feed size, extra clients or other account workloads. These audit fixes add no automatic polling or AI generation.
 

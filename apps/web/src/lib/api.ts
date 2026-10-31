@@ -31,6 +31,10 @@ import {
 } from './contract';
 import { checkRelayResponse, localRelayToken, readRelayJson, RelayError } from './relay-response.mjs';
 import type { McpToken, McpTokenList } from './mcp-tokens';
+import { isOffline, setReachable } from './connectivity';
+import { Commute, TransitStop } from '#contract/transit.mjs';
+import type { CommuteDraft } from './transit';
+import { savedRead, saveRead } from './offline-cache';
 export { RelayError } from './relay-response.mjs';
 
 const BUNDLE_CACHE_KEY = 'uni-dashboard:last-bundle:v1';
@@ -62,22 +66,50 @@ function authHeaders(): HeadersInit {
 }
 
 async function fetchRelay(path: string, options: RequestInit = {}): Promise<Response> {
-  const res = await fetch(path, {
+  if (isOffline() && options.method && !['GET', 'HEAD'].includes(options.method)) throw new RelayError('You are offline. Changes require a connection.', 0);
+  let res: Response;
+  try { res = await fetch(path, {
     ...options,
     credentials: 'same-origin',
     headers: { accept: 'application/json', ...authHeaders(), ...options.headers },
-  });
+  }); setReachable(true); }
+  catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setReachable(false); throw error; }
   await checkRelayResponse(res, Boolean(getToken()));
   return res;
 }
 
+export async function fetchTransitStops(q: string, origin = '', signal?: AbortSignal) {
+  const result = await getJson<{ stops: unknown[] }>(`/v1/transit/stops?${new URLSearchParams({ q, origin })}`, signal);
+  return result.stops.map(stop => TransitStop.parse(stop));
+}
+export async function fetchCommutes(signal?: AbortSignal) {
+  const result = await getJson<{ commutes: unknown[] }>('/v1/transit/commutes', signal);
+  return result.commutes.map(commute => Commute.parse(commute));
+}
+export async function saveCommute(input: CommuteDraft, id?: string) {
+  return readRelayJson(await fetchRelay(`/v1/transit/commutes${id ? `/${encodeURIComponent(id)}` : ''}`, { method: id ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }));
+}
+export async function deleteCommute(id: string) { return readRelayJson(await fetchRelay(`/v1/transit/commutes/${encodeURIComponent(id)}`, { method: 'DELETE' })); }
+export async function activateCommute(id: string, section: number | null, group: number | null) {
+  const query = new URLSearchParams(); if (section != null) query.set('section', String(section)); if (group != null) query.set('group', String(group));
+  return readRelayJson(await fetchRelay(`/v1/transit/activation?${query}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ commute_id: id }) }));
+}
+export async function cancelCommute() { return readRelayJson(await fetchRelay('/v1/transit/activation', { method: 'DELETE' })); }
+export async function refreshTransit() { return readRelayJson(await fetchRelay('/v1/transit/refresh', { method: 'POST' })); }
+
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (isOffline()) { const saved = savedRead(path); if (saved !== undefined) return saved as T; }
+  try {
   const res = await fetchRelay(path, {
     signal,
     headers: { accept: 'application/json', ...authHeaders() },
     cache: 'no-store',
   });
-  return (await readRelayJson(res)) as T;
+  const value = await readRelayJson(res); saveRead(path, value); return value as T;
+  } catch (error) {
+    if (isOffline() && !(error instanceof DOMException && error.name === 'AbortError')) { const saved = savedRead(path); if (saved !== undefined) return saved as T; }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +227,13 @@ export function readCachedCalendar(start: string, section: number | null, group:
     if (!raw) return null;
     const cached = JSON.parse(raw) as { calendar: unknown; section: number | null; group: number | null };
     const calendar = validateCalendar(cached.calendar);
-    return calendar.start === start && cached.section === section && cached.group === group ? calendar : null;
+    if (cached.section !== section || cached.group !== group) return null;
+    if (calendar.start === start) return calendar;
+    if (calendar.days.some(day => day.date === start)) {
+      const days = calendar.days.filter(day => day.date >= start);
+      return { ...calendar, start, days, count: days.reduce((n, day) => n + day.events.length, 0) };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -356,9 +394,7 @@ export async function fetchFoodRecommendation(date: string): Promise<{
   limit_reason?: string;
   error?: string;
 }> {
-  const res = await fetchRelay(`/v1/food/recommendation?date=${encodeURIComponent(date)}`, { headers: authHeaders() });
-  if (!res.ok) throw new RelayError(`failed to load AI ranking: ${res.status}`, res.status);
-  return res.json();
+  return getJson(`/v1/food/recommendation?date=${encodeURIComponent(date)}`);
 }
 
 export interface AiUsageStatus {

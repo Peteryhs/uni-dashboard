@@ -69,7 +69,19 @@ import dev.peteryhs.unidash.ui.InitialLoadingNote
 import dev.peteryhs.unidash.ui.MainViewModel
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.ScreenHeaderSize
+import dev.peteryhs.unidash.ui.NoticeRow
+import dev.peteryhs.unidash.ui.animatedGroupedShape
+import dev.peteryhs.unidash.ui.disclosureToggle
+import dev.peteryhs.unidash.ui.listItemMotion
+import dev.peteryhs.unidash.ui.revealEnter
+import dev.peteryhs.unidash.ui.revealExit
+import dev.peteryhs.unidash.ui.theme.Corners
+import dev.peteryhs.unidash.ui.theme.Layout
 import dev.peteryhs.unidash.ui.theme.Spacing
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.LinkOff
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -109,51 +121,19 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
     val agendaListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    ScreenScaffold("Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus, listState = agendaListState, headerSize = ScreenHeaderSize.Medium) {
-        item(key = "filters") {
-            val selectFilter: (Filter) -> Unit = { selected ->
-                if (filter != selected) {
-                    filter = selected
-                    expanded = null
-                    scope.launch { agendaListState.scrollToItem(0) }
-                }
-            }
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.xs)) {
-                val fontScale = LocalDensity.current.fontScale
-                val useWrappingChips = maxWidth < 300.dp || fontScale >= 1.2f
-                if (useWrappingChips) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    ) {
-                        Filter.entries.forEach { f ->
-                            FilterChip(
-                                selected = filter == f,
-                                onClick = { selectFilter(f) },
-                                label = {
-                                    Text(f.label, style = if (filter == f) MaterialTheme.typography.labelLargeEmphasized else MaterialTheme.typography.labelLarge)
-                                },
-                            )
-                        }
-                    }
-                } else {
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        Filter.entries.forEachIndexed { index, f ->
-                            SegmentedButton(
-                                selected = filter == f,
-                                onClick = { selectFilter(f) },
-                                shape = SegmentedButtonDefaults.itemShape(index = index, count = Filter.entries.size),
-                                icon = {},
-                                label = {
-                                    Text(f.label, maxLines = 1, style = if (filter == f) MaterialTheme.typography.labelLargeEmphasized else MaterialTheme.typography.labelLarge)
-                                },
-                            )
-                        }
-                    }
-                }
-            }
+    val selectFilter: (Filter) -> Unit = { selected ->
+        if (filter != selected) {
+            filter = selected
+            expanded = null
+            scope.launch { agendaListState.scrollToItem(0) }
         }
+    }
+    ScreenScaffold(
+        "Calendar", "Next two weeks", snapshot, now, snackbar, onRefresh = vm::refresh, onStatus = onStatus,
+        listState = agendaListState, headerSize = ScreenHeaderSize.Medium,
+        // The category filter stays reachable under the bar, however far down the agenda you are.
+        pinnedContent = { CalendarFilter(filter, selectFilter) },
+    ) {
         if (calendar == null) {
             item {
                 when {
@@ -168,13 +148,22 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
         }
         filterWarnedCalendarSources(calendar.sources).forEach { s ->
             val name = CALENDAR_SOURCE_NAMES[s.id] ?: s.id
-            item(key = "src:${s.id}") { EmptyNote("$name: ${if (s.status == "failed") "last fetch failed" else "not configured"}") }
+            val failed = s.status == "failed"
+            item(key = "src:${s.id}") {
+                NoticeRow(
+                    "$name: ${if (failed) "last fetch failed" else "not configured"}",
+                    icon = if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.LinkOff,
+                    tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = Spacing.xs),
+                )
+            }
         }
         var shown = 0
         calendar.alerts.filter { it.kind in setOf("cancelled", "removed") }.forEach { change ->
             item(key = "change:${change.id}") {
                 FlowRow(
-                    Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+                    Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.s),
+                    itemVerticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
@@ -196,22 +185,61 @@ fun CalendarScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: S
             events.forEachIndexed { index, ev ->
                 if (index == markerIndex) item(key = "now:${day.date}") { CalendarNowMarker(now) }
                 item(key = "ev:${day.date}:${ev.occurrenceId}") {
-                    EventRow(ev, now, expanded == ev.occurrenceId, onToggle = {
-                        expanded = if (expanded == ev.occurrenceId) null else ev.occurrenceId
-                    }, eventIndex = index,
+                    EventRow(
+                        ev, now, expanded == ev.occurrenceId,
+                        onToggle = { expanded = if (expanded == ev.occurrenceId) null else ev.occurrenceId },
+                        eventIndex = index,
                         groupStart = if (isToday && markerIndex >= 0 && index >= markerIndex) markerIndex else 0,
                         groupEnd = if (isToday && markerIndex >= 0 && index < markerIndex) markerIndex - 1 else events.lastIndex,
-                        modifier = Modifier.animateItem(
-                        fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-                        placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-                        fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-                    ), alerts = calendar.alerts.filter { it.eventId == ev.id })
+                        modifier = Modifier.listItemMotion(this),
+                        alerts = calendar.alerts.filter { it.eventId == ev.id },
+                    )
                 }
             }
             if (markerIndex == events.size) item(key = "now:${day.date}") { CalendarNowMarker(now) }
             if (isToday && events.isEmpty()) item(key = "clear:${day.date}") { EmptyNote("Nothing scheduled today.") }
         }
         if (shown == 0 && calendar.days.none { it.date == campusDay(now).toString() }) item { EmptyNote("Nothing scheduled.") }
+    }
+}
+
+/** Single-choice category filter: a segmented row, or wrapping chips when labels would truncate. */
+@Composable
+private fun CalendarFilter(filter: Filter, onSelect: (Filter) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(start = Spacing.gutter, end = Spacing.gutter, top = Spacing.xs, bottom = Spacing.s)) {
+        val fontScale = LocalDensity.current.fontScale
+        val useWrappingChips = maxWidth < 300.dp || fontScale >= 1.3f
+        if (useWrappingChips) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                Filter.entries.forEach { f ->
+                    FilterChip(
+                        selected = filter == f,
+                        onClick = { onSelect(f) },
+                        label = {
+                            Text(f.label, style = if (filter == f) MaterialTheme.typography.labelLargeEmphasized else MaterialTheme.typography.labelLarge)
+                        },
+                        modifier = Modifier.heightIn(min = Layout.touchTarget),
+                    )
+                }
+            }
+        } else {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                Filter.entries.forEachIndexed { index, f ->
+                    SegmentedButton(
+                        selected = filter == f,
+                        onClick = { onSelect(f) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = Filter.entries.size),
+                        label = {
+                            Text(f.label, maxLines = 1, style = if (filter == f) MaterialTheme.typography.labelLargeEmphasized else MaterialTheme.typography.labelLarge)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -227,25 +255,26 @@ private fun AgendaDayHeader(dateValue: String, count: Int, isToday: Boolean) {
 
     Surface(color = colors.surface, contentColor = colors.onSurface, modifier = Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s)
+            // More room above than below: the header belongs to the events that follow it.
+            Modifier.fillMaxWidth().padding(start = Spacing.gutter, end = Spacing.gutter, top = Spacing.m, bottom = Spacing.s)
                 .clearAndSetSemantics {
                     contentDescription = "${if (isToday) "Today. " else ""}$weekday, $fullDate. $count ${if (count == 1) "event" else "events"}."
                     heading()
                 },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
         ) {
-            Surface(color = tileColor, contentColor = tileContent, shape = RoundedCornerShape(12.dp)) {
+            // A fixed-width tile keeps one- and two-digit dates on the same left edge.
+            Surface(color = tileColor, contentColor = tileContent, shape = RoundedCornerShape(Corners.tile), modifier = Modifier.widthIn(min = 48.dp)) {
                 Column(
                     Modifier.padding(horizontal = Spacing.s, vertical = Spacing.xs),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
                     Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.titleLargeEmphasized)
                     Text(month, style = MaterialTheme.typography.labelSmall)
                 }
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(if (isToday) "Today" else weekday, style = MaterialTheme.typography.titleMediumEmphasized)
                 Text(
                     "${if (isToday) "$weekday · " else ""}$count ${if (count == 1) "event" else "events"}",
@@ -257,21 +286,27 @@ private fun AgendaDayHeader(dateValue: String, count: Int, isToday: Boolean) {
     }
 }
 
+/** The current time, aligned with the rows' text inset and ending on the gutter. */
 @Composable
 private fun CalendarNowMarker(now: Long) {
     val color = MaterialTheme.colorScheme.primary
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.l, vertical = Spacing.s)
+        modifier = Modifier.fillMaxWidth()
+            .padding(start = Spacing.gutter + Spacing.inset, end = Spacing.gutter, top = Spacing.s, bottom = Spacing.s)
             .clearAndSetSemantics { contentDescription = "Current time ${Format.time(now)}" },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
-        Text("Now ${Format.time(now)}", style = MaterialTheme.typography.labelMedium, color = color)
+        Text("Now ${Format.time(now)}", style = MaterialTheme.typography.labelMediumEmphasized, color = color)
         Box(Modifier.size(6.dp).background(color, CircleShape))
         HorizontalDivider(modifier = Modifier.weight(1f), color = color)
     }
 }
 
+/**
+ * One agenda entry. The whole summary is the disclosure target; the chevron only shows state.
+ * Time leads: a column of its own when there is room, otherwise the first item of the label line.
+ */
 @Composable
 private fun EventRow(
     ev: CalendarEvent,
@@ -297,97 +332,68 @@ private fun EventRow(
         animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
         label = "Calendar event container color",
     )
-    val outerRadius = 20.dp
-    val innerRadius by animateDpAsState(
-        targetValue = if (highlighted) 8.dp else 4.dp,
-        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-        label = "Calendar event join corner",
-    )
     val contentColor = if (happening && !expanded) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val mutedColor = if (happening && !expanded) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     val timeColor = when {
         past -> MaterialTheme.colorScheme.onSurfaceVariant
         happening && !expanded -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurface
     }
     val roomShownBelow = alerts.any { it.detail.roomMoved }
+    val showLocation = ev.location.isNotBlank() && !roomShownBelow && !expanded
 
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = 1.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.joined / 2),
         color = containerColor,
         contentColor = contentColor,
-        shape = eventGroupShape(
-            isGroupStart = eventIndex == groupStart,
-            isGroupEnd = eventIndex == groupEnd,
-            outer = outerRadius,
-            inner = innerRadius,
-        ),
+        shape = animatedGroupedShape(eventIndex - groupStart, groupEnd - groupStart + 1, open = highlighted),
     ) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val compact = maxWidth < 420.dp || LocalDensity.current.fontScale >= 1.2f
-                if (compact) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        ) {
-                            EventCategoryLabel(ev, label, past, happening, expanded, accent)
-                            if (happening) EventNowLabel(expanded)
-                            EventTimeContent(ev, timeColor, compact = true)
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            Box(Modifier.weight(1f)) { EventTitle(ev, past, happening, expanded, contentColor) }
-                            EventDisclosureButton(ev, expanded, past, happening, onToggle)
-                        }
-                        if (ev.location.isNotBlank() && !roomShownBelow && !expanded) {
-                            Text(
-                                ev.location,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (happening) contentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        alerts.forEach { ChangeBlocks(it.detail) }
-                    }
-                } else {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                    ) {
-                        Column(Modifier.width(88.dp), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Column(Modifier.fillMaxWidth()) {
+            BoxWithConstraints(
+                Modifier.fillMaxWidth()
+                    .disclosureToggle(expanded, onToggle, state = when {
+                        past -> "Past event"
+                        happening -> "Happening now"
+                        else -> null
+                    })
+                    .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
+            ) {
+                // A 411dp phone keeps the time column; 360dp phones and enlarged text stack instead.
+                val compact = maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.3f
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.ms),
+                ) {
+                    if (!compact) {
+                        Column(Modifier.width(76.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             EventTimeContent(ev, timeColor, compact = false)
                         }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            itemVerticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (compact) EventTimeContent(ev, timeColor, compact = true)
                             EventCategoryLabel(ev, label, past, happening, expanded, accent)
                             if (happening) EventNowLabel(expanded)
-                            EventTitle(ev, past, happening, expanded, contentColor)
-                            if (ev.location.isNotBlank() && !roomShownBelow && !expanded) {
-                                Text(
-                                    ev.location,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (happening) contentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            alerts.forEach { ChangeBlocks(it.detail) }
                         }
-                        EventDisclosureButton(ev, expanded, past, happening, onToggle)
+                        EventTitle(ev, past, happening, expanded, contentColor)
+                        if (showLocation) {
+                            Text(ev.location, style = MaterialTheme.typography.bodyMedium, color = mutedColor)
+                        }
+                        alerts.forEach { ChangeBlocks(it.detail, Modifier.padding(top = Spacing.xs)) }
+                    }
+                    Box(Modifier.size(40.dp, 24.dp), contentAlignment = Alignment.Center) {
+                        DisclosureIcon(expanded, tint = mutedColor)
                     }
                 }
             }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-                exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-            ) { EventDetails(ev, now, alerts) }
+            AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
+                EventDetails(ev, now, alerts)
+            }
         }
     }
 }
@@ -468,41 +474,6 @@ private fun EventTimeContent(ev: CalendarEvent, timeColor: Color, compact: Boole
 }
 
 @Composable
-private fun EventDisclosureButton(
-    ev: CalendarEvent,
-    expanded: Boolean,
-    past: Boolean,
-    happening: Boolean,
-    onToggle: () -> Unit,
-) {
-    FilledTonalIconButton(
-        onClick = onToggle,
-        shapes = IconButtonDefaults.shapes(),
-        modifier = Modifier.size(48.dp).semantics {
-            contentDescription = if (expanded) "Hide details for ${ev.title}" else "Show details for ${ev.title}"
-            stateDescription = listOfNotNull(
-                if (past) "Past event" else null,
-                if (happening) "Happening now" else null,
-                if (expanded) "Expanded" else "Collapsed",
-            ).joinToString(", ")
-        },
-    ) {
-        DisclosureIcon(expanded = expanded, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-    }
-}
-
-private fun eventGroupShape(
-    isGroupStart: Boolean,
-    isGroupEnd: Boolean,
-    outer: androidx.compose.ui.unit.Dp,
-    inner: androidx.compose.ui.unit.Dp,
-): RoundedCornerShape {
-    val top = if (isGroupStart) outer else inner
-    val bottom = if (isGroupEnd) outer else inner
-    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
-}
-
-@Composable
 private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChangeAlert>) {
     val uri = LocalUriHandler.current
     var showEvidence by rememberSaveable(ev.occurrenceId) { mutableStateOf(false) }
@@ -517,8 +488,8 @@ private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChan
         .distinctBy { it.url }
 
     Column(
-        Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.m),
+        verticalArrangement = Arrangement.spacedBy(Spacing.ms),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (ev.category == "opens" && ev.dueAt != null) DetailLine("Due", Format.dayTime(ev.dueAt))
@@ -562,12 +533,16 @@ private fun EventDetails(ev: CalendarEvent, now: Long, alerts: List<CalendarChan
                 }
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
             Text("From ${ev.sourceLabel}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FreshnessLabel(ev.state, ev.observedAt, now)
         }
         if (links.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 links.forEach { link ->
                     AssistChip(
                         onClick = { uri.openUri(link.url) },
@@ -632,7 +607,8 @@ private fun categoryStyle(ev: CalendarEvent): Pair<Color, String> {
         "class" -> c.primary to classKind(ev.title)
         "exam" -> c.error to "Exam"
         "office_hours" -> c.secondary to "Office hours"
-        "deadline" -> c.tertiary to "Due"
+        // The time already reads "Due 5:00 p.m."; the category names the kind instead of repeating it.
+        "deadline" -> c.tertiary to "Deadline"
         "opens" -> c.outline to "Opens"
         else -> c.outline to "Event"
     }

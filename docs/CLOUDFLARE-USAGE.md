@@ -1,5 +1,17 @@
 # Cloudflare usage audit — 2026-10-11
 
+## Transit addition — 2026-10-30
+
+Transit uses a separate SQLite-backed Durable Object on Workers Free. HTTP recommendation reads
+reuse their calendar data and add one object RPC; they do not add a calendar scan or D1 source
+receipts. Object alarms perform the GTFS work with provider backoff. A measured local bus import
+turns 271,919 stop-time records into 6,839 grouped writes, with a largest record of 187,391 characters.
+Unchanged timetable archives do not rewrite those groups. Predictions use compact per-commute
+snapshots, with a maximum of six commutes, rather than an archive of the entire realtime feed.
+See [transit and offline use](TRANSIT-OFFLINE.md) for the measurements, free-plan design and checks
+still required against production CPU, peak memory and account-wide quotas. The older D1 scenario
+below does not measure the new object's separate storage or compute usage.
+
 The Android/web presentation and notification changes keep clock updates on the device. A moving Now marker, past-event styling, countdown, progress tick, cleanup alarm, or notification reconciliation does not call the Worker or AI. Recommendation warnings and completion identity metadata are derived from facts already read by the backend.
 
 ## Current allowances and protections

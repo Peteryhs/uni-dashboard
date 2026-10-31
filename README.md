@@ -14,6 +14,8 @@ The first screen answers what needs your attention next. Recommendations use sav
 - Compact warning icons beside recommendation timing, with explanations on hover, focus, or touch.
 - Posted menus grouped by outlet and station, dietary indicators, saved preferences, and optional personalized dining rankings.
 - Live study-space occupancy from Waitz, with the open floor that has the most room, per-library open states, and floor counts.
+- Saved direct GRT bus and ION commutes on web and Android, with departures, service notices and opt-in leave guidance for the next class.
+- Offline web launch after an online visit, with saved information, read-only actions and an optional installable app.
 - Course links, reviewed syllabus imports, office-hours configuration, and section/group filters.
 - Source status that distinguishes configured connections, successful updates, failed attempts, and old data.
 - Native Android with dynamic Material color, expressive spring motion, a ranked Focus hierarchy, quiet background updates, pull-to-refresh, cached data, and finite activity/reminder notifications that clean up as their evidence expires.
@@ -80,6 +82,8 @@ The relay binds to loopback by default. A non-loopback bind requires `RELAY_TOKE
 
 One Worker serves the web assets and API, uses D1 for saved data, and polls due sources on a minute cron. Ordinary dashboard, calendar, and recommendation reads do not poll sources or run AI.
 
+Transit adds a SQLite-backed Durable Object on Cloudflare Free for timetable processing and saved commutes. Its binding and additive class migration are included in `wrangler.toml`; see [transit setup](docs/TRANSIT-OFFLINE.md).
+
 Before deploying your own copy:
 
 1. Create your own D1 database and replace the database ID in [wrangler.toml](wrangler.toml). The committed configuration identifies this project's existing deployment.
@@ -142,7 +146,7 @@ The MCP endpoint is an exception in one direction only: it is read-only. An auth
 
 Private feed URLs and API tokens stay on the backend. Cached schedule data and preferences stay on the client for offline use; use a trusted browser profile and clear its site data when handing a device to someone else. Android credentials use Keystore-backed encryption. Keep `.env`, `.dev.vars`, database files, and private calendar links out of Git.
 
-The web app can display saved data when requests fail after its shell has loaded. It does not yet have a service worker for a cold offline launch. Syllabus imports require readable/extracted text; scanned PDFs need OCR first. Source refreshes remain subject to upstream posting schedules and rate limits. Notifications depend on Android permissions, channels, and alarm timing.
+After a successful online visit, the production web app can launch offline with its cached shell and saved information. Offline server changes are disabled; transit predictions expire into labelled scheduled times. Syllabus imports require readable/extracted text; scanned PDFs need OCR first. Source refreshes remain subject to upstream posting schedules and rate limits. Notifications depend on Android permissions, channels, and alarm timing. See [transit and offline use](docs/TRANSIT-OFFLINE.md) for setup, privacy and free Cloudflare hosting details.
 
 ## Project layout and guides
 
@@ -161,6 +165,7 @@ The web app can display saved data when requests fail after its shell has loaded
 - [Daily recommendations and reviewed syllabi](docs/DAILY-GUIDANCE.md)
 - [Schedule changes](docs/SCHEDULE-CHANGES.md)
 - [Study spaces](docs/STUDY-SPACES.md)
+- [Transit and offline web use](docs/TRANSIT-OFFLINE.md)
 - [Service status](docs/SERVICE-STATUS.md)
 - [Deployment and Android sign-in](docs/DEPLOYMENT.md)
 - [Cloudflare usage audit](docs/CLOUDFLARE-USAGE.md)

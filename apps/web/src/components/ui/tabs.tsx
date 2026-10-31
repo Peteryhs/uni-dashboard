@@ -4,6 +4,7 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { Tabs as TabsPrimitive } from "radix-ui"
+import { useOffline } from '@/lib/connectivity';
 
 function Tabs({
   className,
@@ -76,14 +77,17 @@ function TabsTrigger({
 
 function TabsContent({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  const offline = useOffline();
+  const readOnly = offline && ['taste', 'courses', 'schedule', 'credentials', 'mcp'].includes(props.value);
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
       className={cn("flex-1 outline-none", className)}
       {...props}
-    />
+    >{readOnly ? <fieldset className="offline-fields" disabled>{children}</fieldset> : children}</TabsPrimitive.Content>
   )
 }
 

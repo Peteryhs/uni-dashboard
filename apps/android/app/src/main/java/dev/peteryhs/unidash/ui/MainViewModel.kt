@@ -82,6 +82,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val snapshot: StateFlow<Snapshot> = app.repository.snapshot
 
+    suspend fun transitStops(query: String, origin: String) = app.repository.transitRequest { it.transitStops(query, origin) }.getOrThrow()
+    suspend fun transitCommutes() = app.repository.transitRequest { it.transitCommutes() }.getOrThrow()
+    suspend fun refreshTransit() = app.repository.transitRequest { it.refreshTransit() }
+    suspend fun saveTransit(commute: dev.peteryhs.unidash.data.TransitCommute): Result<Unit> {
+        val generation = snapshot.value.sessionGeneration
+        return app.repository.transitRequest { it.saveTransit(commute) }.onSuccess { refreshAfterAcknowledgedAction(generation) }
+    }
+    suspend fun deleteTransit(id: String): Result<Unit> {
+        val generation = snapshot.value.sessionGeneration
+        return app.repository.transitRequest { it.deleteTransit(id) }.onSuccess { refreshAfterAcknowledgedAction(generation) }
+    }
+    suspend fun setTransitActivation(id: String?): Result<Unit> {
+        val generation = snapshot.value.sessionGeneration
+        return app.repository.transitRequest { it.activateTransit(id) }.onSuccess { refreshAfterAcknowledgedAction(generation) }
+    }
+
     private val _automaticTracking = MutableStateFlow(app.notifier.automaticTrackingEnabled)
     val automaticTracking: StateFlow<Boolean> = _automaticTracking.asStateFlow()
 

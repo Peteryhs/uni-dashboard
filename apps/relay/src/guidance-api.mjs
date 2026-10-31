@@ -79,7 +79,7 @@ export async function readGuidanceJson(stream) {
   } catch { throw new RangeError('Body must be a JSON object'); }
 }
 
-export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, startAiJob = null, now = Date.now() }) {
+export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv = null, startAiJob = null, transit = null, now = Date.now() }) {
   try {
     if (url.pathname === '/v1/menu' && method === 'GET') {
       return { status: 200, body: await buildMenuView(store, { date: url.searchParams.get('date'), now }) };
@@ -90,7 +90,7 @@ export async function handleGuidanceRoute({ url, method, readBody, store, cfEnv 
     if (url.pathname === '/v1/recommendations' && method === 'GET') {
       const { section, group } = calendarOptions(url.searchParams, now);
       const weather = await getCachedWeather(store, { now });
-      return { status: 200, body: await buildRecommendations(store, { now, section, group, weather }) };
+      return { status: 200, body: await buildRecommendations(store, { now, section, group, weather, transit }) };
     }
     if (url.pathname === '/v1/recommendations/actions' && method === 'POST') {
       const result = await saveRecommendationAction(store, await readBody(), { now });

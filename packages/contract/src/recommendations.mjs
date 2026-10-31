@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { EPOCH_MS } from './canonical.mjs';
 import { ChangeDetail } from './calendar-changes.mjs';
+import { TransitView } from './transit.mjs';
 
 export const RecommendationItem = z.object({
   id: z.string().min(1).max(240),
@@ -79,6 +80,7 @@ export const RecommendationResponse = z.object({
   tasks: z.object({ large: z.array(RecommendationItem), small: z.array(RecommendationItem) }),
   warnings: z.array(z.string()),
   diagnostics: RecommendationDiagnostics.optional(),
+  transit: TransitView.nullable().optional(),
 });
 
 export function validateRecommendations(value) { return RecommendationResponse.parse(value); }

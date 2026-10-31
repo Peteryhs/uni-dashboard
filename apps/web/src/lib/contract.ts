@@ -18,6 +18,7 @@ import {
 } from '#contract/cards.mjs';
 import { validateCalendar as validateCalendarJs } from '#contract/calendar.mjs';
 import { validateRecommendations as validateRecommendationsJs } from '#contract/recommendations.mjs';
+import type { TransitData } from './transit';
 
 export interface RecommendationItem {
   id: string;
@@ -64,6 +65,7 @@ export interface ChangeDetail {
 }
 
 export interface RecommendationResponse {
+  transit?: TransitData | null;
   schema_version: 1;
   generated_at: number;
   timezone: string;

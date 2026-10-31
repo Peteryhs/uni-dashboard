@@ -12,7 +12,7 @@
 #   ACCESS_TEAM_DOMAIN  Zero Trust > Settings > Custom Pages, e.g. https://<team>.cloudflareaccess.com
 #   ACCESS_AUD          Zero Trust > Access > Applications > this app > Overview > Application Audience (AUD) Tag
 name = "uni-dashboard"
-main = "apps/relay/src/worker.mjs"
+main = "apps/relay/src/worker-entry.mjs"
 compatibility_date = "2026-09-01"
 # nodejs_compat enables invocation-scoped AsyncLocalStorage and shared Buffer/Blob paths.
 # Node-only SQLite and filesystem operations remain in local adapters/development paths.
@@ -62,3 +62,11 @@ crons = ["* * * * *"]
 
 [observability]
 enabled = true
+
+[[durable_objects.bindings]]
+name = "TRANSIT"
+class_name = "TransitCoordinator"
+
+[[migrations]]
+tag = "transit-v1"
+new_sqlite_classes = ["TransitCoordinator"]

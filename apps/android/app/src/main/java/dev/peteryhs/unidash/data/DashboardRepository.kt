@@ -82,6 +82,19 @@ class DashboardRepository(
 
     private data class HealthRefreshOutcome(val result: Result<Health>, val sourcePollAccepted: Boolean)
 
+    /** Fence transit requests against sign-out just like all other account mutations. */
+    suspend fun <T> transitRequest(block: suspend (RelayApi) -> T): Result<T> {
+        val generation = sessionGeneration.get()
+        if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
+        return try {
+            val api = apiFor() ?: throw RelayError.Unauthorized("not signed in")
+            if (!isSessionCurrent(generation)) return Result.failure(StaleSessionException)
+            val result = block(api)
+            if (!isSessionCurrent(generation)) Result.failure(StaleSessionException) else Result.success(result)
+        } catch (error: CancellationException) { throw error }
+        catch (error: Throwable) { Result.failure(error) }
+    }
+
     init {
         cacheDir.mkdirs()
         _snapshot.value = readCache()

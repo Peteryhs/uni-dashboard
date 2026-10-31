@@ -57,13 +57,56 @@ private val CyanDark = darkColorScheme(
     outline = Color(0xFF889396), outlineVariant = Color(0xFF3F494C),
 )
 
-/** The 8dp spacing grid. */
+/**
+ * The 4dp/8dp spacing grid. Screens use [gutter] for their outer edge and [inset] inside a
+ * container, so every list, card and header shares the same two left edges.
+ */
 object Spacing {
     val xs = 4.dp
     val s = 8.dp
+    val ms = 12.dp
     val m = 16.dp
     val l = 24.dp
     val xl = 32.dp
+
+    /** Horizontal edge of every screen's content. */
+    val gutter = m
+    /** Horizontal padding inside list rows and cards. */
+    val inset = m
+    /** Vertical padding inside dense list rows. */
+    val rowVertical = ms
+    /** Padding inside the one emphasized panel per screen. */
+    val heroInset = l
+    /** Gap between rows of one connected group; the joins read as one list. */
+    val joined = 2.dp
+    /** Gap between separate items, such as a hero panel and the list that follows. */
+    val itemGap = s
+    /** Space after the last list item, so it clears the navigation bar or gesture area. */
+    val listEnd = xl
+}
+
+/**
+ * Corner radii. One emphasized panel per screen uses [hero]; connected groups use [group] on
+ * their outer corners and [join] where rows meet, widening to [joinOpen] when a row is expanded.
+ */
+object Corners {
+    val hero = 28.dp
+    val group = 20.dp
+    val join = 4.dp
+    val joinOpen = 8.dp
+    val tile = 12.dp
+}
+
+/** Layout limits shared by the app's screens. */
+object Layout {
+    /** A readable column on tablets and landscape; body text stays under ~80 characters. */
+    val contentMaxWidth = 680.dp
+    /** Width at which navigation moves from a bottom bar to a side rail. */
+    val railBreakpoint = 600.dp
+    /** Below this window height, large headers collapse to a compact bar (landscape phones). */
+    val compactHeaderHeight = 480.dp
+    /** Minimum touch target for every interactive element. */
+    val touchTarget = 48.dp
 }
 
 @Composable

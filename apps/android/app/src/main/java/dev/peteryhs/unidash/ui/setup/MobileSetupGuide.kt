@@ -40,7 +40,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.Alignment
 import dev.peteryhs.unidash.data.Credentials
 import dev.peteryhs.unidash.ui.theme.Spacing
 
@@ -77,15 +79,20 @@ fun MobileSetupGuide(
         sheetMaxWidth = 560.dp,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
-        BoxWithConstraints(Modifier.fillMaxHeight(0.94f).padding(horizontal = Spacing.m, vertical = Spacing.s)) {
-            Surface(
-                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = maxHeight),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ) {
-                Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Setup guide", style = MaterialTheme.typography.titleMedium)
+        // One inset for the whole sheet: the sheet is the container, so there is no inner panel.
+        // The sheet sizes to its step and stops below the status bar; the keyboard lifts the footer.
+        BoxWithConstraints(Modifier.fillMaxWidth().imePadding()) {
+            Box(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+                Column(
+                    Modifier.padding(start = Spacing.l, end = Spacing.l, bottom = Spacing.m),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.m),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Setup guide", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                         TextButton(onClick = onDismiss) { Text("Pause") }
                     }
                     LinearProgressIndicator(progress = { (step + 1) / 4f }, modifier = Modifier.fillMaxWidth())
@@ -147,7 +154,8 @@ fun MobileSetupGuide(
                         }
                         linkError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    // Primary step action at the bottom end, within thumb reach.
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { step-- }, enabled = step > 0) { Text("Back") }
                         Button(onClick = { if (step < 3) { step++; linkError = null } else onDismiss() }) { Text(if (step < 3) "Continue" else "Finish guide") }
                     }

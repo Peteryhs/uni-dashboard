@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const workerPath = resolve(root, 'apps/relay/src/worker.mjs');
+const workerPath = resolve(root, 'apps/relay/src/worker-entry.mjs');
 const configPath = resolve(root, 'wrangler.toml');
 const assetIndex = resolve(root, 'apps/web/dist/index.html');
 
@@ -58,10 +58,10 @@ test('Wrangler assets routing sends API, health and OAuth paths to the Worker', 
     assert.match(api.headers.get('content-type') || '', /^application\/json/i);
     assert.equal((await api.json()).error, 'unauthorized');
 
-    // `/mcp` must be Worker-owned too: the SPA fallback would answer this GET with 200 HTML, while
-    // the stateless MCP transport answers 405 JSON for a non-POST request.
+    // `/mcp` must be Worker-owned too: unauthenticated requests are rejected before dispatching
+    // transport methods. The SPA fallback would incorrectly answer this GET with 200 HTML.
     const mcp = await get('/mcp');
-    assert.equal(mcp.status, 405);
+    assert.equal(mcp.status, 401);
     assert.match(mcp.headers.get('content-type') || '', /^application\/json/i);
 
     // An unauthenticated MCP POST must be a JSON-RPC 401, never a redirect to the IdP or HTML.

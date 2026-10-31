@@ -1,0 +1,27 @@
+.transit-panel { padding: 4px 20px 12px; }
+.transit-commute { padding: 16px 0; }
+.transit-commute h3, .transit-form h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.transit-commute p, .transit-guidance p { margin: 5px 0; font-size: 13px; color: var(--dash-muted, #aeb4bc); }
+.transit-commute-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.transit-departure { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; font-size: 14px; }
+.transit-departure strong { font-size: 16px; }
+.transit-departure small, .transit-stop-results small { display: block; font-size: 12px; color: #aeb4bc; margin-top: 3px; }
+.transit-departure time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transit-guidance { display: flex; gap: 12px; padding: 16px 0; }
+.transit-guidance > svg { flex-shrink: 0; margin-top: 2px; }
+.transit-guidance small, .transit-target { font-size: 12px; color: #aeb4bc; }
+.transit-alert { font-size: 13px; color: #f3c477; margin: 10px 0; }
+.transit-actions { display: flex; gap: 16px; margin-top: 12px; }
+.transit-form { margin-top: 16px; }
+.transit-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.transit-form label { display: block; font-size: 13px; color: #aeb4bc; margin-top: 16px; }
+.transit-form input { display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 10px 12px; background: #1d1f23; color: #f5f6f7; border: 1px solid #494d55; border-radius: 8px; font: inherit; }
+.transit-form input:focus-visible, .transit-stop-results button:focus-visible { outline: 2px solid #78adff; outline-offset: 2px; }
+.transit-buffers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.transit-stop-results { max-height: 240px; overflow: auto; margin-top: 8px; }
+.transit-stop-results button { display: block; text-align: left; width: 100%; padding: 10px 12px; min-height: 48px; background: transparent; color: #f5f6f7; border: 0; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+.transit-stop-results button:hover, .transit-stop-results button[aria-pressed=true] { background: #292c32; }
+.transit-settings .quiet-action, .transit-form .quiet-action { min-height: 44px; }
+.transit-panel button:disabled, .transit-settings button:disabled { cursor: not-allowed; opacity: .5; }
+fieldset.offline-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+@media (max-width: 600px) { .transit-commute-heading { flex-direction: column; gap: 4px; } .transit-buffers { grid-template-columns: 1fr; gap: 0; } .transit-panel { padding-inline: 16px; } }

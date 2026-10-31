@@ -1,10 +1,21 @@
 package dev.peteryhs.unidash.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import dev.peteryhs.unidash.ui.theme.Layout
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Restaurant
@@ -137,48 +148,62 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
 
     if (guideOpen) MobileSetupGuide(dashboardAddress = baseUrl, onDismiss = { guideOpen = false })
 
-    // Bar on phones, rail from 600dp (tablets, unfolded foldables, landscape).
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        if (maxWidth >= 600.dp) {
+    NavigationFrame(selected = tab, onSelect = selectTab, todayBadge = alertBadge, content = content)
+}
+
+/**
+ * Bar on phones, rail from [Layout.railBreakpoint] (tablets, unfolded foldables, landscape).
+ * Each navigation component owns the system insets on its own edge and consumes them, so screens
+ * pad only the edges that remain: no double padding beside the rail and nothing under the bar.
+ */
+@Composable
+internal fun NavigationFrame(
+    selected: Tab,
+    onSelect: (Tab) -> Unit,
+    todayBadge: Boolean,
+    content: @Composable () -> Unit,
+) {
+    val label: @Composable (Tab) -> Unit = { t ->
+        Text(
+            t.label,
+            style = if (selected == t) MaterialTheme.typography.labelMediumEmphasized else MaterialTheme.typography.labelMedium,
+        )
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        if (maxWidth >= Layout.railBreakpoint) {
+            // The rail also covers a start-side camera cutout, which systemBars alone would miss.
+            val railInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical)
             Row(Modifier.fillMaxSize()) {
                 NavigationRail(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    windowInsets = railInsets,
                 ) {
+                    // Destinations sit in the middle of the rail, within reach of either hand on a tablet.
+                    Spacer(Modifier.weight(1f))
                     Tab.entries.forEach { t ->
                         NavigationRailItem(
-                            selected = tab == t,
-                            onClick = { selectTab(t) },
-                            icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
-                            label = {
-                                Text(
-                                    t.label,
-                                    style = if (tab == t) MaterialTheme.typography.labelMediumEmphasized
-                                    else MaterialTheme.typography.labelMedium,
-                                )
-                            },
+                            selected = selected == t,
+                            onClick = { onSelect(t) },
+                            icon = { TabIcon(t, selected == t, t == Tab.Today && todayBadge) },
+                            label = { label(t) },
                         )
                     }
+                    Spacer(Modifier.weight(1f))
                 }
-                Box(Modifier.weight(1f)) { content() }
+                Box(Modifier.weight(1f).consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))) { content() }
             }
         } else {
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f)) { content() }
+                Box(Modifier.weight(1f).consumeWindowInsets(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))) { content() }
                 ShortNavigationBar(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ) {
                     Tab.entries.forEach { t ->
                         ShortNavigationBarItem(
-                            selected = tab == t,
-                            onClick = { selectTab(t) },
-                            icon = { TabIcon(t, tab == t, t == Tab.Today && alertBadge) },
-                            label = {
-                                Text(
-                                    t.label,
-                                    style = if (tab == t) MaterialTheme.typography.labelMediumEmphasized
-                                    else MaterialTheme.typography.labelMedium,
-                                )
-                            },
+                            selected = selected == t,
+                            onClick = { onSelect(t) },
+                            icon = { TabIcon(t, selected == t, t == Tab.Today && todayBadge) },
+                            label = { label(t) },
                         )
                     }
                 }
@@ -189,7 +214,8 @@ private fun Dashboard(vm: MainViewModel, onReauthenticate: (String) -> Unit) {
 
 @Composable
 private fun TabIcon(tab: Tab, selected: Boolean, badge: Boolean) {
-    BadgedBox(badge = { if (badge) Badge() }) {
+    // The dot is spoken with the destination label, so TalkBack users also learn about the notice.
+    BadgedBox(badge = { if (badge) Badge(Modifier.semantics { contentDescription = "Campus notice" }) }) {
         Icon(if (selected) tab.selected else tab.unselected, contentDescription = null)
     }
 }

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 /**
  * Two targets, one build.
@@ -12,7 +13,15 @@ import tailwindcss from '@tailwindcss/vite';
  * free. Keeping both same-origin means the client never needs a CORS path that only exists in dev.
  */
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), VitePWA({
+    strategies: 'injectManifest', srcDir: 'src', filename: 'sw.ts', injectRegister: false, registerType: 'prompt',
+    injectManifest: { globPatterns: ['**/*.{js,css,html,svg,woff2,png}'], maximumFileSizeToCacheInBytes: 4_000_000 },
+    manifest: { name: 'Uni Dashboard', short_name: 'Uni', description: 'Your Waterloo day, with saved information offline.', theme_color: '#1d1f23', background_color: '#1d1f23', display: 'standalone', start_url: '/', scope: '/', icons: [
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ] }, devOptions: { enabled: false },
+  })],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

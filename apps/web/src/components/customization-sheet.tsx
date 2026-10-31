@@ -58,6 +58,9 @@ import { CourseSettingsTab } from './course-settings-tab';
 import { SourcesPanel } from './sources-panel';
 import { RecommendationInsights } from './recommendation-insights';
 import { McpSettingsTab } from './mcp-settings-tab';
+import { TransitSettings } from './transit';
+import { useOffline } from '@/lib/connectivity';
+import { ClearOfflineData } from './offline-status';
 import type { CalendarData, RecommendationResponse } from '@/lib/contract';
 import './customization-sheet.css';
 import { SetupGuide } from '@/components/setup-guide';
@@ -79,7 +82,7 @@ const FEED_INPUT_ID: Record<FeedSetting, string> = {
   LEARN_ICS_URL: 'learn-url',
 };
 
-const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'credentials', 'mcp', 'status', 'recommendations', 'about'] as const;
+const SETTINGS_TAB_ORDER = ['taste', 'courses', 'schedule', 'transit', 'credentials', 'mcp', 'status', 'recommendations', 'about'] as const;
 type SettingsTab = typeof SETTINGS_TAB_ORDER[number];
 
 const AI_MODEL_OPTIONS: AiModelInfo[] = [
@@ -141,6 +144,7 @@ export function CustomizationSheet({
   focusCourse,
   guideRequest,
   statusRequest,
+  transitRequest,
   recommendations,
   recommendationsPending,
   recommendationsError,
@@ -163,6 +167,7 @@ export function CustomizationSheet({
   focusCourse?: string | null;
   guideRequest?: { step: number; key: number };
   statusRequest?: number;
+  transitRequest?: number;
   recommendations?: RecommendationResponse;
   recommendationsPending?: boolean;
   recommendationsError?: boolean;
@@ -179,6 +184,8 @@ export function CustomizationSheet({
   const [guideOpen, setGuideOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'mobile');
   const [guideStart, setGuideStart] = useState<number | undefined>(() => new URLSearchParams(window.location.search).get('setup') === 'mobile' ? 3 : undefined);
   const [activeTab, setActiveTab] = useState<SettingsTab>('taste');
+  const offline = useOffline();
+  useEffect(() => { if (transitRequest) setActiveTab('transit'); }, [transitRequest]);
   const tabIndicator = useSlidingIndicator(activeTab, '[aria-selected="true"]');
   const [savedTasteProfileKey, setSavedTasteProfileKey] = useState('');
   const [tasteProfileError, setTasteProfileError] = useState('');
@@ -473,6 +480,7 @@ export function CustomizationSheet({
         <SheetClose className="settings-close close-detail" aria-label="Close settings">
           <X size={17} />
         </SheetClose>
+        {offline && <p className="data-note">Offline · Connection and configuration changes are disabled.</p>}
 
         {guideOpen && <SetupGuide initialStep={guideStart} onExit={() => exitGuide()} onSettings={exitGuide} />}
         <Tabs
@@ -511,6 +519,7 @@ export function CustomizationSheet({
               >
                 <Calendar className="size-3.5 mr-1" /> Schedule
               </TabsTrigger>
+              <TabsTrigger value="transit" className="settings-tab">Transit</TabsTrigger>
               <TabsTrigger
                 value="credentials"
                 className="settings-tab text-xs data-[state=active]:bg-zinc-100 data-[state=active]:text-zinc-950 focus-visible:ring-2 focus-visible:ring-live focus-visible:outline-none"
@@ -764,6 +773,9 @@ export function CustomizationSheet({
             </BlurFade>
           </TabsContent>
 
+          <TabsContent value="transit" className="settings-panel pt-5">
+            <TransitSettings active={activeTab === 'transit'} cached={recommendations?.transit} />
+          </TabsContent>
           <TabsContent value="mcp" className="settings-panel pt-0">
             <BlurFade
               as="section"
@@ -1288,6 +1300,7 @@ function FeedConnectionActions({
 function AboutTab() {
   return (
     <div className="settings-about space-y-6">
+      <ClearOfflineData />
       {/* App Identity & Creator */}
       <div className="settings-about-hero">
         <div className="settings-about-title-row">

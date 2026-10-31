@@ -86,7 +86,17 @@ import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.ShapedIcon
+import dev.peteryhs.unidash.ui.animatedGroupedShape
+import dev.peteryhs.unidash.ui.disclosureToggle
+import dev.peteryhs.unidash.ui.listItemMotion
+import dev.peteryhs.unidash.ui.revealEnter
+import dev.peteryhs.unidash.ui.revealExit
+import dev.peteryhs.unidash.ui.theme.Corners
+import dev.peteryhs.unidash.ui.theme.Layout
 import dev.peteryhs.unidash.ui.theme.Spacing
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.itemsIndexed
 import java.text.Normalizer
 import java.time.Instant
 import java.util.Locale
@@ -202,13 +212,15 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
         }
         if (serving.isNotEmpty()) {
             item(key = "header") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SectionHeader(if (menuIsToday) "Serving today" else "Posted menu", Modifier.weight(1f))
-                    FreshnessLabel(foodCard.state, foodCard.observedAt, now, Modifier.padding(end = Spacing.m, top = Spacing.m))
-                }
+                SectionHeader(
+                    if (menuIsToday) "Serving today" else "Posted menu",
+                    trailing = if (foodCard.state.isStale) {
+                        { FreshnessLabel(foodCard.state, foodCard.observedAt, now, Modifier.padding(end = Spacing.ms)) }
+                    } else null,
+                )
             }
         }
-        items(serving, key = { "outlet:${it.outlet}" }) { outlet ->
+        itemsIndexed(serving, key = { _, it -> "outlet:${it.outlet}" }) { index, outlet ->
             val ranked = pick?.rankedOutlets?.firstOrNull { diningNameMatches(it.outlet, outlet.outlet) }
             val expanded = when {
                 outlet.outlet in manuallyExpandedOutlets -> true
@@ -220,6 +232,8 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
                 ranked,
                 isTop = outlet.outlet == recommendedServingOutlet,
                 expanded = expanded,
+                index = index,
+                count = serving.size,
                 onExpandedChange = { nextExpanded ->
                     if (nextExpanded) {
                         manuallyCollapsedOutlets = manuallyCollapsedOutlets - outlet.outlet
@@ -229,16 +243,17 @@ fun FoodScreen(vm: MainViewModel, snapshot: Snapshot, now: Long, snackbar: Snack
                         manuallyCollapsedOutlets = manuallyCollapsedOutlets + outlet.outlet
                     }
                 },
-                modifier = Modifier.animateItem(
-                    fadeInSpec = MaterialTheme.motionScheme.fastEffectsSpec(),
-                    placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-                    fadeOutSpec = MaterialTheme.motionScheme.fastEffectsSpec(),
-                ),
+                modifier = Modifier.listItemMotion(this),
             )
         }
         val closed = outlets - serving.toSet()
         if (closed.isNotEmpty()) {
-            item(key = "closed") { EmptyNote("Not serving: ${closed.joinToString { it.outlet.substringBefore(" - ") }}") }
+            item(key = "closed") {
+                EmptyNote(
+                    "Not serving: ${closed.joinToString { it.outlet.substringBefore(" - ") }}",
+                    Modifier.padding(top = Spacing.s),
+                )
+            }
         }
     }
 }
@@ -302,13 +317,13 @@ private fun AiSummaryCard(
         label = "Dining pick container color",
     )
     val corner by animateDpAsState(
-        targetValue = if (pick != null) 28.dp else 16.dp,
+        targetValue = if (pick != null) Corners.hero else Corners.group,
         animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
         label = "Dining pick container shape",
     )
 
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.itemGap)
             .semantics {
                 stateDescription = when {
                     pick != null && processing -> "Saved dining pick. Updating."
@@ -332,7 +347,12 @@ private fun AiSummaryCard(
             },
             label = "Dining pick content",
         ) { content ->
-            Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Column(
+                // The disclosure row supplies its own touch-target height, so the bottom inset is smaller.
+                Modifier.padding(start = Spacing.heroInset, end = Spacing.heroInset, top = Spacing.heroInset,
+                    bottom = if (content.hasDetails && content.pick != null) Spacing.s else Spacing.heroInset),
+                verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            ) {
                 if (content.pick != null) {
                     Row(
                         verticalAlignment = Alignment.Top,
@@ -342,7 +362,7 @@ private fun AiSummaryCard(
                             icon = Icons.Outlined.Restaurant,
                             container = colors.secondary,
                             content = colors.onSecondary,
-                            size = 52.dp,
+                            size = 48.dp,
                             shape = MaterialShapes.Cookie12Sided,
                         )
                         Column(
@@ -480,10 +500,8 @@ private fun PickDetailsDisclosure(
     contentColor: Color,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.medium)
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
-            .padding(vertical = Spacing.s),
+        modifier = Modifier.fillMaxWidth().heightIn(min = Layout.touchTarget).clip(MaterialTheme.shapes.medium)
+            .disclosureToggle(expanded, onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -494,103 +512,78 @@ private fun PickDetailsDisclosure(
         )
         DisclosureIcon(expanded, modifier = Modifier.size(24.dp), tint = contentColor)
     }
-    AnimatedVisibility(
-        visible = expanded,
-        enter = expandVertically(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()) + fadeIn(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
-        exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()) + fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            if (longerReason.isNotBlank()) Text(longerReason, style = MaterialTheme.typography.bodySmall, color = contentColor)
-            if (tip.isNotBlank()) Text(tip, style = MaterialTheme.typography.bodySmall, color = contentColor)
+    AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
+        // Same left edge as the disclosure label above it; no second inset inside the panel.
+        Column(Modifier.fillMaxWidth().padding(bottom = Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            if (longerReason.isNotBlank()) Text(longerReason, style = MaterialTheme.typography.bodyMedium, color = contentColor)
+            if (tip.isNotBlank()) Text(tip, style = MaterialTheme.typography.bodyMedium, color = contentColor)
         }
     }
 }
 
+/**
+ * One outlet in the connected menu list. The header row is the disclosure target; the recommended
+ * outlet opens first and keeps the primary colour on its name, without an extra badge or panel.
+ */
 @Composable
 private fun OutletCard(
     outlet: Outlet,
     ranked: RankedOutlet?,
     isTop: Boolean,
     expanded: Boolean,
+    index: Int,
+    count: Int,
     onExpandedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
-        label = "Dining outlet disclosure",
-    )
-    val corner by animateDpAsState(
-        targetValue = if (expanded) 20.dp else 16.dp,
-        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-        label = "Dining outlet container shape",
+    val containerColor by animateColorAsState(
+        targetValue = if (expanded) colors.surfaceContainer else colors.surfaceContainerLow,
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Dining outlet container color",
     )
     val outletName = outlet.outlet.substringBefore(" - ")
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.xs),
-        color = colors.surfaceContainerLow,
+        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.joined / 2),
+        color = containerColor,
         contentColor = colors.onSurface,
-        shape = RoundedCornerShape(corner),
+        shape = animatedGroupedShape(index, count, open = expanded),
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.s, top = Spacing.s, bottom = Spacing.s),
+                Modifier.fillMaxWidth()
+                    .disclosureToggle(expanded, onToggle = { onExpandedChange(!expanded) })
+                    .semantics { heading() }
+                    .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.s),
             ) {
-                Column(
-                    Modifier.weight(1f).padding(vertical = Spacing.xs),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         outletName,
                         style = MaterialTheme.typography.titleMediumEmphasized,
                         color = if (isTop) colors.primary else colors.onSurface,
-                        modifier = Modifier.semantics(mergeDescendants = true) { heading() },
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    ) {
-                        if (isTop) {
-                            Text("Recommended", style = MaterialTheme.typography.labelMedium, color = colors.primary)
-                            Text("·", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                        } else if (ranked != null) {
-                            Text("Rank ${ranked.rank}", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                            Text("·", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                        }
-                        Text(
+                    Text(
+                        listOfNotNull(
+                            when {
+                                isTop -> "Recommended"
+                                ranked != null -> "Rank ${ranked.rank}"
+                                else -> null
+                            },
                             "${outlet.dishCount} posted ${if (outlet.dishCount == 1) "dish" else "dishes"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-                FilledTonalIconToggleButton(
-                    checked = expanded,
-                    onCheckedChange = onExpandedChange,
-                    modifier = Modifier.size(48.dp).semantics {
-                        contentDescription = if (expanded) "Collapse $outletName menu" else "Expand $outletName menu"
-                        stateDescription = if (expanded) "Expanded" else "Collapsed"
-                    },
-                ) {
-                    Icon(
-                        Icons.Outlined.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.graphicsLayer { rotationZ = rotation },
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isTop) colors.primary else colors.onSurfaceVariant,
                     )
+                }
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    DisclosureIcon(expanded, tint = colors.onSurfaceVariant)
                 }
             }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-                exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-            ) {
+            AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
                 Column(
-                    Modifier.fillMaxWidth().padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
+                    Modifier.fillMaxWidth().padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.m),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
                     if (outlet.dishes.isEmpty()) {
@@ -626,14 +619,18 @@ private fun StationHeader(station: String) {
 @Composable
 private fun DishRow(d: Dish, highlight: Highlight?) {
     Row(
-        Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+        // The rule spans the dish's real height, however many lines its name and reason wrap to.
+        Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(vertical = Spacing.xs),
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
         // The AI pick is marked by a bar and the primary colour, not by words.
-        if (highlight == null) Spacer(Modifier.width(4.dp))
-        else Box(Modifier.width(4.dp).height(36.dp).background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Box(
+            Modifier.width(4.dp).fillMaxHeight().let {
+                if (highlight != null) it.background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall) else it
+            },
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             DietaryDishTitle(d.dish, d.diet, highlighted = highlight != null)
             highlight?.why?.takeIf { it.isNotBlank() }?.let { why ->
                 Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)

@@ -256,6 +256,7 @@ data class Recommendations(
     val items: List<Recommendation> = emptyList(),
     val warnings: List<String> = emptyList(),
     val diagnostics: RecommendationDiagnostics? = null,
+    val transit: TransitView? = null,
 )
 
 @Serializable

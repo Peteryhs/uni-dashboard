@@ -43,6 +43,9 @@
   "homepage": "https://github.com/Peteryhs/uni-dashboard#readme",
   "type": "module",
   "dependencies": {
+    "csv-parse": "^7.0.3",
+    "fflate": "^0.8.3",
+    "gtfs-realtime-bindings": "^2.2.0",
     "zod": "^4.6.5"
   },
   "imports": {

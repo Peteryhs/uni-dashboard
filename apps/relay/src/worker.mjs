@@ -43,6 +43,8 @@ import { ANDROID_OAUTH_CALLBACK_PATH, androidOAuthCallback } from './android-oau
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 import { buildHealth } from './health.mjs';
 import { createRuntimeEnv, getRuntimeEnv, withRuntimeEnv } from './runtime-env.mjs';
+import { cloudTransit } from './transit.mjs';
+import { isTransitRoute, handleTransitRoute } from './transit-api.mjs';
 
 const STARTED_AT = Date.now();
 
@@ -357,7 +359,11 @@ async function handleFetch(request, env, ctx) {
    */
 
   if (isGuidanceRoute(path)) {
-    const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob });
+    const result = await handleGuidanceRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, cfEnv: env, startAiJob, transit: cloudTransit(env) });
+    return json(result.body, result.status);
+  }
+  if (isTransitRoute(path)) {
+    const result = await handleTransitRoute({ url, method: request.method, readBody: () => readGuidanceJson(request.body), store, transit: cloudTransit(env) });
     return json(result.body, result.status);
   }
 
@@ -702,6 +708,7 @@ export default {
    * backoff, so the cron interval only sets how often the table is consulted.
    */
   async scheduled(event, env, ctx) {
+    if (env.TRANSIT && new Date(event.scheduledTime ?? Date.now()).getUTCMinutes() % 15 === 0) ctx.waitUntil(cloudTransit(env).ensureAlarm());
     const store = storeFor(env);
     await store.init();
     // settings saved from the app first: the cron polls the feeds the app was configured with

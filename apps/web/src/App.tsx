@@ -16,6 +16,9 @@ import { SetupChecklist } from '@/components/setup-checklist';
 import { AiMenuSummary } from '@/components/ai-menu-summary';
 import { CourseDetailContent } from '@/components/course-detail-content';
 import { StudySpacesSection } from '@/components/study-spaces';
+import { TransitSection } from '@/components/transit';
+import { OfflineStatus } from '@/components/offline-status';
+import { useOffline } from '@/lib/connectivity';
 import { BlurFade } from '@/components/ui/blur-fade';
 import { BlurFadeDisclosure } from '@/components/ui/blur-fade-disclosure';
 import { CAMPUS_DINING_LOCATIONS, getOutletLocation } from '@/lib/dining';
@@ -257,6 +260,7 @@ function AnimatedUndoToast({
 }
 
 function RecommendationDetail({ item, now, isClosing, onClose, onAction }: { item: RecommendationItem; now: number; isClosing?: boolean; onClose: () => void; onAction: (action: 'done' | 'snooze' | 'dismiss') => void }) {
+  const offline = useOffline();
   const course = item.course;
   return <BlurFade as="section" className={'rec-detail' + (isAiFood(item) ? ' rec-detail--ai' : '') + (isClosing ? ' is-closing' : '')} duration={0.3} offset={8} blur="5px" aria-label={'Details for ' + cleanTitle(item.title)}>
     <div className="rec-detail-head">
@@ -278,11 +282,11 @@ function RecommendationDetail({ item, now, isClosing, onClose, onAction }: { ite
         : item.action && <a className="solid-action" href={item.action.url} target="_blank" rel="noopener noreferrer">{item.action.label}<ExternalLink size={15} /></a>}
       {item.can_complete ? (
         <>
-          <button className="quiet-action" onClick={() => onAction('done')}><Check size={15} /> Mark done</button>
-          <button className="quiet-action" onClick={() => onAction('snooze')}>Remind me in an hour</button>
+          <button className="quiet-action" disabled={offline} onClick={() => onAction('done')}><Check size={15} /> Mark done</button>
+          <button className="quiet-action" disabled={offline} onClick={() => onAction('snooze')}>Remind me in an hour</button>
         </>
       ) : (
-        <button className="quiet-action" onClick={() => onAction('dismiss')}>Dismiss</button>
+        <button className="quiet-action" disabled={offline} onClick={() => onAction('dismiss')}>Dismiss</button>
       )}
     </div>
     <BlurFadeDisclosure className="rec-evidence" summary="Source details"><p>{item.source_label}. {item.evidence || 'No additional source details.'}</p></BlurFadeDisclosure>
@@ -695,6 +699,7 @@ export default function App() {
   const { preferences, setDietaryFilter, setOnlyFavorites, toggleFavoriteDish, updateTasteProfile, resetPreferences } = usePreferences();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusRequest, setStatusRequest] = useState(0);
+  const [transitRequest, setTransitRequest] = useState(0);
   const health = useHealth(true);
   const sourceHealth = health.data ? healthSummary(health.data.sources, now) : null;
   const sourceWarning = health.isError ? 'Could not check source status. Showing saved information where available.'
@@ -906,6 +911,8 @@ export default function App() {
       {actionError && <p className="action-error" role="alert">{actionError}</p>}
       {recs.data && <p className="data-note">Updated {shortAge(recs.data.generated_at, now)} ago{recs.isError ? ' · Refresh failed' : ''}</p>}
     </section>
+    <OfflineStatus />
+    <TransitSection data={recs.data?.transit} now={now} onManage={() => { setTransitRequest(n => n + 1); setSettingsOpen(true); }} />
     <CalendarSection data={calendar.data} pending={calendar.isPending} error={calendar.isError} now={now} page={calendarPage} setPage={setCalendarPage} nextCommitment={nextCommitment} nextCommitmentState={nextCommitmentCard?.state} />
     <DueWorkSection data={dueWork} />
     <MenuSection now={now} />
@@ -917,6 +924,7 @@ export default function App() {
     onOpenChange={(open) => { setSettingsOpen(open); if (!open) { setSettingsCourse(null); setGuideFinished(readGuideProgress().finished); } }}
     guideRequest={guideRequest}
     statusRequest={statusRequest}
+    transitRequest={transitRequest}
     recommendations={recs.data}
     recommendationsPending={recs.isPending || recs.isFetching}
     recommendationsError={recs.isError}

@@ -3,6 +3,7 @@ import { getRankedDiningOutlets } from '@/components/use-dining-recommendation';
 import { getOutletLocation } from '@/lib/dining';
 import { RefreshCw } from 'lucide-react';
 import './ai-menu-summary.css';
+import { useOffline } from '@/lib/connectivity';
 
 function displayDate(serviceDate: string): string {
   const date = new Date(`${serviceDate}T12:00:00`);
@@ -23,12 +24,13 @@ export function AiMenuSummary({
   rerankError,
   rerank,
 }: { service_date: string } & DiningRecommendationController) {
+  const offline = useOffline();
   const rankAgainButton = (
     <button
       className={`ai-menu-summary__rank-again${state.status !== 'ready' ? ' ai-menu-summary__rank-again--quiet' : ''}`}
       type="button"
       onClick={() => void rerank()}
-      disabled={isReranking || state.status === 'budget_limited'}
+      disabled={offline || isReranking || state.status === 'budget_limited'}
       title={state.status === 'budget_limited' ? 'The shared AI allowance is fully reserved today.' : undefined}
       aria-label={isReranking ? 'Ranking dining picks' : 'Rank dining picks again'}
     >

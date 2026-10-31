@@ -51,6 +51,19 @@ class RelayApi(
     suspend fun foodRecommendation(date: String): Pair<FoodRecommendationResponse, String> =
         getParsed("/v1/food/recommendation?date=$date")
     suspend fun health(): Pair<Health, String> = getParsed("/v1/health/sources")
+    suspend fun transitStops(query: String, origin: String): List<TransitStop> = getParsed<TransitStopList>(
+        "/v1/transit/stops?q=${java.net.URLEncoder.encode(query, "UTF-8")}&origin=${java.net.URLEncoder.encode(origin, "UTF-8")}",
+    ).first.stops
+    suspend fun transitCommutes(): List<TransitCommute> = getParsed<TransitCommuteList>("/v1/transit/commutes").first.commutes
+    suspend fun refreshTransit() { execute("/v1/transit/refresh", "POST", "{}") }
+    suspend fun saveTransit(commute: TransitCommute) {
+        execute("/v1/transit/commutes${commute.id.takeIf { it.isNotBlank() }?.let { "/$it" } ?: ""}", if (commute.id.isBlank()) "POST" else "PUT", ContractJson.encodeToString(commute))
+    }
+    suspend fun deleteTransit(id: String) { execute("/v1/transit/commutes/$id", "DELETE") }
+    suspend fun activateTransit(id: String?) {
+        if (id == null) execute("/v1/transit/activation", "DELETE")
+        else execute("/v1/transit/activation", "POST", buildJsonObject { put("commute_id", id) }.toString())
+    }
 
     suspend fun refreshSources(): SourcePollResult {
         val body = execute("/v1/poll", "POST", "{}")

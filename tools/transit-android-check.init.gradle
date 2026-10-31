@@ -1,0 +1,4 @@
+// Keep verification output independent of another Android build in the shared workspace.
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(new File(project.rootDir, "../../scratch/transit-validation/android-build/${project.name}"))
+}

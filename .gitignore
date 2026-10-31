@@ -18,6 +18,10 @@ apps/web/.vite/
 .tmp-*
 .ai-cache.json
 scratch/
+test-results/
+playwright-report/
+apps/web/test-results/
+apps/web/playwright-report/
 
 # wrangler: local build output, local secret file (never commit secrets)
 .wrangler/

@@ -91,7 +91,20 @@ import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.PredictiveNavigation
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.ShapedIcon
+import dev.peteryhs.unidash.ui.animatedGroupedShape
+import dev.peteryhs.unidash.ui.disclosureToggle
+import dev.peteryhs.unidash.ui.groupedShape
+import dev.peteryhs.unidash.ui.listItemMotion
+import dev.peteryhs.unidash.ui.revealEnter
+import dev.peteryhs.unidash.ui.revealExit
+import dev.peteryhs.unidash.ui.theme.Corners
+import dev.peteryhs.unidash.ui.theme.Layout
 import dev.peteryhs.unidash.ui.theme.Spacing
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.UriHandler
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -166,6 +179,7 @@ fun TodayScreen(
                     } else if (next != null && !nextIsRecommended) {
                         item(key = "next-missing") { EmptyNote("${next.title}${next.subtitle.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") }
                     }
+                    recs?.transit?.let { transit -> transitSection(transit, now, snapshot.error != null, vm) }
                     if (due != null) dueSoon(due, dueCard.state, dueCard.observedAt, now, recommended)
                 }
             }
@@ -188,13 +202,13 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
         shape = MaterialTheme.shapes.large,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Spacing.m, vertical = Spacing.xs)
+            .padding(horizontal = Spacing.gutter, vertical = Spacing.xs)
             .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
     ) {
         Column {
             // The strip: one line, title only. Details wait behind a tap.
             Row(
-                Modifier.padding(start = Spacing.m, end = Spacing.xs).heightIn(min = 48.dp),
+                Modifier.padding(start = Spacing.inset, end = Spacing.xs).heightIn(min = Layout.touchTarget),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.s),
             ) {
@@ -240,7 +254,8 @@ private fun AlertCard(alert: Alert, state: CardState, observedAt: Long?, now: Lo
             }
             if (expanded) {
                 Column(
-                    Modifier.padding(start = Spacing.m, end = Spacing.m, bottom = Spacing.m),
+                    // Aligns with the notice title, which follows a 20dp icon and an 8dp gap.
+                    Modifier.padding(start = Spacing.inset + 28.dp, end = Spacing.inset, bottom = Spacing.m),
                     verticalArrangement = Arrangement.spacedBy(Spacing.s),
                 ) {
                     alert.notices.forEachIndexed { i, n ->
@@ -275,10 +290,13 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
             containerColor = if (emphasize) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
             contentColor = if (emphasize) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
         ),
-        shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+        shape = if (emphasize) RoundedCornerShape(Corners.hero) else RoundedCornerShape(Corners.group),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.itemGap),
     ) {
-        Column(Modifier.padding(Spacing.l), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+        Column(
+            Modifier.padding(if (emphasize) Spacing.heroInset else Spacing.inset),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+        ) {
             Text(label, style = MaterialTheme.typography.labelLarge)
             Text(
                 next.title,
@@ -331,6 +349,7 @@ private fun NextUpCard(next: NextCommitment, state: CardState, observedAt: Long?
     }
 }
 
+
 /** An icon and a short value. `label` names the value for TalkBack when the icon carries the meaning. */
 @Composable
 private fun IconText(icon: ImageVector, text: String, label: String? = null) {
@@ -339,7 +358,7 @@ private fun IconText(icon: ImageVector, text: String, label: String? = null) {
         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         modifier = if (label != null) Modifier.clearAndSetSemantics { contentDescription = "$label $text" } else Modifier,
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.padding(top = 1.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
         Text(text, style = MaterialTheme.typography.bodyLarge)
     }
 }
@@ -352,9 +371,8 @@ private fun LazyListScope.recommendations(
     onExplain: () -> Unit,
 ) {
     item(key = "recs-header") {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            SectionHeader(if (items.isEmpty()) "Focus" else "Focus · ${items.size}", Modifier.weight(1f))
-            TextButton(onClick = onExplain, modifier = Modifier.padding(end = Spacing.xs)) { Text("How it works") }
+        SectionHeader(if (items.isEmpty()) "Focus" else "Focus · ${items.size}") {
+            TextButton(onClick = onExplain) { Text("How it works") }
         }
     }
     if (items.isEmpty()) item(key = "recs-empty") { EmptyNote(headline?.takeIf { it.isNotBlank() } ?: "Nothing needs you right now.") }
@@ -363,11 +381,7 @@ private fun LazyListScope.recommendations(
             rec = rec,
             now = now,
             vm = vm,
-            modifier = Modifier.animateItem(
-                fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-                placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-                fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-            ),
+            modifier = Modifier.listItemMotion(this),
             isLead = index == 0,
             index = index,
             count = items.size,
@@ -375,6 +389,11 @@ private fun LazyListScope.recommendations(
     }
 }
 
+/**
+ * The first ranked item is the screen's one emphasized panel; the rest form a connected list.
+ * A secondary row is a single disclosure target: tapping anywhere on its summary reveals the
+ * body and actions in place, so collapsed rows carry no repeated button set.
+ */
 @Composable
 private fun RecommendationCard(
     rec: Recommendation,
@@ -401,20 +420,12 @@ private fun RecommendationCard(
         label = "Recommendation container color",
     )
     val contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-    val actionShapes = ButtonDefaults.shapes()
-    val textActionColors = ButtonDefaults.textButtonColors(
-        contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-    )
-    val outlinedActionColors = ButtonDefaults.outlinedButtonColors(
-        contentColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary,
-    )
-    val outlinedActionBorder = BorderStroke(
-        1.dp,
-        if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outlineVariant,
-    )
+    val mutedColor = if (isLead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    val shape = if (isLead) RoundedCornerShape(Corners.hero) else animatedGroupedShape(index - 1, count - 1, open = expanded)
     val snooze = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick); vm.act(rec, "snooze", now + HOUR) }
     val done = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "done") }
     val dismiss = { haptics.performHapticFeedback(HapticFeedbackType.Confirm); vm.act(rec, "dismiss") }
+    val toggle = { expanded = !expanded }
     val swipe = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = swipe,
@@ -424,13 +435,13 @@ private fun RecommendationCard(
                 if (rec.canComplete) snooze() else dismiss()
             }
         },
-        backgroundContent = { SwipeBackground(swipe.dismissDirection, rec.canComplete) },
-        modifier = modifier.padding(horizontal = Spacing.m, vertical = if (isLead) Spacing.s else 1.dp),
+        backgroundContent = { SwipeBackground(swipe.dismissDirection, shape, rec.canComplete) },
+        modifier = modifier.padding(horizontal = Spacing.gutter, vertical = if (isLead) Spacing.itemGap else Spacing.joined / 2),
     ) {
         Surface(
             color = containerColor,
             contentColor = contentColor,
-            shape = if (isLead) RoundedCornerShape(28.dp) else recommendationGroupShape(index - 1, count - 1),
+            shape = shape,
             modifier = Modifier.fillMaxWidth().semantics {
                 customActions = buildList {
                     if (rec.canComplete) {
@@ -442,155 +453,37 @@ private fun RecommendationCard(
                 }
             },
         ) {
-            Column(
-                Modifier.fillMaxWidth().padding(
-                    horizontal = if (isLead) 24.dp else 16.dp,
-                    vertical = if (isLead) 24.dp else 12.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(if (isLead) Spacing.m else 12.dp),
-            ) {
-                if (isLead) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
-                        ShapedIcon(
-                            icon = recommendationIcon(rec.kind),
-                            container = MaterialTheme.colorScheme.primary,
-                            content = MaterialTheme.colorScheme.onPrimary,
-                            size = 56.dp,
-                        )
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            Text(
-                                listOfNotNull(recommendationKindLabel(rec.kind), rec.course).joinToString(" · "),
-                                style = MaterialTheme.typography.labelLargeEmphasized,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                    }
-                    Text(rec.title, style = MaterialTheme.typography.headlineMediumEmphasized)
-                    RecommendationMetadata(
-                        timing = recTime(rec, now).orEmpty(),
-                        warnings = presentation.warnings,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        warningColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
-                        ?.let { IconText(Icons.Outlined.Place, it) }
-                } else {
-                    Text(rec.title, style = MaterialTheme.typography.titleMediumEmphasized)
-                    RecommendationMetadata(
-                        timing = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · "),
-                        warnings = presentation.warnings,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        warningColor = MaterialTheme.colorScheme.tertiary,
-                    )
-                    rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
-                        ?.let { IconText(Icons.Outlined.Place, it) }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    // A change is drawn as blocks; its sentence body would only repeat them.
-                    rec.change?.let { ChangeBlocks(it, Modifier.padding(vertical = Spacing.xs)) }
-                    rec.change?.takeIf { !it.confirmed }?.let {
-                        Text(
-                            if (it.roomMoved) "Room change inferred · check the course source" else "Change needs confirmation · check the course source",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isLead) contentColor else MaterialTheme.colorScheme.tertiary,
-                        )
-                    }
-                    progress?.let {
-                        EventTimeline(
-                            it,
-                            Modifier.padding(vertical = Spacing.xs),
-                            color = contentColor,
-                            trackColor = contentColor.copy(alpha = 0.2f),
-                            labelColor = contentColor,
-                        )
-                    }
-                    FreshnessLabel(rec.state, null, now)
-                    if (isLead && rec.canComplete) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                            Button(onClick = done, shapes = actionShapes) {
-                                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                                Text("Done", Modifier.padding(start = Spacing.s))
-                            }
-                            TextButton(
-                                onClick = { expanded = !expanded },
-                                shapes = actionShapes,
-                                colors = textActionColors,
-                                modifier = Modifier.semantics {
-                                    contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
-                                },
-                            ) { Text(if (expanded) "Hide details" else "Details") }
-                        }
-                    } else if (isLead) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalArrangement = Arrangement.Center) {
-                            TextButton(
-                                onClick = { expanded = !expanded },
-                                shapes = actionShapes,
-                                colors = textActionColors,
-                                modifier = Modifier.semantics {
-                                    contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
-                                },
-                            ) { Text(if (expanded) "Hide details" else "Details") }
-                            if (!expanded) rec.action?.let { action ->
-                                TextButton(onClick = { uri.openUri(action.url) }, shapes = actionShapes, colors = textActionColors) {
-                                    Text(action.label)
-                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
-                                }
-                            }
-                        }
-                    } else {
-                        TextButton(
-                            onClick = { expanded = !expanded },
-                            shapes = actionShapes,
-                            colors = textActionColors,
-                            modifier = Modifier.semantics {
-                                contentDescription = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
-                            },
-                        ) { Text(if (expanded) "Hide details" else "Details") }
-                    }
-                    AnimatedVisibility(
-                        visible = expanded,
-                        enter = expandVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                            fadeIn(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
-                        exit = shrinkVertically(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                            fadeOut(animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec()),
+            if (isLead) {
+                LeadRecommendation(rec, presentation, now, progress, expanded, toggle, done, snooze, dismiss, uri)
+            } else {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .disclosureToggle(expanded, toggle)
+                            .padding(start = Spacing.inset, end = Spacing.s, top = Spacing.rowVertical, bottom = Spacing.rowVertical),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            val time = rec.dueAt ?: rec.startsAt
-                            val repeatsTime = (time != null && rec.timeLabel != null && presentation.body.startsWith(rec.timeLabel) && presentation.body.length < 48)
-                                || (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
-                            if (presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)) {
-                                Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            if (rec.reason.isNotBlank() && rec.reason != presentation.body) {
-                                Text(rec.reason, style = MaterialTheme.typography.bodySmall, color = contentColor)
-                            }
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
-                                if (rec.canComplete) {
-                                    if (!isLead) {
-                                        FilledTonalButton(onClick = done, shapes = actionShapes) {
-                                            Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                                            Text("Done", Modifier.padding(start = Spacing.s))
-                                        }
-                                    }
-                                    OutlinedButton(onClick = snooze, shapes = actionShapes, colors = outlinedActionColors, border = outlinedActionBorder) {
-                                        Icon(Icons.Outlined.Snooze, contentDescription = null)
-                                        Text("1 h", Modifier.padding(start = Spacing.s).semantics { contentDescription = "Snooze for an hour" })
-                                    }
-                                } else {
-                                    OutlinedButton(onClick = dismiss, shapes = actionShapes, colors = outlinedActionColors, border = outlinedActionBorder) {
-                                        Icon(Icons.Outlined.Close, contentDescription = null)
-                                        Text("Dismiss", Modifier.padding(start = Spacing.s))
-                                    }
-                                }
-                                if (!isLead || rec.canComplete || expanded) rec.action?.let { a ->
-                                    TextButton(onClick = { uri.openUri(a.url) }, shapes = actionShapes, colors = textActionColors) {
-                                        Text(a.label)
-                                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
-                                    }
-                                }
-                            }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            Text(rec.title, style = MaterialTheme.typography.titleMediumEmphasized)
+                            RecommendationMetadata(
+                                timing = listOfNotNull(rec.course, recTime(rec, now)).joinToString(" · "),
+                                warnings = presentation.warnings,
+                                contentColor = mutedColor,
+                                warningColor = MaterialTheme.colorScheme.tertiary,
+                            )
+                            RecommendationEvidence(rec, progress, contentColor, isLead = false)
                         }
+                        // The chevron sits in a touch-target-sized box so it lines up with the title.
+                        Box(Modifier.size(Layout.touchTarget, 24.dp), contentAlignment = Alignment.Center) {
+                            DisclosureIcon(expanded, tint = mutedColor)
+                        }
+                    }
+                    AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
+                        RecommendationDetails(
+                            rec, presentation, isLead = false, done = done, snooze = snooze, dismiss = dismiss, uri = uri,
+                            modifier = Modifier.padding(start = Spacing.inset, end = Spacing.inset, bottom = Spacing.rowVertical),
+                        )
                     }
                 }
             }
@@ -598,10 +491,187 @@ private fun RecommendationCard(
     }
 }
 
-private fun recommendationGroupShape(index: Int, count: Int): RoundedCornerShape {
-    val top = if (index == 0) 20.dp else 4.dp
-    val bottom = if (index == count - 1) 20.dp else 4.dp
-    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+@Composable
+private fun LeadRecommendation(
+    rec: Recommendation,
+    presentation: RecommendationPresentation,
+    now: Long,
+    progress: EventProgress?,
+    expanded: Boolean,
+    toggle: () -> Unit,
+    done: () -> Unit,
+    snooze: () -> Unit,
+    dismiss: () -> Unit,
+    uri: UriHandler,
+) {
+    val colors = MaterialTheme.colorScheme
+    val textActionColors = ButtonDefaults.textButtonColors(contentColor = colors.onPrimaryContainer)
+    val detailsLabel = if (expanded) "Hide details for ${rec.title}" else "Show details for ${rec.title}"
+    Column(
+        Modifier.fillMaxWidth().padding(start = Spacing.heroInset, end = Spacing.heroInset, top = Spacing.heroInset, bottom = Spacing.m),
+        verticalArrangement = Arrangement.spacedBy(Spacing.ms),
+    ) {
+        // Kind and course form an overline beside a compact functional icon, not a row of their own.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.ms)) {
+            ShapedIcon(
+                icon = recommendationIcon(rec.kind),
+                container = colors.primary,
+                content = colors.onPrimary,
+                size = 40.dp,
+            )
+            Text(
+                listOfNotNull(recommendationKindLabel(rec.kind), rec.course).joinToString(" · "),
+                style = MaterialTheme.typography.labelLargeEmphasized,
+                color = colors.onPrimaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text(
+                rec.title,
+                // Long assignment names step down a size instead of wrapping into a wall of display type.
+                style = if (rec.title.length > 48) MaterialTheme.typography.headlineSmallEmphasized
+                else MaterialTheme.typography.headlineMediumEmphasized,
+            )
+            RecommendationMetadata(
+                timing = recTime(rec, now).orEmpty(),
+                warnings = presentation.warnings,
+                contentColor = colors.onPrimaryContainer,
+                warningColor = colors.onPrimaryContainer,
+            )
+        }
+        RecommendationEvidence(rec, progress, colors.onPrimaryContainer, isLead = true)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (rec.canComplete) {
+                Button(onClick = done, shapes = ButtonDefaults.shapes()) {
+                    Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Text("Done", Modifier.padding(start = ButtonDefaults.IconSpacing))
+                }
+            }
+            TextButton(
+                onClick = toggle,
+                shapes = ButtonDefaults.shapes(),
+                colors = textActionColors,
+                modifier = Modifier.semantics { contentDescription = detailsLabel },
+            ) {
+                Text(if (expanded) "Hide details" else "Details")
+                DisclosureIcon(expanded, Modifier.padding(start = ButtonDefaults.IconSpacing).size(ButtonDefaults.IconSize))
+            }
+            if (!rec.canComplete && !expanded) rec.action?.let { action ->
+                SourceButton(action.label, action.url, uri, textActionColors)
+            }
+        }
+        AnimatedVisibility(visible = expanded, enter = revealEnter(), exit = revealExit()) {
+            RecommendationDetails(rec, presentation, isLead = true, done = done, snooze = snooze, dismiss = dismiss, uri = uri)
+        }
+    }
+}
+
+/** Facts that change what to do now: a room or time change, its confidence, live progress, staleness. */
+@Composable
+private fun RecommendationEvidence(rec: Recommendation, progress: EventProgress?, contentColor: Color, isLead: Boolean) {
+    val room = rec.change?.takeUnless { it.roomMoved }?.location?.takeIf { it.isNotBlank() }
+    val unconfirmed = rec.change?.takeIf { !it.confirmed }
+    if (room == null && rec.change == null && progress == null && !rec.state.isStale) return
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.s), modifier = Modifier.padding(top = Spacing.xs)) {
+        room?.let { IconText(Icons.Outlined.Place, it) }
+        // A change is drawn as blocks; its sentence body would only repeat them.
+        rec.change?.let { ChangeBlocks(it) }
+        unconfirmed?.let {
+            Text(
+                if (it.roomMoved) "Room change inferred · check the course source" else "Change needs confirmation · check the course source",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isLead) contentColor else MaterialTheme.colorScheme.tertiary,
+            )
+        }
+        progress?.let {
+            EventTimeline(it, color = contentColor, trackColor = contentColor.copy(alpha = 0.2f), labelColor = contentColor)
+        }
+        FreshnessLabel(rec.state, null, 0L)
+    }
+}
+
+/** Body, reason and the actions that would otherwise repeat under every collapsed row. */
+@Composable
+private fun RecommendationDetails(
+    rec: Recommendation,
+    presentation: RecommendationPresentation,
+    isLead: Boolean,
+    done: () -> Unit,
+    snooze: () -> Unit,
+    dismiss: () -> Unit,
+    uri: UriHandler,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val accent = if (isLead) colors.onPrimaryContainer else colors.primary
+    val outlinedColors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
+    val outlinedBorder = BorderStroke(1.dp, if (isLead) colors.onPrimaryContainer.copy(alpha = 0.5f) else colors.outlineVariant)
+    val time = rec.dueAt ?: rec.startsAt
+    val repeatsTime = (time != null && rec.timeLabel != null && presentation.body.startsWith(rec.timeLabel) && presentation.body.length < 48) ||
+        (rec.scheduledDate != null && presentation.body == "Listed for ${rec.scheduledDate}.")
+    val showBody = presentation.body.isNotBlank() && !repeatsTime && !(rec.kind == "change" && rec.change != null)
+    val showReason = rec.reason.isNotBlank() && rec.reason != presentation.body
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.ms)) {
+        if (showBody || showReason) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                if (showBody) Text(presentation.body, style = MaterialTheme.typography.bodyMedium)
+                if (showReason) {
+                    Text(
+                        rec.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isLead) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (rec.canComplete) {
+                // The lead already shows Done beside its disclosure; secondary rows offer it here.
+                if (!isLead) {
+                    FilledTonalButton(onClick = done, shapes = ButtonDefaults.shapes()) {
+                        Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                        Text("Done", Modifier.padding(start = ButtonDefaults.IconSpacing))
+                    }
+                }
+                OutlinedButton(
+                    onClick = snooze,
+                    shapes = ButtonDefaults.shapes(),
+                    colors = outlinedColors,
+                    border = outlinedBorder,
+                ) {
+                    Icon(Icons.Outlined.Snooze, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Text("1 h", Modifier.padding(start = ButtonDefaults.IconSpacing).semantics { contentDescription = "Snooze for an hour" })
+                }
+            } else {
+                OutlinedButton(onClick = dismiss, shapes = ButtonDefaults.shapes(), colors = outlinedColors, border = outlinedBorder) {
+                    Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Text("Dismiss", Modifier.padding(start = ButtonDefaults.IconSpacing))
+                }
+            }
+            rec.action?.let { a -> SourceButton(a.label, a.url, uri, ButtonDefaults.textButtonColors(contentColor = accent)) }
+        }
+    }
+}
+
+@Composable
+private fun SourceButton(label: String, url: String, uri: UriHandler, colors: androidx.compose.material3.ButtonColors) {
+    TextButton(onClick = { uri.openUri(url) }, shapes = ButtonDefaults.shapes(), colors = colors) {
+        Text(label)
+        Icon(
+            Icons.AutoMirrored.Outlined.OpenInNew,
+            contentDescription = null,
+            modifier = Modifier.padding(start = ButtonDefaults.IconSpacing).size(ButtonDefaults.IconSize),
+        )
+    }
 }
 
 private fun recommendationKindLabel(kind: String): String = when (kind) {
@@ -619,15 +689,14 @@ private fun recommendationIcon(kind: String): ImageVector = when (kind) {
     else -> Icons.Outlined.Schedule
 }
 
+/** Revealed under a row being swiped; it matches the row's own shape so no corner shows through. */
 @Composable
-private fun SwipeBackground(direction: SwipeToDismissBoxValue, canComplete: Boolean = true) {
+private fun SwipeBackground(direction: SwipeToDismissBoxValue, shape: Shape, canComplete: Boolean = true) {
     if (direction != SwipeToDismissBoxValue.EndToStart) return
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        ),
-        shape = MaterialTheme.shapes.large,
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = shape,
         modifier = Modifier.fillMaxSize(),
     ) {
         Box(Modifier.fillMaxSize().padding(horizontal = Spacing.l), contentAlignment = Alignment.CenterEnd) {
@@ -648,45 +717,44 @@ private fun LazyListScope.dueSoon(
 ) {
     val items = due.items.filter { item -> item.isDue && recommendations.none { it.represents(item) } }
     if (items.isEmpty() && due.error.isNullOrBlank()) return
+    val shown = items.take(6)
     item(key = "due-header") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionHeader("Due · next ${due.windowDays} days", Modifier.weight(1f))
-            FreshnessLabel(state, observedAt, now, Modifier.padding(end = Spacing.m, top = Spacing.m))
-        }
+        SectionHeader("Due · next ${due.windowDays} days", trailing = if (state.isStale) {
+            { FreshnessLabel(state, observedAt, now, Modifier.padding(end = Spacing.ms)) }
+        } else null)
     }
     if (items.isEmpty()) item(key = "due-empty") { EmptyNote(due.error ?: "Nothing due this week.") }
-    itemsIndexed(items.take(6), key = { _, item -> "due:${item.key}" }) { index, item ->
+    itemsIndexed(shown, key = { _, item -> "due:${item.key}" }) { index, item ->
         val uri = LocalUriHandler.current
         val url = item.url ?: item.links.firstOrNull()?.url
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = dueGroupShape(index, items.size.coerceAtMost(6)),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = 1.dp)
-                .animateItem(
-                    fadeInSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-                    placementSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-                    fadeOutSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-                ),
+            shape = groupedShape(index, shown.size),
+            modifier = Modifier.listItemMotion(this).fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.joined / 2),
         ) {
-            androidx.compose.foundation.layout.BoxWithConstraints(
-                Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
+            BoxWithConstraints(
+                Modifier.fillMaxWidth().padding(horizontal = Spacing.inset, vertical = Spacing.rowVertical),
             ) {
-                val compact = maxWidth < 400.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.2f
+                // Narrow or enlarged text: the countdown wraps under the title instead of squeezing it.
+                val compact = maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.3f
                 val sourceLabel = item.links.firstOrNull { it.url == url }?.label ?: "LEARN"
                 val relativeColor = if (item.startsAt - now < 24 * HOUR) {
                     MaterialTheme.colorScheme.onSurface
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
+                val summary: @Composable () -> Unit = {
+                    Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (compact) {
                     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        Text(item.title, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        summary()
                         Text(Format.relative(item.startsAt, now), style = MaterialTheme.typography.labelLargeEmphasized, color = relativeColor)
                         if (url != null) DueSourceButton(item.title, url, sourceLabel, uri)
                     }
@@ -694,15 +762,10 @@ private fun LazyListScope.dueSoon(
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.m),
                     ) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            Text(item.title, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                listOfNotNull(item.course, Format.dayTime(item.startsAt)).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            summary()
                             if (url != null) DueSourceButton(item.title, url, sourceLabel, uri)
                         }
                         Text(
@@ -716,11 +779,12 @@ private fun LazyListScope.dueSoon(
             }
         }
     }
-    if (items.size > 6) item { EmptyNote("+${items.size - 6} more in Calendar") }
+    if (items.size > 6) item(key = "due-more") { EmptyNote("+${items.size - 6} more in Calendar") }
 }
 
+/** A link aligned with the row text: no leading inset, but still a full-height touch target. */
 @Composable
-private fun DueSourceButton(title: String, url: String, sourceLabel: String, uri: androidx.compose.ui.platform.UriHandler) {
+private fun DueSourceButton(title: String, url: String, sourceLabel: String, uri: UriHandler) {
     TextButton(
         onClick = { uri.openUri(url) },
         shapes = ButtonDefaults.shapes(),
@@ -728,14 +792,12 @@ private fun DueSourceButton(title: String, url: String, sourceLabel: String, uri
         modifier = Modifier.semantics { contentDescription = "Open $title in $sourceLabel" },
     ) {
         Text(sourceLabel)
-        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(start = Spacing.xs))
+        Icon(
+            Icons.AutoMirrored.Outlined.OpenInNew,
+            contentDescription = null,
+            modifier = Modifier.padding(start = ButtonDefaults.IconSpacing).size(ButtonDefaults.IconSize),
+        )
     }
-}
-
-private fun dueGroupShape(index: Int, count: Int): RoundedCornerShape {
-    val top = if (index == 0) 20.dp else 4.dp
-    val bottom = if (index == count - 1) 20.dp else 4.dp
-    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 
 private fun kindLabel(kind: String?): String = when (kind) {

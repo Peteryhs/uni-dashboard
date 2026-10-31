@@ -31,6 +31,9 @@ import { dismissAlert, syncAlertSummary } from './alert-summary.mjs';
 import { getCachedWeather, syncWeather } from './weather-cache.mjs';
 import { isGuidanceRoute, handleGuidanceRoute, readGuidanceJson } from './guidance-api.mjs';
 import { buildRecommendations } from './recommendations.mjs';
+import { TransitStore, sqliteTransitTransaction } from './transit-store.mjs';
+import { TransitEngine } from './transit.mjs';
+import { isTransitRoute, handleTransitRoute } from './transit-api.mjs';
 import { getSetupStatus, SETUP_SCHEDULE_CHANGED_AT, SETUP_LEARN_CHANGED_AT } from './setup-status.mjs';
 import { buildHealth } from './health.mjs';
 import { feedSourceId } from './feed-settings.mjs';
@@ -84,6 +87,7 @@ export function createServer({
   automaticPolling = true,
 }) {
   const started = Date.now();
+  const transit = store.db ? new TransitEngine(new TransitStore((sql, ...args) => store.db.prepare(sql).all(...args), work => sqliteTransitTransaction(store.db, work))) : null;
   let polling = false;
   const startAiJob = (job) => {
     void processAiJob(store, job).catch((error) => log(`[ai-job] ${job.kind} ${error.message}`));
@@ -99,6 +103,7 @@ export function createServer({
     polling = true;
     const receipts = [];
     try {
+      if (transit && sources === SOURCES) await transit.tick(now);
       const { ready, jobs } = await reconcilePolling(store, sources, now);
       for (const source of ready) receipts.push(await pollSource(store, source, { jobs, log }));
       // Same retention sweep as the Worker cron: receipts are an audit trail, not a history.
@@ -284,7 +289,12 @@ export function createServer({
       // dashboard-family GET put a whole poll's CPU inside the read, which is what pushed the
       // deployed Worker over its per-invocation CPU budget (503 exceededCpu) and burned rows read.
       if (isGuidanceRoute(url.pathname)) {
-        const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store, startAiJob });
+        const result = await handleGuidanceRoute({ url, method: req.method, readBody: () => readGuidanceJson(req), store, startAiJob, transit });
+        return send(result.status, result.body);
+      }
+      if (isTransitRoute(url.pathname)) {
+        const result = await handleTransitRoute({ url, method: req.method, readBody: () => readJsonBody(req), transit, store });
+        if (automaticPolling && req.method !== 'GET') void transit?.tick().catch(error => log(`[transit] ${error.message}`));
         return send(result.status, result.body);
       }
       if (url.pathname === '/v1/dashboard') {

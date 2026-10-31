@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -83,13 +84,22 @@ import dev.peteryhs.unidash.ui.PredictiveNavigation
 import dev.peteryhs.unidash.ui.LocalNavigationActive
 import dev.peteryhs.unidash.ui.SectionHeader
 import dev.peteryhs.unidash.ui.setup.MobileSetupGuide
+import dev.peteryhs.unidash.ui.DisclosureIcon
+import dev.peteryhs.unidash.ui.disclosureToggle
+import dev.peteryhs.unidash.ui.theme.Corners
 import dev.peteryhs.unidash.ui.theme.LocalStaleColors
 import dev.peteryhs.unidash.ui.theme.Spacing
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.LinkOff
 
 enum class SettingsDestination(val title: String) {
     Overview("Settings"),
     Connections("Connections"),
     Notifications("Notifications"),
+    Transit("Transit"),
     Status("Status"),
     About("About"),
 }
@@ -198,6 +208,7 @@ fun SettingsScreen(
                         },
                     )
                     SettingsDestination.Status -> statusSettings(snapshot, now, vm::refreshSources)
+                    SettingsDestination.Transit -> item(key = "settings:transit") { TransitSettings(vm, snapshot) }
                     SettingsDestination.About -> aboutSettings { uri.openUri("https://github.com/Peteryhs/uni-dashboard") }
                 }
             }
@@ -241,6 +252,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsOverview(
             "Notifications",
             "Class reminders and app alerts",
             Icons.Outlined.NotificationsActive,
+        ),
+        SettingsOverviewRow(
+            SettingsDestination.Transit,
+            "Transit",
+            "Saved commutes and walking buffers",
+            Icons.Outlined.DirectionsBus,
         ),
         SettingsOverviewRow(
             SettingsDestination.Status,
@@ -293,6 +310,8 @@ private fun SettingsIconBacking(destination: SettingsDestination, icon: ImageVec
     val (container, content) = when (destination) {
         SettingsDestination.Connections -> colors.primaryContainer to colors.onPrimaryContainer
         SettingsDestination.Notifications -> colors.secondaryContainer to colors.onSecondaryContainer
+        // Neighbours never share a backing colour: primary, secondary, primary, tertiary, neutral.
+        SettingsDestination.Transit -> colors.primaryContainer to colors.onPrimaryContainer
         SettingsDestination.Status -> colors.tertiaryContainer to colors.onTertiaryContainer
         SettingsDestination.About -> colors.surfaceContainerHighest to colors.onSurface
         SettingsDestination.Overview -> colors.surfaceContainerHighest to colors.onSurface
@@ -321,20 +340,29 @@ private fun statusTeaser(snapshot: Snapshot, now: Long): String {
     }
 }
 
-private data class SettingsAction(
+/** What a row does when tapped; the trailing icon tells people before they tap. */
+internal enum class SettingsActionKind {
+    /** Opens a sheet or dialog inside the app: no trailing icon. */
+    InApp,
+    /** Leaves the app for the browser or Android settings. */
+    External,
+}
+
+internal data class SettingsAction(
     val title: String,
     val detail: String,
     val icon: ImageVector,
     val onClick: () -> Unit,
     val enabled: Boolean = true,
     val destructive: Boolean = false,
+    val kind: SettingsActionKind = SettingsActionKind.InApp,
 )
 
 @Composable
-private fun SettingsActionGroup(rows: List<SettingsAction>) {
+internal fun SettingsActionGroup(rows: List<SettingsAction>) {
     val colors = MaterialTheme.colorScheme
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         rows.forEachIndexed { index, row ->
@@ -354,15 +382,32 @@ private fun SettingsActionGroup(rows: List<SettingsAction>) {
                     if (row.destructive) Icon(row.icon, contentDescription = null, tint = colors.error)
                     else Icon(row.icon, contentDescription = null)
                 },
-                trailingContent = {
-                    if (row.destructive) Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = colors.error)
-                    else Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null)
-                },
+                trailingContent = if (row.kind == SettingsActionKind.External) {
+                    {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.OpenInNew,
+                            contentDescription = "Opens outside the app",
+                            tint = colors.onSurfaceVariant,
+                        )
+                    }
+                } else null,
                 colors = ListItemDefaults.segmentedColors(containerColor = colors.surfaceContainerLow),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
+}
+
+/** A single grouped surface for content that is not itself a tap target. */
+@Composable
+internal fun SettingsPanel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(Corners.group),
+        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.gutter),
+        content = content,
+    )
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
@@ -376,15 +421,16 @@ private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
 ) {
     item { SectionHeader("Connection") }
     item {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
-        ) {
-            Column(Modifier.padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        SettingsPanel {
+            Column(
+                Modifier.padding(horizontal = Spacing.inset, vertical = Spacing.rowVertical),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
                 Text("Dashboard address", style = MaterialTheme.typography.titleMedium)
-                Text(baseUrl ?: "Not connected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Selectable, so the address can be copied into a browser or shared with the owner.
+                SelectionContainer {
+                    Text(baseUrl ?: "Not connected", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
@@ -410,6 +456,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
                     icon = Icons.Outlined.Link,
                     onClick = { baseUrl?.let(onReauthenticate) },
                     enabled = baseUrl != null && !browserBusy,
+                    kind = SettingsActionKind.External,
                 ),
             ),
         )
@@ -425,7 +472,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.connectionsSettings(
                     } else {
                         "Removes the saved service token and cached dashboard data."
                     },
-                    icon = Icons.Outlined.Link,
+                    icon = Icons.Outlined.LinkOff,
                     onClick = onDisconnect,
                     destructive = true,
                 ),
@@ -445,12 +492,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
 ) {
     item { SectionHeader("Activity tracking") }
     item {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
-        ) {
+        SettingsPanel {
             ListItem(
                 headlineContent = { Text("Track imminent or current activity", style = MaterialTheme.typography.titleMedium) },
                 supportingContent = {
@@ -485,6 +527,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
                             detail = "Allow the countdown in the status bar. Class updates still appear as regular notifications while this is off.",
                             icon = Icons.Outlined.NotificationsActive,
                             onClick = onPromotedNotifications,
+                            kind = SettingsActionKind.External,
                         ),
                     )
                 }
@@ -498,6 +541,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
                         },
                         icon = Icons.Outlined.NotificationsActive,
                         onClick = onNotifications,
+                        // The first request is an in-app permission prompt; afterwards it opens system settings.
+                        kind = if (notificationsOn || Build.VERSION.SDK_INT < 33) SettingsActionKind.External else SettingsActionKind.InApp,
                     ),
                 )
                 if (!exactAlarms) {
@@ -507,6 +552,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.notificationsSettings
                             detail = "Without exact-alarm access, reminders can arrive a few minutes late.",
                             icon = Icons.Outlined.Schedule,
                             onClick = onExactAlarms,
+                            kind = SettingsActionKind.External,
                         ),
                     )
                 }
@@ -559,11 +605,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
         Surface(
             color = container,
             contentColor = onContainer,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m),
+            shape = RoundedCornerShape(Corners.group),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter),
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(Spacing.m),
+                Modifier.fillMaxWidth().padding(Spacing.inset),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.m),
                 verticalAlignment = Alignment.Top,
             ) {
@@ -593,12 +639,21 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
         }
     }
 
-    item { SectionHeader("Sources") }
+    // The page's one source-update action sits with the list it updates.
     item {
-        Column(Modifier.fillMaxWidth().padding(horizontal = Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        SectionHeader("Sources") {
             RefreshControl(label = "Refresh sources", refreshing = snapshot.manualRefreshing,
-                onRefresh = onRefreshSources, showLabel = true)
-            snapshot.sourceRefreshResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                onRefresh = onRefreshSources, showLabel = true, modifier = Modifier.padding(end = Spacing.ms))
+        }
+    }
+    snapshot.sourceRefreshResult?.let { result ->
+        item(key = "source-refresh-result") {
+            Text(
+                result,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.gutter, vertical = Spacing.xs),
+            )
         }
     }
     if (health != null && health.sources.isEmpty()) {
@@ -609,13 +664,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusSettings(snapsh
     item {
         var detailsExpanded by rememberSaveable { mutableStateOf(false) }
         Column(
-            modifier = Modifier.fillMaxWidth().animateContentSize(),
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.s)
+                .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
         ) {
             ListItem(
                 headlineContent = { Text("How source status works") },
                 supportingContent = { Text("Runtime details and freshness windows") },
-                trailingContent = { Text(if (detailsExpanded) "Hide" else "Details") },
-                modifier = Modifier.clickable(role = Role.Button) { detailsExpanded = !detailsExpanded },
+                trailingContent = { DisclosureIcon(detailsExpanded) },
+                modifier = Modifier.disclosureToggle(detailsExpanded, { detailsExpanded = !detailsExpanded }),
             )
             if (detailsExpanded) {
                 health?.runtime?.let { runtime ->
@@ -720,24 +776,18 @@ private fun HealthSourceRow(source: SourceHealth, now: Long) {
                         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if (hasCheckDetails) {
-                    TextButton(
-                        onClick = { checkDetailsExpanded = !checkDetailsExpanded },
-                        modifier = Modifier.semantics {
-                            contentDescription = if (checkDetailsExpanded) {
-                                "Hide full check details for ${source.name}"
-                            } else {
-                                "Show full check details for ${source.name}"
-                            }
-                        },
-                    ) {
-                        Text(if (checkDetailsExpanded) "Hide" else "Details")
-                    }
-                }
             }
         },
-        trailingContent = { Text(label, style = MaterialTheme.typography.labelMedium, color = tone) },
-        modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+        // Status reads at a glance; rows with saved check details expand in place on tap.
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = tone)
+                if (hasCheckDetails) DisclosureIcon(checkDetailsExpanded, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        modifier = Modifier
+            .let { if (hasCheckDetails) it.disclosureToggle(checkDetailsExpanded, { checkDetailsExpanded = !checkDetailsExpanded }) else it }
+            .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
     )
 }
 
@@ -748,14 +798,9 @@ private fun ageAgo(since: Long, now: Long): String {
 
 private fun androidx.compose.foundation.lazy.LazyListScope.aboutSettings(onSource: () -> Unit) {
     item {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.s),
-        ) {
+        SettingsPanel(Modifier.padding(vertical = Spacing.s)) {
             Row(
-                Modifier.fillMaxWidth().padding(Spacing.m),
+                Modifier.fillMaxWidth().padding(Spacing.inset),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.m),
                 verticalAlignment = Alignment.Top,
             ) {
@@ -769,7 +814,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.aboutSettings(onSourc
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text("Created by Peter (Peteryhs)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = onSource) { Text("View source on GitHub") }
+                    // Text-aligned link: no leading inset, still a full touch target.
+                    TextButton(onClick = onSource, contentPadding = PaddingValues(horizontal = 0.dp, vertical = Spacing.s)) {
+                        Text("View source on GitHub")
+                        Icon(
+                            Icons.AutoMirrored.Outlined.OpenInNew,
+                            contentDescription = null,
+                            modifier = Modifier.padding(start = Spacing.s).size(18.dp),
+                        )
+                    }
                 }
             }
         }

@@ -487,14 +487,22 @@ export function recommendationsFromData({ calendar, syllabi = [], food = null, m
     diagnostics: { version: 1, policy: POLICY, summary, candidates: diagnosticsCandidates } });
 }
 
-export async function buildRecommendations(store, { now = Date.now(), freshnessNow = now, section = null, group = null, weather = null } = {}) {
+export async function buildRecommendations(store, { now = Date.now(), freshnessNow = now, section = null, group = null, weather = null, transit = null } = {}) {
   const date = day(now);
   const [calendar, syllabi, saved, foodRaw, menu] = await Promise.all([
     buildCalendar(store, { start: shift(date, -1), days: 16, section, group, now: freshnessNow, includeSyllabus: false }), listCourseSyllabi(store),
     store.getSetting(ACTION_KEY), store.getSetting('FOOD_AI_RECOMMENDATION_JSON'),
     store.rows('menu_item', { where: 'service_date = ?', params: [date], limit: MENU_ROW_LIMIT }),
   ]);
-  return recommendationsFromData({ calendar, syllabi, actions: json(saved, {}), food: json(foodRaw, null), menu, weather, now, freshnessNow });
+  const result = recommendationsFromData({ calendar, syllabi, actions: json(saved, {}), food: json(foodRaw, null), menu, weather, now, freshnessNow });
+  if (transit) {
+    try {
+      const { transitTarget } = await import('./transit.mjs');
+      const events = calendar.days.flatMap(d => d.events).map(e => transitTarget({ ...calendar, days: [{ events: [e] }] }, now)).filter(Boolean);
+      result.transit = await transit.view({ now, target: transitTarget(calendar, now), events });
+    } catch { result.transit = null; } // Transit downtime must not take down daily guidance.
+  }
+  return result;
 }
 
 /** Bounded account-wide state survives browser changes and is reusable by Android. */

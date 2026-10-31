@@ -33,6 +33,8 @@ import dev.peteryhs.unidash.ui.Format
 import dev.peteryhs.unidash.ui.ScreenScaffold
 import dev.peteryhs.unidash.ui.ScreenHeaderSize
 import dev.peteryhs.unidash.ui.SectionHeader
+import dev.peteryhs.unidash.ui.DisclosureIcon
+import dev.peteryhs.unidash.ui.disclosureToggle
 import dev.peteryhs.unidash.ui.theme.Spacing
 import kotlin.math.roundToInt
 
@@ -82,17 +84,9 @@ fun RecommendationExplanationScreen(
                             }
                         } else Text("Inputs that affected this check")
                     },
-                    trailingContent = {
-                        TextButton(
-                            onClick = { warningsExpanded = !warningsExpanded },
-                            modifier = Modifier.semantics {
-                                contentDescription = if (warningsExpanded) "Hide recommendation warnings" else "Show recommendation warnings"
-                            },
-                        ) {
-                            Text(if (warningsExpanded) "Hide" else "Details")
-                        }
-                    },
-                    modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+                    trailingContent = { DisclosureIcon(warningsExpanded) },
+                modifier = Modifier.disclosureToggle(warningsExpanded, { warningsExpanded = !warningsExpanded })
+                    .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
                 )
             }
         }
@@ -129,17 +123,9 @@ fun RecommendationExplanationScreen(
                         }
                     } else Text("When changes and work can enter suggestions")
                 },
-                trailingContent = {
-                    TextButton(
-                        onClick = { rulesExpanded = !rulesExpanded },
-                        modifier = Modifier.semantics {
-                            contentDescription = if (rulesExpanded) "Hide timing rule details" else "Show timing rule details"
-                        },
-                    ) {
-                        Text(if (rulesExpanded) "Hide" else "Details")
-                    }
-                },
-                modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+                trailingContent = { DisclosureIcon(rulesExpanded) },
+                modifier = Modifier.disclosureToggle(rulesExpanded, { rulesExpanded = !rulesExpanded })
+                    .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
             )
         }
 
@@ -173,17 +159,9 @@ private fun LazyListScope.rankingDisclosure() {
                     )
                 } else Text("Urgency, item type and course balance")
             },
-            trailingContent = {
-                TextButton(
-                    onClick = { rankingExpanded = !rankingExpanded },
-                    modifier = Modifier.semantics {
-                        contentDescription = if (rankingExpanded) "Hide ranking details" else "Show ranking details"
-                    },
-                ) {
-                    Text(if (rankingExpanded) "Hide" else "Details")
-                }
-            },
-            modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+            trailingContent = { DisclosureIcon(rankingExpanded) },
+                modifier = Modifier.disclosureToggle(rankingExpanded, { rankingExpanded = !rankingExpanded })
+                    .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
         )
     }
 }
@@ -233,16 +211,8 @@ private fun CandidateDecisionRow(candidate: RecommendationDecision, diagnostics:
                 }
             }
         },
-        trailingContent = {
-            TextButton(
-                onClick = { detailsExpanded = !detailsExpanded },
-                modifier = Modifier.semantics {
-                    contentDescription = if (detailsExpanded) "Hide details for ${candidate.title}" else "Show details for ${candidate.title}"
-                },
-            ) {
-                Text(if (detailsExpanded) "Hide" else "Details")
-            }
-        },
-        modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+        trailingContent = { DisclosureIcon(detailsExpanded) },
+                modifier = Modifier.disclosureToggle(detailsExpanded, { detailsExpanded = !detailsExpanded })
+                    .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
     )
 }
