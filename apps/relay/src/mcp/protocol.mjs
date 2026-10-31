@@ -28,19 +28,24 @@ const MODERN_CLIENT_CAPABILITIES_KEY = 'io.modelcontextprotocol/clientCapabiliti
 const MODERN_SERVER_INFO_KEY = 'io.modelcontextprotocol/serverInfo';
 
 const INSTRUCTIONS = [
-  'Read-only access to one University of Waterloo student dashboard: that dashboard\'s timetable,',
-  'deadlines, reviewed syllabus dates, dining menus, saved dining ranking, live study-space',
-  'occupancy, campus service notices, weather, and collection health.',
+  'Access to one University of Waterloo student dashboard: that dashboard\'s timetable, deadlines,',
+  'reviewed syllabus dates, dining menus, saved dining ranking, live study-space occupancy, campus',
+  'service notices, weather, saved transit departures, and collection health.',
   '',
-  'Data is whatever the dashboard last collected from its configured sources; nothing here polls a',
-  'source, writes a row, dismisses an alert, or starts an AI ranking job. Every card and row carries',
+  'Data is whatever the dashboard last collected from its configured sources; no tool polls a',
+  'source or starts an AI ranking job. Every card and row carries',
   'a freshness envelope: observed_at / valid_until are epoch milliseconds, and state is one of live,',
   'ageing, stale, dead, empty, degraded or failed. Treat stale/dead data as historical, not current,',
   'and check get_source_health before concluding that an empty result means "nothing is happening".',
   '',
+  'Every tool but mark_recommendation reads. mark_recommendation writes the same account-wide action',
+  'the dashboard\'s own buttons write (done, undo, snooze, dismiss) and is refused unless the',
+  'credential carries the mcp:write scope; an item marked done leaves the list until you undo it, so',
+  'confirm with the person you are working for before completing or dismissing anything.',
+  '',
   'Dates are YYYY-MM-DD and default to today in America/Toronto. Prefer get_dashboard for an',
-  'overview, list_recommendations for priority order, and search_stored_items for a specific',
-  'keyword. Do not assume a posted menu means an outlet is open.',
+  'overview, list_recommendations for priority order, get_transit for saved commute departures, and',
+  'search_stored_items for a specific keyword. Do not assume a posted menu means an outlet is open.',
 ].join('\n');
 
 export function rpcError(id, code, message, data) {

@@ -9,6 +9,38 @@ Chronological record of architectural changes, technical decisions, benchmarks, 
 
 ---
 
+## 2026-10-31 — one write tool, one scope, and transit over MCP
+
+The MCP surface was read-only on purpose, so an agent could tell him ECE 105 Assignment #5 was due at
+midnight and then could not tick it off. The ask was narrower than "let the agent write": complete a
+recommendation, and expose the new transit departures. So the server gained exactly one mutating tool
+behind a scope of its own, not a general write lane.
+
+`mark_recommendation` (done / undo / snooze / dismiss) calls `saveRecommendationAction`, the same
+function the dashboard's own buttons call, so the app and the agent cannot disagree about what is
+complete. It writes the same `RECOMMENDATION_ACTIONS_JSON` setting row, every action has an `undo`,
+and the engine's rules still apply: only task and learning items can be completed, and a snooze has
+to end inside seven days. `get_transit` builds its view the way `GET /v1/transit` does — today's
+calendar, `transitTarget`, then `transit.view` — and `list_recommendations` now passes the transit
+engine through, so the leave-by block the app shows is in the feed the agent reads.
+
+Scopes split into `mcp:read` and `mcp:write`. The check lives in `callTool`, the single point the
+Worker, the local relay and the stdio bridge all pass through, and `mcp:read` stays the default, so
+every key minted before today keeps exactly its old authority, while a read key that calls the write
+tool is refused with the scope it needs named. Settings → MCP → Create a key gained an Access selector
+(Read only / Read and write) because the alternative was hand-posting to `/v1/mcp-tokens` to get a key
+that can complete something.
+
+Rejected: a general write lane that also lets the agent dismiss alerts. An alert is a safety notice,
+and that was the deliberate line while the server was read-only; it stays.
+
+Verification: 556/556 tests passed, 7 of them new (a read key is refused and writes nothing, the
+done/undo round-trip, only tasks can be completed, snooze bounded to seven days, a task title rejected
+where an id is required, transit absent vs present as the engine view, and a write-scoped key storing
+both scopes). `npm run web:typecheck`, `npm run web:build` and `npm run worker:check` all clean, with
+the bundle reporting the TRANSIT durable object and `MCP_AUTH_MODE=both`. Not deployed at the time of
+writing: the Worker needs a push, and the agent's key has to be re-minted with the write scope.
+
 ## 2026-10-28 — the dining advisor that spent its whole budget thinking
 
 The AI dining card went `attempt_limited` / `repeated_failures` with `response_chars: 0` and

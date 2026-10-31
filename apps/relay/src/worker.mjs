@@ -339,6 +339,9 @@ async function handleFetch(request, env, ctx) {
       authKind: mcpAuth.kind,
       tokenId: mcpAuth.tokenId,
       scopes: mcpAuth.scopes,
+      // The transit tool reads the durable object the app reads; without it the tool says so plainly
+      // instead of inventing departures.
+      transit: cloudTransit(env),
       runtime: {
         target: 'cloudflare',
         uptime_scope: 'isolate',

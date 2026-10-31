@@ -1,16 +1,19 @@
 # MCP server
 
 An AI agent can query this dashboard directly over the Model Context Protocol: the same collected,
-ranked and freshness-scored data the web and Android clients read, exposed as ten read-only tools.
+ranked and freshness-scored data the web and Android clients read, exposed as thirteen tools — twelve
+that read and one that changes the state of a single recommendation.
 
 The design has three constraints, and most of this document is the consequence of them:
 
 1. **It must be a standard MCP server.** It speaks both live protocol eras, because the current
    specification (`2026-07-28`) is stateless and dropped `initialize`, while nearly every deployed
    client still opens with the `2025-11-25` handshake.
-2. **It must be read-only.** No tool polls a source, starts an AI job, writes a row, dismisses an
-   alert or completes a task. An agent that can only read cannot corrupt the dashboard while you
-   are not looking.
+2. **Reads are the default and writes are a separate, explicitly scoped privilege.** No tool polls a
+   source or starts an AI job. Exactly one tool mutates saved state —
+   `mark_recommendation`, which runs the same `saveRecommendationAction` the app's own buttons use —
+   and it refuses unless the credential carries the `mcp:write` scope. A key minted before that
+   scope existed, or any key minted as read-only, still cannot change a row.
 3. **It is hosted behind Cloudflare Access.** Access is built for humans with browsers; an agent is
    a machine that must stay connected for months. That mismatch is the real design problem, and it
    is analysed in [Long-term connectivity](#long-term-connectivity-behind-cloudflare-access).
@@ -23,9 +26,9 @@ The design has three constraints, and most of this document is the consequence o
 | Transport | Streamable HTTP, **stateless**: one POST per JSON-RPC message, one `application/json` response, no session, no GET stream |
 | Protocol | dual-era: modern `2026-07-28` (`_meta` per request) and legacy `2024-11-05` … `2025-11-25` (`initialize`) |
 | Discovery | `GET /.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`) |
-| Tools | 10, all annotated read-only |
+| Tools | 13: 12 read-only, 1 write (`mark_recommendation`, needs `mcp:write`) |
 | Auth | Cloudflare Access assertion and/or application API keys (`MCP_AUTH_MODE`); hashed, scoped, revocable |
-| Data cost | D1 reads only, bounded per tool; no writes, no polling, no model calls |
+| Data cost | D1 reads only; the single write tool writes one setting row. No polling, no model calls |
 | Body cap | 256 KB per JSON-RPC message |
 
 The endpoint is deliberately **not** served through the SPA asset fallback: `/mcp` and
@@ -148,14 +151,14 @@ client that sends `_meta` gets modern behaviour. No flag, no separate endpoint.
 
 ## Tools
 
-All ten tools are read-only (`readOnlyHint: true`, no destructive/idempotent side effects) and
-delegate to the same builders the `/v1` routes use, so an agent cannot describe data the app
-contradicts.
+Twelve tools are read-only (`readOnlyHint: true`). The thirteenth, `mark_recommendation`, declares
+`readOnlyHint: false` and needs the `mcp:write` scope. Every tool delegates to the same builder the
+`/v1` routes use, so an agent cannot describe data the app contradicts.
 
 | Tool | Answers | Args | Source |
 |---|---|---|---|
 | `get_dashboard` | What needs attention now, already ranked | — | `buildDashboard` (5 cards) |
-| `list_recommendations` | Priority-ordered, explainable recommendations | `section`, `group`, `kind`, `limit`, `include_diagnostics` | recommendation engine |
+| `list_recommendations` | Priority-ordered, explainable recommendations, plus the transit block when the deployment has it | `section`, `group`, `kind`, `limit`, `include_diagnostics` | recommendation engine |
 | `get_calendar` | Classes, exams, deadlines, syllabus dates, office hours | `start`, `days` (1–31), `section`, `group`, `include_syllabus` | unified calendar |
 | `get_menu` | Posted dishes, outlets, stations, dietary tags, allergens | `date` | saved `menu_item` rows |
 | `get_food_recommendation` | Saved personalized dining ranking and its status | `date` | AI result cache (never runs the job) |
@@ -164,6 +167,8 @@ contradicts.
 | `get_weather` | Cached hourly forecast and current temperature | `hours` (1–48) | weather cache |
 | `get_source_health` | Per-source readiness, freshness, failures, next attempt | — | run receipts + registry |
 | `search_stored_items` | Keyword search over saved events, latest menu and notices | `query`, `kinds`, `limit` | stored rows directly |
+| `get_transit` | Saved GRT/ION commutes: departures, prediction state, alerts, the target class and leave-by guidance | — | transit durable object, built the same way as `GET /v1/transit` |
+| `mark_recommendation` | **Writes.** Completes, restores, snoozes or dismisses one recommendation | `id`, `action`, `until` | `saveRecommendationAction` — **needs `mcp:write`** |
 
 Data conventions the instructions give the model, and which the tools preserve:
 
@@ -175,7 +180,17 @@ Data conventions the instructions give the model, and which the tools preserve:
 
 Safety properties worth stating plainly:
 
-- **No writes.** Discord-style "just let the agent dismiss alerts" is deliberately not exposed.
+- **One write, one scope.** `mark_recommendation` is the only mutating tool. It is refused before
+  anything is written unless the credential carries `mcp:write`, and the check lives in `callTool`,
+  the single point the Worker, the local relay and the stdio bridge all pass through — so `readOnlyHint`
+  is a hint for humans, not the enforcement.
+- **A write is the app's own write, and it is reversible.** The tool calls `saveRecommendationAction`,
+  the same function the dashboard's buttons call, so the two cannot disagree; every action has an
+  `undo`, and `destructiveHint` stays false for that reason. Anything that cannot be undone — deleting
+  a commute, revoking a key, editing credentials — stays out of the MCP surface on purpose.
+- **Dismissing an alert is still not exposed.** "Just let the agent dismiss alerts" was rejected when
+  the server was read-only, and that judgement has not changed: an alert is a safety notice, and a
+  model that can silence one is a model that can hide a network outage.
 - **No polling or AI from a read.** A tool call spends D1 reads only, which keeps it inside a
   Worker's per-invocation budget; the cron remains the only poller.
 - **Bounded inputs.** Every argument is validated by a zod schema (the same declaration generates
@@ -365,11 +380,15 @@ Operating rules:
 - **Rotate quarterly**: mint a second key with the same name, deploy it to the agent, verify, then
   revoke the old one. There is no overlap requirement because both keys are valid at once.
 - **On a leak**: revoke that key with one `DELETE`, then inspect `mcp_audit` for its `token_id` and
-  the `last_used_at` window. A key is a bearer credential for read-only data — no writes to undo —
-  but the timetable and deadlines are private, so treat it as a privacy incident.
+  the `last_used_at` window. A read key has no writes to undo; a write key could have completed or
+  dismissed something in that window, so read `RECOMMENDATION_ACTIONS_JSON` and use `undo`. Either
+  way the timetable and deadlines are private, so treat it as a privacy incident.
 - **Prefer expiry** for anything automated (`--days 90`). No-expiry keys belong in a secret manager.
-- **Scopes**: only `mcp:read` exists today. Minting rejects unknown scopes rather than silently
-  creating a broader credential; a future write tool gets its own scope.
+- **Scopes**: `mcp:read` (every tool that reads) and `mcp:write` (only `mark_recommendation`).
+  Minting rejects unknown scopes rather than silently creating a broader credential, `mcp:read` is
+  the default, and a key that predates the write scope keeps working with read access alone. In the
+  dashboard, Settings → MCP → Create a key has an **Access** selector; leave it on *Read only*
+  unless the agent is one you would let complete or dismiss something.
 - **Audit**: each `tools/call` writes one `mcp_audit` row with `token_id`, `identity`
   (`token:<name>#<id>`), method, tool and ok/error. Rows are pruned to a rolling 30 days,
   probabilistically, so the table stays bounded without charging a delete to every call.
@@ -601,7 +620,7 @@ Triage:
       calendar. The plaintext is shown once.
 - [ ] `npm run web:build && npm run worker:check && npm run deploy`.
 - [ ] Verify: unauthenticated `POST /mcp` returns JSON `401` (not `302`, not HTML); an authorised
-      request returns `initialize`; `tools/list` lists ten tools; one `tools/call` returns data.
+      request returns `initialize`; `tools/list` lists thirteen tools; one `tools/call` returns data.
 - [ ] Put the rotation date in a calendar.
 
 ## Verification
@@ -641,8 +660,8 @@ attribution by token id, and the local relay adapter.
 
 ## Limits and non-goals
 
-- **Read-only by design.** No tool mutates saved state. If write access is ever wanted, it should be
-  a separate, explicitly scoped tool with its own policy and audit trail.
+- **Reads are the default.** Twelve tools only read. The thirteenth — `mark_recommendation` — writes
+  one setting row, needs its own scope, and is reversible with `undo`.
 - **One shared data space.** The dashboard is one student's instance; every authorised identity sees
   the same data. There is no per-user tool filtering.
 - **No resources, prompts, sampling or subscriptions.** The server declares the `tools` capability

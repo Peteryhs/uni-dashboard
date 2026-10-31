@@ -111,7 +111,7 @@ test('legacy initialize echoes a supported version and declares the tools capabi
   assert.equal(result.body.result.protocolVersion, '2025-06-18');
   assert.deepEqual(result.body.result.capabilities, { tools: { listChanged: false } });
   assert.equal(result.body.result.serverInfo.name, 'uni-dashboard');
-  assert.match(result.body.result.instructions, /Read-only/);
+  assert.match(result.body.result.instructions, /mcp:write/);
 });
 
 test('legacy initialize falls back to the newest handshake revision when the request is unknown', async () => {
@@ -135,7 +135,7 @@ test('legacy ping, initialized notification and unknown methods follow handshake
   assert.equal(unknown.body.error.code, -32601);
 });
 
-test('legacy tools/list returns the full read-only catalogue with portable schemas', async () => {
+test('legacy tools/list returns the full catalogue with portable schemas', async () => {
   const { status, body } = await callHttp({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
   assert.equal(status, 200);
   assert.equal(body.result.tools.length, mcpTools().length);
@@ -145,8 +145,12 @@ test('legacy tools/list returns the full read-only catalogue with portable schem
     assert.ok(tool.description.length > 20, `${tool.name} needs a usable description`);
     assert.equal(tool.inputSchema.type, 'object');
     assert.equal(tool.inputSchema.$schema, undefined, 'the dialect marker is stripped for older validators');
-    assert.equal(tool.annotations.readOnlyHint, true);
+    // The write tool is the single exception, and its hint says so rather than hiding behind the badge.
+    assert.equal(tool.annotations.readOnlyHint, tool.name !== 'mark_recommendation');
+    assert.equal(tool.annotations.destructiveHint, false);
   }
+  assert.ok(body.result.tools.some((tool) => tool.name === 'get_transit'));
+  assert.ok(body.result.tools.some((tool) => tool.name === 'mark_recommendation'));
 });
 
 test('legacy tools/call returns one text block mirroring structuredContent', async () => {
@@ -604,3 +608,85 @@ test('the Worker MCP route does not leak the SPA shell and /v1 stays independent
   assert.equal((await v1.json()).error, 'unauthorized');
 });
 
+
+// ---------------------------------------------------------------------------------------------
+// Write access: one mutating tool, gated on a scope of its own.
+// ---------------------------------------------------------------------------------------------
+
+/** The setting `saveRecommendationAction` writes; the assertions read it back to prove persistence. */
+const RECOMMENDATION_ACTIONS = 'RECOMMENDATION_ACTIONS_JSON';
+
+function writeCall(store, scopes, args, id = 40) {
+  const request = post({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'mark_recommendation', arguments: args } });
+  return handleMcpHttp(request, ctx(store, { scopes })).then((response) => response.json());
+}
+
+test('a read-only key cannot run the write tool, and nothing is written', async () => {
+  const store = seed(freshStore());
+  const body = await writeCall(store, ['mcp:read'], { id: 'rec:task:abc123:def456', action: 'done' });
+  assert.equal(body.result.isError, true);
+  assert.match(body.result.content[0].text, /mcp:write/);
+  assert.equal(body.result.structuredContent, undefined);
+  // The refusal happens before the store is touched: an unprivileged call cannot half-write.
+  assert.equal(await store.getSetting(RECOMMENDATION_ACTIONS), null);
+});
+
+test('mark_recommendation stores an action and undo takes it back out', async () => {
+  const store = seed(freshStore());
+  const id = 'rec:task:abc123:def456';
+  const done = await writeCall(store, ['mcp:read', 'mcp:write'], { id, action: 'done' });
+  assert.equal(done.result.isError, false);
+  assert.deepEqual(done.result.structuredContent, { ok: true, id, action: 'done', until: null });
+  const stored = JSON.parse(await store.getSetting(RECOMMENDATION_ACTIONS));
+  assert.equal(stored[id].action, 'done');
+
+  const undone = await writeCall(store, ['mcp:read', 'mcp:write'], { id, action: 'undo' });
+  assert.equal(undone.result.structuredContent.action, 'undo');
+  const after = JSON.parse(await store.getSetting(RECOMMENDATION_ACTIONS));
+  assert.equal(after[id], undefined, 'undo removes the entry rather than storing a third state');
+});
+
+test('mark_recommendation keeps the engine rules: only tasks can be completed, snooze is bounded', async () => {
+  const store = seed(freshStore());
+  const scopes = ['mcp:read', 'mcp:write'];
+  const onClass = await writeCall(store, scopes, { id: 'rec:class:abc123:def456', action: 'done' });
+  assert.equal(onClass.result.isError, true);
+  assert.match(onClass.result.content[0].text, /only tasks and learning items/);
+
+  const farOut = await writeCall(store, scopes, { id: 'rec:task:abc123:def456', action: 'snooze', until: now + 8 * 24 * 60 * MIN });
+  assert.equal(farOut.result.isError, true);
+  assert.match(farOut.result.content[0].text, /seven days/);
+
+  const snoozed = await writeCall(store, scopes, { id: 'rec:task:abc123:def456', action: 'snooze' });
+  assert.equal(snoozed.result.isError, false);
+  assert.equal(snoozed.result.structuredContent.until, now + 60 * MIN, 'a snooze with no end defaults to one hour');
+});
+
+test('mark_recommendation rejects a title where it needs a recommendation id', async () => {
+  const store = seed(freshStore());
+  const body = await writeCall(store, ['mcp:read', 'mcp:write'], { id: 'ECE 150 Assignment 5', action: 'done' });
+  // A malformed id is a protocol error: the request is wrong, and a model cannot repair it by retrying.
+  assert.equal(body.error.code, -32602);
+  assert.match(body.error.message, /recommendation id/);
+});
+
+test('get_transit says plainly that a deployment without transit has none', async () => {
+  const store = seed(freshStore());
+  const request = post({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'get_transit', arguments: {} } });
+  const body = await (await handleMcpHttp(request, ctx(store))).json();
+  assert.equal(body.result.isError, true);
+  assert.match(body.result.content[0].text, /Transit is not configured/);
+});
+
+test('get_transit returns the engine view and the class it was built against', async () => {
+  const store = seed(freshStore());
+  let seen = null;
+  const transit = { view(input) { seen = input; return { status: 'ready', commutes: [], journeys: [], target: input.target, guidance: null }; } };
+  const request = post({ jsonrpc: '2.0', id: 42, method: 'tools/call', params: { name: 'get_transit', arguments: {} } });
+  const body = await (await handleMcpHttp(request, ctx(store, { transit }))).json();
+  assert.equal(body.result.isError, false);
+  assert.equal(body.result.structuredContent.status, 'ready');
+  // The seeded ECE 150 lecture is a physical class later today, so it becomes the target the app uses.
+  assert.equal(seen.target?.title, 'ECE 150 LEC 001');
+  assert.ok(Array.isArray(seen.events));
+});

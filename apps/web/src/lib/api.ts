@@ -547,11 +547,19 @@ export function fetchMcpTokens(signal?: AbortSignal): Promise<McpTokenList> {
   return getJson<McpTokenList>('/v1/mcp-tokens', signal);
 }
 
-export async function createMcpToken(input: { name: string; expiresInDays: number | null }): Promise<CreatedMcpToken> {
+export async function createMcpToken(input: {
+  name: string;
+  expiresInDays: number | null;
+  scopes?: string[];
+}): Promise<CreatedMcpToken> {
   const res = await fetchRelay('/v1/mcp-tokens', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: input.name, expires_in_days: input.expiresInDays }),
+    body: JSON.stringify({
+      name: input.name,
+      expires_in_days: input.expiresInDays,
+      ...(input.scopes ? { scopes: input.scopes } : {}),
+    }),
   });
   return readRelayJson(res);
 }

@@ -177,6 +177,7 @@ export function createServer({
           authKind,
           tokenId,
           scopes,
+          transit,
           runtime: {
             target: 'node',
             uptime_scope: 'process',

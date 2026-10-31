@@ -17,8 +17,16 @@
 
 export const TOKEN_PREFIX = 'udmcp_';
 const TOKEN_BYTES = 32;
-export const MCP_SCOPES = Object.freeze(['mcp:read']);
-export const DEFAULT_SCOPE = 'mcp:read';
+/**
+ * Two scopes, because two classes of tool exist. `mcp:read` answers questions; `mcp:write` changes
+ * saved state (completing, snoozing or dismissing a recommendation). A key minted before the split
+ * carries `mcp:read` only, so adding a write tool cannot silently widen an existing credential: the
+ * owner has to mint a new key that asks for the write scope.
+ */
+export const READ_SCOPE = 'mcp:read';
+export const WRITE_SCOPE = 'mcp:write';
+export const MCP_SCOPES = Object.freeze([READ_SCOPE, WRITE_SCOPE]);
+export const DEFAULT_SCOPE = READ_SCOPE;
 const TOUCH_INTERVAL_MS = 60_000;
 const AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const AUDIT_PRUNE_ONE_IN = 64;

@@ -55,6 +55,8 @@ export function McpSettingsTab({ active }: { active: boolean }) {
   const [loadError, setLoadError] = useState('');
   const [name, setName] = useState('');
   const [expiry, setExpiry] = useState<McpExpiryChoice>(90);
+  /** Read-only unless asked otherwise: a key that can change state is the deliberate choice. */
+  const [writes, setWrites] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ token: string; record: McpToken } | null>(null);
   const [actionError, setActionError] = useState('');
@@ -107,7 +109,11 @@ export function McpSettingsTab({ active }: { active: boolean }) {
     setCreating(true);
     setActionError('');
     try {
-      const result = await createMcpToken({ name: name.trim(), expiresInDays: expiryInDays(expiry) });
+      const result = await createMcpToken({
+        name: name.trim(),
+        expiresInDays: expiryInDays(expiry),
+        scopes: writes ? ['mcp:read', 'mcp:write'] : ['mcp:read'],
+      });
       const record: McpToken = {
         id: result.id,
         name: result.name,
@@ -121,6 +127,7 @@ export function McpSettingsTab({ active }: { active: boolean }) {
       setTokens((previous) => (previous ? [record, ...previous] : [record]));
       setName('');
       setExpiry(90);
+      setWrites(false);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Could not create the key.');
     } finally {
@@ -295,13 +302,26 @@ export function McpSettingsTab({ active }: { active: boolean }) {
                 ))}
               </select>
             </div>
+            <div className="mcp-field">
+              <Label htmlFor="mcp-key-scope" className="mcp-field-label">Access</Label>
+              <select
+                id="mcp-key-scope"
+                className="mcp-select"
+                value={writes ? 'write' : 'read'}
+                onChange={(event) => setWrites(event.target.value === 'write')}
+              >
+                <option value="read">Read only</option>
+                <option value="write">Read and write</option>
+              </select>
+            </div>
             <Button type="submit" size="sm" className="mcp-create-button" disabled={creating}>
               {creating ? 'Creating…' : 'Create key'}
             </Button>
           </form>
           <p className="mcp-note">
             Only the SHA-256 hash is stored. Revocation is immediate. Prefer an expiry for anything
-            automated; use one key per agent.
+            automated; use one key per agent. A read-and-write key can also complete, snooze and
+            dismiss recommendations, so give it only to an agent you would let touch your list.
           </p>
         </section>
       )}

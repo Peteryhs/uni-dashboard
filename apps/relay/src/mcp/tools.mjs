@@ -4,21 +4,26 @@
  * Three rules shape this file:
  *   - Every tool delegates to the builder the /v1 route uses. An agent must never be able to
  *     describe a deadline, a menu or a ranking the web app would contradict.
- *   - No tool polls a source, starts an AI job, or writes a row. A tool call therefore spends D1
- *     reads only; that keeps it inside a Worker's per-invocation query and CPU budget, and it makes
- *     the endpoint safe to hand to an unattended client.
+ *   - Reads are the default and the only thing an ordinary key can do: no tool polls a source and no
+ *     tool starts an AI job, so a read costs D1 queries only and stays inside a Worker's
+ *     per-invocation budget. The one mutating tool (`mark_recommendation`) runs the same
+ *     `saveRecommendationAction` the app's own buttons use, and it refuses unless the credential
+ *     carries the `mcp:write` scope, so handing an agent a read key cannot let it change anything.
  *   - Inputs are zod schemas, and the same schema generates the MCP `inputSchema`. One declaration
  *     means a documented argument and a validated argument cannot drift apart.
  */
 import { z } from 'zod';
 import { buildDashboard, alertCard } from '../cards.mjs';
 import { calendarOptions, buildCalendar } from '../calendar.mjs';
-import { buildRecommendations } from '../recommendations.mjs';
+import { buildRecommendations, saveRecommendationAction } from '../recommendations.mjs';
 import { getCachedWeather } from '../weather-cache.mjs';
 import { getFoodRecommendation } from '../food-recommendation.mjs';
 import { studySpacesCard } from '../study-spaces.mjs';
 import { buildHealth } from '../health.mjs';
 import { buildMenuView } from '../guidance-api.mjs';
+import { transitTarget } from '../transit.mjs';
+import { transitDate } from '#contract/transit.mjs';
+import { MCP_SCOPES, READ_SCOPE, WRITE_SCOPE } from './tokens.mjs';
 import { SOURCES } from '#sources/registry.mjs';
 import { config } from '../config.mjs';
 
@@ -50,7 +55,16 @@ function inputSchema(schema) {
 /** Wrong tool arguments are a protocol error, not a tool result: the client should not retry. */
 export class ToolInputError extends Error {}
 
+/**
+ * A credential that lacks the scope a tool needs. This is a tool result, not a protocol error: the
+ * request was well formed, so the model should read the message and tell its operator to mint a key
+ * with that scope instead of retrying the identical call.
+ */
+export class ToolScopeError extends Error {}
+
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+/** Reversible by design (every action has `undo`), which is why nothing here is destructive. */
+const WRITES = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
 /** Escape LIKE metacharacters so a search for "100%" cannot become "anything". */
 function likePattern(query) {
@@ -86,13 +100,14 @@ const TOOLS = [
       limit: LIMIT.default(20).describe('Maximum items to return, highest priority first'),
     }),
     annotations: READ_ONLY,
-    async handler(args, { store, now }) {
+    async handler(args, { store, now, transit = null }) {
       const weather = await getCachedWeather(store, { now });
       const feed = await buildRecommendations(store, {
         now,
         section: args.section ?? null,
         group: args.group ?? null,
         weather,
+        transit,
       });
       const filtered = args.kind ? feed.items.filter((item) => item.kind === args.kind) : feed.items;
       const tasks = args.kind
@@ -328,6 +343,67 @@ const TOOLS = [
       return result;
     },
   },
+  {
+    name: 'mark_recommendation',
+    title: 'Apply a recommendation action',
+    description:
+      "Change one recommendation the way the app's own control does: \"done\" completes a task or learning " +
+      'item, "undo" restores whatever was applied to it, "snooze" hides it until a time you pass, "dismiss" ' +
+      'hides it for the rest of the term window. The action is stored server-side per account, so the app ' +
+      'and every device agree on it. Needs an MCP key that carries the mcp:write scope.',
+    schema: z.object({
+      id: z
+        .string()
+        .regex(/^rec:[a-z_]+:[a-z0-9]+:[a-z0-9]+$/, 'must be a recommendation id, not a task title')
+        .max(240)
+        .describe('The recommendation id from list_recommendations, e.g. rec:task:1n7v6iu:1hxc0rj'),
+      action: z
+        .enum(['done', 'undo', 'snooze', 'dismiss'])
+        .describe('done completes a task or learning item; dismiss hides it; undo reverses either'),
+      until: z
+        .number()
+        .int()
+        .optional()
+        .describe('Snooze end as epoch milliseconds, inside the next seven days. Defaults to one hour from now'),
+    }),
+    annotations: WRITES,
+    scope: WRITE_SCOPE,
+    async handler(args, { store, now }) {
+      return saveRecommendationAction(store, { id: args.id, action: args.action, until: args.until ?? null }, { now });
+    },
+  },
+  {
+    name: 'get_transit',
+    title: 'Saved transit departures',
+    description:
+      'Departures for the saved GRT/ION commutes: each journey carries its upcoming departures with ' +
+      'prediction state, service alerts, whether its timetable snapshot is still valid, plus the active ' +
+      'commute, the next physical class it is aimed at and the computed leave-by guidance. Read-only: it ' +
+      'never polls the agency, so a departure can be a schedule time rather than a live one — read each ' +
+      "journey's flags before trusting it.",
+    schema: z.object({}),
+    annotations: READ_ONLY,
+    async handler(_args, { store, now, transit = null }) {
+      if (!transit) {
+        throw new Error(
+          'Transit is not configured here: this deployment has no TRANSIT binding, and the local bridge has no transit engine.',
+        );
+      }
+      // Same construction as GET /v1/transit, so an agent and the app cannot disagree about the target.
+      const calendar = await buildCalendar(store, {
+        ...calendarOptions(new URLSearchParams(), now),
+        start: transitDate(now),
+        days: 1,
+        now,
+      });
+      const target = transitTarget(calendar, now);
+      const events = calendar.days
+        .flatMap((day) => day.events)
+        .map((event) => transitTarget({ ...calendar, days: [{ events: [event] }] }, now))
+        .filter(Boolean);
+      return transit.view({ now, target, events });
+    },
+  },
 ];
 
 /**
@@ -336,8 +412,8 @@ const TOOLS = [
  * Generated lazily and memoised per isolate: `zod → JSON Schema` costs a few milliseconds, which is
  * a real fraction of a Workers Free invocation's 10 ms CPU budget, and only `tools/list` needs the
  * schemas. A `tools/call` never pays for them. `annotations` are advisory hints; MCP clients may
- * show a read-only badge and skip a confirmation prompt, but the guarantee comes from this file
- * having no write path.
+ * show a read-only badge and skip a confirmation prompt. The guarantee behind them is the per-tool
+ * scope check in `callTool`, not the hint.
  */
 let wireTools = null;
 
@@ -364,6 +440,20 @@ export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 export async function callTool(name, args, ctx) {
   const tool = TOOLS.find((candidate) => candidate.name === name);
   if (!tool) throw new ToolInputError(`Unknown tool "${name}". Available tools: ${TOOL_NAMES.join(', ')}`);
+  /**
+   * Scope is enforced here because this is the single point every caller passes through: the Worker
+   * (Access assertion or API key), the local relay, and the stdio bridge. A caller that sets no
+   * scopes is the stdio bridge on the owner's own machine, which reads the local database directly
+   * and holds no credential to scope.
+   */
+  const required = tool.scope ?? READ_SCOPE;
+  const granted = ctx?.scopes ?? MCP_SCOPES;
+  if (!granted.includes(required)) {
+    throw new ToolScopeError(
+      `This credential carries ${granted.join(', ') || 'no scopes'}, so it cannot run ${name}, which needs ${required}. ` +
+        'Mint an MCP key with that scope in the dashboard (Settings -> MCP) and point the client at it.',
+    );
+  }
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

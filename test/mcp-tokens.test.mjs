@@ -6,6 +6,7 @@ import { D1Store } from '../apps/relay/src/d1-store.mjs';
 import worker from '../apps/relay/src/worker.mjs';
 import {
   ApiTokenInputError,
+  DEFAULT_SCOPE,
   MCP_SCOPES,
   authenticateApiToken,
   createApiToken,
@@ -132,8 +133,19 @@ test('minting rejects bad input instead of producing a weak credential', async (
   await assert.rejects(() => createApiToken(store, { name: 'x', scopes: [] }), ApiTokenInputError);
   await assert.rejects(() => createApiToken(store, { name: 'x', expiresInDays: 0 }), ApiTokenInputError);
   await assert.rejects(() => createApiToken(store, { name: 'x', expiresInDays: 1.5 }), ApiTokenInputError);
-  assert.deepEqual(MCP_SCOPES, ['mcp:read']);
+  // Two scopes now, and the read scope stays the default so no existing caller widens by accident.
+  assert.deepEqual(MCP_SCOPES, ['mcp:read', 'mcp:write']);
+  assert.equal(DEFAULT_SCOPE, 'mcp:read');
   assert.equal((await listApiTokens(store)).length, 0);
+});
+
+test('a key minted with the write scope stores both scopes and nothing else', async () => {
+  const store = openStore();
+  const created = await createApiToken(store, { name: 'agent', scopes: ['mcp:read', 'mcp:write'] }, { now });
+  assert.deepEqual(created.scopes, ['mcp:read', 'mcp:write']);
+  const rows = await listApiTokens(store);
+  assert.deepEqual(rows[0].scopes, ['mcp:read', 'mcp:write']);
+  assert.equal(JSON.stringify(rows).includes(created.token), false, 'listing never leaks the plaintext');
 });
 
 // ---------------------------------------------------------------------------------------------

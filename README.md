@@ -65,14 +65,16 @@ npm run web:dev                      # Web on port 5173, with the API proxied to
 ### MCP for AI agents
 
 `npm run mcp` starts a stdio Model Context Protocol bridge over the local database, for desktop
-clients that launch a subprocess. The same ten read-only tools are served over HTTP at `/mcp` by
+clients that launch a subprocess. The same thirteen tools are served over HTTP at `/mcp` by
 both the local relay and the deployed Worker. For unattended agents, open **Settings → MCP** and
-create an application API key: it is shown once, stored only as a SHA-256 hash, scoped to `mcp:read`,
-revocable in place, and attributed in the audit table. `npm run mcp:token` and `POST /v1/mcp-tokens`
-remain available for headless hosts. Cloudflare Access service tokens remain the default path; set
+create an application API key: it is shown once, stored only as a SHA-256 hash, scoped to `mcp:read`
+(read only, the default) or `mcp:read mcp:write` (which also lets the agent complete, snooze and
+dismiss recommendations), revocable in place, and attributed in the audit table. `npm run mcp:token`
+and `POST /v1/mcp-tokens` remain available for headless hosts. Cloudflare Access service tokens
+remain the default path; set
 `MCP_AUTH_MODE` to choose. Point the bridge at a deployment with
 `--url https://mcp.example.com/mcp --header "Name: value"` when the client cannot send headers
-itself. The endpoint speaks both live MCP protocol eras and never writes, polls or runs AI. Client
+itself. The endpoint speaks both live MCP protocol eras and never polls a source or runs AI. Client
 configurations, the Access topology and the long-term connectivity analysis are in
 [docs/MCP.md](docs/MCP.md).
 
