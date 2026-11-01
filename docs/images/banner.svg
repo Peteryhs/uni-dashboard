@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title description">
+  <title id="title">Uni Dashboard</title>
+  <desc id="description">Your campus day, in one place. A personal dashboard for Waterloo student life, built for web and Android and hosted on Cloudflare.</desc>
+  <rect width="1280" height="320" rx="20" fill="#1d1f23"/>
+  <g fill="#f5f6f7" transform="translate(1030 44) scale(2.25)">
+    <path d="M20 18H36V60C36 70 42 76 50 76S64 70 64 60V40L80 32V60C80 80 68 92 50 92S20 80 20 60Z"/>
+    <path d="M64 18H80V24L64 32Z"/>
+  </g>
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <text x="64" y="132" fill="#f5f6f7" font-size="82" font-weight="700" letter-spacing="-3">Uni Dashboard</text>
+    <text x="67" y="200" fill="#aeb4bc" font-size="40" letter-spacing="-.5">Your campus day, in one place.</text>
+    <text x="67" y="264" fill="#aeb4bc" font-size="23">Made for Waterloo student life</text>
+  </g>
+</svg>
