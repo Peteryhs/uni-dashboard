@@ -592,9 +592,12 @@
 
 .settings-about-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
 }
+
+.settings-about-title-row > img { flex: none; }
 
 .settings-about-title {
   font-size: 1.65rem;

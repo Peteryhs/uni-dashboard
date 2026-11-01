@@ -28,7 +28,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
+import dev.peteryhs.unidash.R
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
@@ -134,7 +136,7 @@ fun SetupScreen(
                 verticalArrangement = Arrangement.spacedBy(Spacing.m),
             ) {
                 ShapedIcon(
-                    Icons.Outlined.Dashboard,
+                    ImageVector.vectorResource(R.drawable.ic_logo),
                     container = MaterialTheme.colorScheme.primaryContainer,
                     content = MaterialTheme.colorScheme.onPrimaryContainer,
                     size = 72.dp,

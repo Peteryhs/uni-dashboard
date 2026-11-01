@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The web dashboard's cool cyan accent, darkened for contrast behind a white glyph. -->
-    <color name="ic_launcher_background">#FF006876</color>
+    <!-- Shared charcoal brand background with the white Next U mark. -->
+    <color name="ic_launcher_background">#FF1D1F23</color>
 </resources>

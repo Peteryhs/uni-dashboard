@@ -1381,6 +1381,7 @@ function AboutTab() {
       {/* App Identity & Creator */}
       <div className="settings-about-hero">
         <div className="settings-about-title-row">
+          <img src="/logo.svg" alt="" width="36" height="36" />
           <span className="settings-about-title">Uni Dashboard</span>
           <span className="settings-about-version">v0.1.0</span>
         </div>

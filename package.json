@@ -8,6 +8,7 @@
     "test": "test"
   },
   "scripts": {
+    "icons:generate": "node tools/generate-app-icons.mjs",
     "test": "node --test \"test/*.test.mjs\"",
     "sources": "node apps/relay/src/cli.mjs sources",
     "poll": "node apps/relay/src/cli.mjs poll",

@@ -25,7 +25,8 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.ui.res.vectorResource
+import dev.peteryhs.unidash.R
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Link
@@ -804,7 +805,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.aboutSettings(onSourc
                 horizontalArrangement = Arrangement.spacedBy(Spacing.m),
                 verticalAlignment = Alignment.Top,
             ) {
-                SettingsIconBacking(SettingsDestination.About, Icons.Outlined.Dashboard)
+                SettingsIconBacking(SettingsDestination.About, ImageVector.vectorResource(R.drawable.ic_logo))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
                     Text("Uni Dashboard", style = MaterialTheme.typography.headlineSmallEmphasized)
                     Text("Version ${dev.peteryhs.unidash.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)

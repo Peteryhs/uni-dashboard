@@ -19,6 +19,8 @@
 .day-context > span:first-child { color: #f0f1f3; font-weight: 550; }
 .day-context-actions { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
 .context-date-short { display: none; }
+.day-context-date { display: inline-flex; align-items: center; gap: 10px; }
+.day-context-logo { flex: none; width: 24px; height: 24px; }
 .top-status.has-warning { color: #e7bc7e; }
 .top-status.has-warning:hover { color: #f5d39e; }
 .top-status.has-warning .status-count { display: inline; font-variant-numeric: tabular-nums; }

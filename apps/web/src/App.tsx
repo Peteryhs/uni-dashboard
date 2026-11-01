@@ -839,7 +839,7 @@ export default function App() {
   return <div className="dashboard-app"><main className="dashboard-frame">
     <section className="today-content" aria-label="Today">
       <BlurFade as="div" className="day-context" duration={0.5} offset={8} blur="4px">
-        <span className="day-context-date"><span className="context-date-long">{formatDay(now)} · {formatTime(now)}</span><span className="context-date-short">{formatShortDay(now)} · {formatTime(now)}</span></span>
+        <span className="day-context-date"><img className="day-context-logo" src="/logo.svg" alt="Uni Dashboard" width="24" height="24" /><span className="context-date-long">{formatDay(now)} · {formatTime(now)}</span><span className="context-date-short">{formatShortDay(now)} · {formatTime(now)}</span></span>
         {weather.data?.temp_c !== null && weather.data?.temp_c !== undefined && <span>{weather.data.temp_c}°C</span>}
         {alert && alert.count > 0 && !alert.dismissed && <button className="context-alert" onClick={() => setAlertOpen(value => !value)} aria-expanded={alertOpen}>{alert.notices?.[0]?.title || alert.summary || 'Campus service issue'}{alert.count > 1 ? ' · ' + alert.count + ' notices' : ''}</button>}
         {alert && alert.count === 0 && (alertCard?.state === 'stale' || alertCard?.state === 'dead' || alertCard?.state === 'failed') && <span className="status-unknown" role="status">{alertCard.state === 'failed' ? 'Campus status check failed' : `Campus status unknown${alert.checked_at ? ` · checked ${shortAge(alert.checked_at, now)} ago` : ''}`}</span>}

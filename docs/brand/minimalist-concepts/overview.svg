@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1030" viewBox="0 0 1440 1030"><title>Uni Dashboard — four minimalist vector logo concepts</title>
+<rect width="1440" height="1030" fill="#e8eaed"/>
+<g font-family="Inter, Segoe UI, Arial, sans-serif">
+<text x="52" y="78" font-size="43" font-weight="600" letter-spacing="-1.8" fill="#1d1f23">Uni Dashboard</text>
+<text x="53" y="115" font-size="18" fill="#626973">Four minimal directions for a Waterloo campus companion.</text>
+<text x="1388" y="81" text-anchor="end" font-size="15" fill="#626973">Vector logo studies</text>
+<g transform="translate(52 170)">
+    <rect width="656" height="378" rx="4" fill="#ffffff"/>
+    <g transform="translate(52 63) scale(1.32)" color="#1d1f23" fill="currentColor"><path d="M20 18h16v42c0 10 6 16 14 16s14-6 14-16V40l16-8v28c0 20-12 32-30 32S20 80 20 60V18Z"/><path d="M64 18h16v6l-16 8V18Z"/></g>
+    <text x="218" y="124" font-size="34" font-weight="600" letter-spacing="-1.2" fill="#1d1f23">Uni Dashboard</text>
+    <text x="220" y="156" font-size="15" fill="#626973">Your campus day, together.</text>
+    <path d="M36 232h584" stroke="#e6e8eb"/>
+    <text x="36" y="269" font-size="21" font-weight="600" letter-spacing="-.4" fill="#1d1f23">Next U</text>
+    <text x="36" y="296" font-size="14" fill="#626973">A U with a lifted terminal.</text>
+    <text x="36" y="318" font-size="14" fill="#626973">A little momentum for what comes next.</text>
+    <rect x="490" y="260" width="54" height="54" rx="13" fill="#1d1f23"/>
+    <g transform="translate(499 269) scale(0.36)" color="#ffffff" fill="currentColor"><path d="M20 18h16v42c0 10 6 16 14 16s14-6 14-16V40l16-8v28c0 20-12 32-30 32S20 80 20 60V18Z"/><path d="M64 18h16v6l-16 8V18Z"/></g>
+    <g transform="translate(565 275) scale(0.24)" color="#1d1f23" fill="currentColor"><path d="M20 18h16v42c0 10 6 16 14 16s14-6 14-16V40l16-8v28c0 20-12 32-30 32S20 80 20 60V18Z"/><path d="M64 18h16v6l-16 8V18Z"/></g>
+    <g transform="translate(605 279) scale(0.16)" color="#1d1f23" fill="currentColor"><path d="M20 18h16v42c0 10 6 16 14 16s14-6 14-16V40l16-8v28c0 20-12 32-30 32S20 80 20 60V18Z"/><path d="M64 18h16v6l-16 8V18Z"/></g>
+  </g><g transform="translate(732 170)">
+    <rect width="656" height="378" rx="4" fill="#1d1f23"/>
+    <g transform="translate(52 63) scale(1.32)" color="#f5f6f7" fill="currentColor"><path d="M52 20H40c-14 0-24 10-24 24v16c0 14 10 24 24 24h20c14 0 24-10 24-24V48" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round"/><circle cx="80" cy="22" r="9"/></g>
+    <text x="218" y="124" font-size="34" font-weight="600" letter-spacing="-1.2" fill="#f5f6f7">Uni Dashboard</text>
+    <text x="220" y="156" font-size="15" fill="#b4bac2">Your campus day, together.</text>
+    <path d="M36 232h584" stroke="#41454c"/>
+    <text x="36" y="269" font-size="21" font-weight="600" letter-spacing="-.4" fill="#f5f6f7">Ring Route</text>
+    <text x="36" y="296" font-size="14" fill="#b4bac2">One campus loop, with a single point of focus.</text>
+    <text x="36" y="318" font-size="14" fill="#b4bac2">A nod to Ring Road.</text>
+    <rect x="490" y="260" width="54" height="54" rx="13" fill="#f5f6f7"/>
+    <g transform="translate(499 269) scale(0.36)" color="#1d1f23" fill="currentColor"><path d="M52 20H40c-14 0-24 10-24 24v16c0 14 10 24 24 24h20c14 0 24-10 24-24V48" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round"/><circle cx="80" cy="22" r="9"/></g>
+    <g transform="translate(565 275) scale(0.24)" color="#f5f6f7" fill="currentColor"><path d="M52 20H40c-14 0-24 10-24 24v16c0 14 10 24 24 24h20c14 0 24-10 24-24V48" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round"/><circle cx="80" cy="22" r="9"/></g>
+    <g transform="translate(605 279) scale(0.16)" color="#f5f6f7" fill="currentColor"><path d="M52 20H40c-14 0-24 10-24 24v16c0 14 10 24 24 24h20c14 0 24-10 24-24V48" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round"/><circle cx="80" cy="22" r="9"/></g>
+  </g><g transform="translate(52 572)">
+    <rect width="656" height="378" rx="4" fill="#1d1f23"/>
+    <g transform="translate(52 63) scale(1.32)" color="#f5f6f7" fill="currentColor"><path fill-rule="evenodd" d="M12 82c0-17 13-29 32-29h10V28c0-12 8-20 20-20 11 0 18 7 18 17l8 6-22 4v25c0 15-11 26-27 26H12v-4ZM18 63.5v5h26c11.5 0 20.5-6 20.5-17.5h-5c0 8.5-6.5 12.5-15.5 12.5H18Z"/></g>
+    <text x="218" y="124" font-size="34" font-weight="600" letter-spacing="-1.2" fill="#f5f6f7">Uni Dashboard</text>
+    <text x="220" y="156" font-size="15" fill="#b4bac2">Your campus day, together.</text>
+    <path d="M36 232h584" stroke="#41454c"/>
+    <text x="36" y="269" font-size="21" font-weight="600" letter-spacing="-.4" fill="#f5f6f7">Campus Goose</text>
+    <text x="36" y="296" font-size="14" fill="#b4bac2">A quiet Waterloo reference.</text>
+    <text x="36" y="318" font-size="14" fill="#b4bac2">Reduced to one bold silhouette.</text>
+    <rect x="490" y="260" width="54" height="54" rx="13" fill="#f5f6f7"/>
+    <g transform="translate(499 269) scale(0.36)" color="#1d1f23" fill="currentColor"><path fill-rule="evenodd" d="M12 82c0-17 13-29 32-29h10V28c0-12 8-20 20-20 11 0 18 7 18 17l8 6-22 4v25c0 15-11 26-27 26H12v-4ZM18 63.5v5h26c11.5 0 20.5-6 20.5-17.5h-5c0 8.5-6.5 12.5-15.5 12.5H18Z"/></g>
+    <g transform="translate(565 275) scale(0.24)" color="#f5f6f7" fill="currentColor"><path fill-rule="evenodd" d="M12 82c0-17 13-29 32-29h10V28c0-12 8-20 20-20 11 0 18 7 18 17l8 6-22 4v25c0 15-11 26-27 26H12v-4ZM18 63.5v5h26c11.5 0 20.5-6 20.5-17.5h-5c0 8.5-6.5 12.5-15.5 12.5H18Z"/></g>
+    <g transform="translate(605 279) scale(0.16)" color="#f5f6f7" fill="currentColor"><path fill-rule="evenodd" d="M12 82c0-17 13-29 32-29h10V28c0-12 8-20 20-20 11 0 18 7 18 17l8 6-22 4v25c0 15-11 26-27 26H12v-4ZM18 63.5v5h26c11.5 0 20.5-6 20.5-17.5h-5c0 8.5-6.5 12.5-15.5 12.5H18Z"/></g>
+  </g><g transform="translate(732 572)">
+    <rect width="656" height="378" rx="4" fill="#ffffff"/>
+    <g transform="translate(52 63) scale(1.32)" color="#1d1f23" fill="currentColor"><path d="M18 16h44l22 22H18V16ZM18 46h66v16H18V46ZM18 70h66L62 92H18V70Z"/></g>
+    <text x="218" y="124" font-size="34" font-weight="600" letter-spacing="-1.2" fill="#1d1f23">Uni Dashboard</text>
+    <text x="220" y="156" font-size="15" fill="#626973">Your campus day, together.</text>
+    <path d="M36 232h584" stroke="#e6e8eb"/>
+    <text x="36" y="269" font-size="21" font-weight="600" letter-spacing="-.4" fill="#1d1f23">Daystack</text>
+    <text x="36" y="296" font-size="14" fill="#626973">Three daily layers form a compact D.</text>
+    <text x="36" y="318" font-size="14" fill="#626973">A whole day, brought into order.</text>
+    <rect x="490" y="260" width="54" height="54" rx="13" fill="#1d1f23"/>
+    <g transform="translate(499 269) scale(0.36)" color="#ffffff" fill="currentColor"><path d="M18 16h44l22 22H18V16ZM18 46h66v16H18V46ZM18 70h66L62 92H18V70Z"/></g>
+    <g transform="translate(565 275) scale(0.24)" color="#1d1f23" fill="currentColor"><path d="M18 16h44l22 22H18V16ZM18 46h66v16H18V46ZM18 70h66L62 92H18V70Z"/></g>
+    <g transform="translate(605 279) scale(0.16)" color="#1d1f23" fill="currentColor"><path d="M18 16h44l22 22H18V16ZM18 46h66v16H18V46ZM18 70h66L62 92H18V70Z"/></g>
+  </g>
+<text x="52" y="1003" font-size="13" fill="#626973">Original SVG geometry. Transparent marks. One colour. Shown at 132, 36, 24 and 16 px.</text>
+</g></svg>
